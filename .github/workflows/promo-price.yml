@@ -1,0 +1,74 @@
+# Цена SKU в акции Uzum — ручной запуск из GitHub (Actions → «Цена в акции» → Run workflow).
+# Выполняется на сервере ParisaUbuntu тем же self-hosted runner, что и деплой, в рабочей
+# копии ~/uzum с её .env: БД и токен кабинета есть только там. Токены в лог не попадают —
+# send-promo-price.ts их не печатает.
+#
+# Без галочки «apply» — только dry-run (или список цен, если цена не задана).
+# Каждая попытка пишется в PriceChange (kind = PROMO, source = cli).
+name: Цена в акции
+
+on:
+  workflow_dispatch:
+    inputs:
+      sku:
+        description: 'SKU ID (например 10616545). Пусто + пустая цена — список всех SKU в акциях'
+        required: false
+        default: ''
+      price:
+        description: 'Новая цена в акции, сум. Пусто — только показать цены и лимиты'
+        required: false
+        default: ''
+      min:
+        description: 'Минимальная цена (порог), сум'
+        required: false
+        default: ''
+      sale:
+        description: 'ID акции — только если SKU сразу в нескольких'
+        required: false
+        default: ''
+      reason:
+        description: 'Причина (для журнала)'
+        required: false
+        default: ''
+      apply:
+        description: 'Реально отправить в Uzum (без галочки — dry-run)'
+        type: boolean
+        default: false
+
+# Та же группа, что у деплоя: не запускаемся посреди обновления рабочей копии.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  promo-price:
+    runs-on: [self-hosted, uzum-server]
+    timeout-minutes: 10
+    steps:
+      - name: Цена в акции
+        env:
+          SKU: ${{ inputs.sku }}
+          PRICE: ${{ inputs.price }}
+          MIN: ${{ inputs.min }}
+          SALE: ${{ inputs.sale }}
+          REASON: ${{ inputs.reason }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          set -euo pipefail
+          num() { [ -z "$2" ] || [[ "$2" =~ ^[0-9]+$ ]] || { echo "::error::$1 должно быть целым числом"; exit 1; }; }
+          num SKU "$SKU"; num PRICE "$PRICE"; num MIN "$MIN"; num SALE "$SALE"
+          args=()
+          if [ -z "$PRICE" ]; then
+            args+=(--list); [ -n "$SKU" ] && args+=(--sku "$SKU")
+          else
+            [ -n "$SKU" ] || { echo "::error::Для изменения цены нужен SKU"; exit 1; }
+            args+=(--sku "$SKU" --price "$PRICE")
+            [ -n "$MIN" ] && args+=(--min "$MIN")
+            [ -n "$SALE" ] && args+=(--sale "$SALE")
+            [ -n "$REASON" ] && args+=(--reason "$REASON")
+            [ "$APPLY" = "true" ] && args+=(--apply)
+          fi
+          cd ~/uzum
+          set -a && . ./.env && set +a
+          echo "send-promo-price.ts ${args[*]}"
+          npx tsx apps/api/scripts/send-promo-price.ts "${args[@]}"
