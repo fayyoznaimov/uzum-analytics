@@ -1,0 +1,12 @@
+# Автодеплой с GitHub — см. scripts/auto-deploy.sh.
+# Установка: cp deploy/systemd/uzum-deploy.* ~/.config/systemd/user/ &&
+#            systemctl --user daemon-reload && systemctl --user enable --now uzum-deploy.timer
+[Unit]
+Description=Uzum Analytics auto-deploy from GitHub
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/uzum
+Environment=PATH=%h/.nvm/versions/node/v20.20.2/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/bash %h/uzum/scripts/auto-deploy.sh
+TimeoutStartSec=30min

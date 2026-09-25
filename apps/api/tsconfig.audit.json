@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "baseUrl": ".",
+    "paths": {
+      "@prisma/client": [
+        "audit/prisma-client-stub.ts"
+      ]
+    },
+    "noImplicitAny": false
+  },
+  "include": [
+    "src/**/*.ts",
+    "prisma/**/*.ts",
+    "audit/**/*.ts"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules"
+  ]
+}

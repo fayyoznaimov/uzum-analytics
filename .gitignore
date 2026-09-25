@@ -1,0 +1,14 @@
+node_modules
+.env
+.env.local
+.next
+dist
+coverage
+backups/
+*.dump
+*.log
+*.har
+*.HAR
+.DS_Store
+apps/api/prisma/dev.db
+apps/api/tmp/

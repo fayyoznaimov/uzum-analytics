@@ -1,0 +1,630 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  VIEWER
+}
+
+enum IntegrationType {
+  UZUM
+  UZUM_INTERNAL
+  OPENAI
+  ANTHROPIC
+  TELEGRAM
+}
+
+enum IntegrationStatus {
+  NOT_CONFIGURED
+  CONNECTED
+  ERROR
+}
+
+enum GoalMetric {
+  ORDERED_REVENUE
+  REVENUE
+  PROFIT
+  ORDERS
+  UNITS
+  ROAS
+}
+
+enum GoalPeriod {
+  WEEKLY
+  MONTHLY
+  CUSTOM
+}
+
+enum SupplyType {
+  FBO
+  FBS
+}
+
+enum OrderFinancialEventType {
+  SALE_ISSUED
+  RETURN_REVERSAL
+  MARKETPLACE_ADJUSTMENT
+  MANUAL_ADJUSTMENT
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(ADMIN)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Shop {
+  id                String                  @id @default(cuid())
+  externalId        String                  @unique
+  name              String
+  currency          String                  @default("UZS")
+  timezone          String                  @default("Asia/Tashkent")
+  isActive          Boolean                 @default(true)
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  products          Product[]
+  orders            Order[]
+  goals             Goal[]
+  syncRuns          SyncRun[]
+  supplies          Supply[]
+  financialSettings FinancialSettings?
+  inventoryReports  InventoryReportImport[]
+  inventoryMetrics  InventoryMetric[]
+  marketplaceExpenses MarketplaceExpense[]
+  financialStatementImports FinancialStatementImport[]
+  withdrawals         Withdrawal[]
+  reviews            Review[]
+  adCampaignAudits   AdCampaignAudit[]
+}
+
+model AdExtensionClient {
+  id          String   @id @default(cuid())
+  tokenHash   String   @unique
+  label       String   @default("Chrome extension")
+  lastSeenAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime @default(now())
+}
+
+model AdPairingCode {
+  id        String   @id @default(cuid())
+  codeHash  String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+}
+
+model AdCampaignAudit {
+  id                 String   @id @default(cuid())
+  shopId             String
+  campaignExternalId String
+  campaignName       String
+  productExternalId  String?
+  productTitle       String?
+  periodFrom         DateTime?
+  periodTo           DateTime?
+  status              String   @default("COMPLETE")
+  summary             Json
+  terms               Json
+  recommendations     Json
+  capturedAt          DateTime @default(now())
+  shop                 Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, capturedAt])
+  @@index([shopId, campaignExternalId, capturedAt])
+}
+
+model IntegrationCredential {
+  id             String            @id @default(cuid())
+  type           IntegrationType   @unique
+  encryptedValue String?
+  iv             String?
+  authTag        String?
+  metadata       Json?
+  enabled        Boolean           @default(true)
+  status         IntegrationStatus @default(NOT_CONFIGURED)
+  lastTestedAt   DateTime?
+  lastError      String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+}
+
+model Product {
+  id         String   @id @default(cuid())
+  externalId String
+  shopId     String
+  title      String
+  imageUrl   String?
+  status     String?
+  raw        Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  shop       Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  skus       Sku[]
+  reviews    Review[]
+
+  @@unique([shopId, externalId])
+  @@index([shopId])
+}
+
+model Sku {
+  id               String            @id @default(cuid())
+  externalId       String
+  productId        String
+  sellerSku        String?
+  barcode          String?
+  color            String?
+  size             String?
+  price            Decimal?          @db.Decimal(18, 2)
+  stock            Int               @default(0)
+  raw              Json?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  product          Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  costs            SkuCost[]
+  orderItems       OrderItem[]
+  snapshots        StockSnapshot[]
+  inventoryMetrics InventoryMetric[]
+  supplyItems      SupplyItem[]
+
+  @@unique([productId, externalId])
+  @@index([sellerSku])
+  @@index([barcode])
+}
+
+model SkuCost {
+  id                     String   @id @default(cuid())
+  skuId                  String
+  amount                 Decimal  @db.Decimal(18, 2)
+  packagingCost          Decimal  @default(0) @db.Decimal(18, 2)
+  additionalCost         Decimal  @default(0) @db.Decimal(18, 2)
+  warehouseLogisticsCost Decimal  @default(0) @db.Decimal(18, 2)
+  validFrom              DateTime @default(now())
+  validTo                DateTime?
+  createdBy              String?
+  createdAt              DateTime @default(now())
+  sku                    Sku      @relation(fields: [skuId], references: [id], onDelete: Cascade)
+
+  @@index([skuId, validFrom])
+}
+
+model Order {
+  id                  String                  @id @default(cuid())
+  externalId          String
+  marketplaceOrderId  String?
+  shopId              String
+  status              String?
+  state               String?
+  orderedAt           DateTime?
+  paidAt              DateTime?
+  dateIssued          DateTime
+  issuedAt            DateTime?
+  basketEligibleAt    DateTime?
+  financialState      String?
+  quantity            Int                     @default(1)
+  grossRevenue        Decimal                 @default(0) @db.Decimal(18, 2)
+  payout              Decimal                 @default(0) @db.Decimal(18, 2)
+  commission          Decimal                 @default(0) @db.Decimal(18, 2)
+  logistics           Decimal                 @default(0) @db.Decimal(18, 2)
+  payoutReported      Boolean                 @default(false)
+  commissionReported  Boolean                 @default(false)
+  logisticsReported   Boolean                 @default(false)
+  adCost              Decimal                 @default(0) @db.Decimal(18, 2)
+  adCostReported      Boolean                 @default(false)
+  returnAmount        Decimal                 @default(0) @db.Decimal(18, 2)
+  returnedUnits       Int                     @default(0)
+  platformFee         Decimal                 @default(0) @db.Decimal(18, 2)
+  statementPayout     Decimal                 @default(0) @db.Decimal(18, 2)
+  withdrawnAmount     Decimal                 @default(0) @db.Decimal(18, 2)
+  apiWithdrawnAmount  Decimal                 @default(0) @db.Decimal(18, 2)
+  statementSalePrice  Decimal                 @default(0) @db.Decimal(18, 2)
+  statementPurchasePrice Decimal              @default(0) @db.Decimal(18, 2)
+  sellerDiscount      Decimal                 @default(0) @db.Decimal(18, 2)
+  vatType             String?
+  returnReasonCode    String?
+  returnReason        String?
+  returnComment       String?
+  statementStatus     String?
+  statementImportedAt DateTime?
+  raw                  Json?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  shop                 Shop                    @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  items                OrderItem[]
+  statusHistory        OrderStatusHistory[]
+  financialEvents      OrderFinancialEvent[]
+
+  @@unique([shopId, externalId])
+  @@index([shopId, dateIssued])
+  @@index([shopId, issuedAt])
+  @@index([shopId, basketEligibleAt])
+  @@index([shopId, orderedAt])
+  @@index([shopId, paidAt])
+  @@index([shopId, marketplaceOrderId])
+}
+
+model OrderStatusHistory {
+  id             String   @id @default(cuid())
+  orderId        String
+  fromStatus     String?
+  toStatus       String
+  changedAt      DateTime @default(now())
+  sourceStatus   String?
+  sourceIssuedAt DateTime?
+  raw            Json?
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, changedAt])
+}
+
+model OrderFinancialEvent {
+  id               String                  @id @default(cuid())
+  orderId           String
+  type              OrderFinancialEventType
+  amount            Decimal                 @db.Decimal(18, 2)
+  grossAmount       Decimal                 @default(0) @db.Decimal(18, 2)
+  units             Int                     @default(0)
+  happenedAt        DateTime
+  basketEligibleAt  DateTime?
+  scheduledPayoutAt DateTime?
+  sourceKey         String
+  note              String?
+  raw               Json?
+  createdAt         DateTime                @default(now())
+  order             Order                   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, sourceKey])
+  @@index([type, happenedAt])
+  @@index([basketEligibleAt])
+  @@index([scheduledPayoutAt])
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  orderId     String
+  skuId       String?
+  externalId  String
+  marketplaceProductId String?
+  title       String
+  quantity    Int      @default(1)
+  sellPrice   Decimal  @default(0) @db.Decimal(18, 2)
+  amount      Decimal  @default(0) @db.Decimal(18, 2)
+  returns     Int      @default(0)
+  returnReasonCode String?
+  returnComment    String?
+  statementStatus String?
+  statementImportedAt DateTime?
+  raw         Json?
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sku         Sku?     @relation(fields: [skuId], references: [id], onDelete: SetNull)
+
+  @@unique([orderId, externalId])
+  @@index([orderId])
+  @@index([skuId])
+}
+
+model StockSnapshot {
+  id         String   @id @default(cuid())
+  skuId      String
+  amount     Int
+  capturedAt DateTime @default(now())
+  sku        Sku      @relation(fields: [skuId], references: [id], onDelete: Cascade)
+
+  @@index([skuId, capturedAt])
+}
+
+model InventoryReportImport {
+  id          String            @id @default(cuid())
+  shopId      String
+  fileName    String
+  sourceHash  String
+  reportAsOf  DateTime?
+  rowCount    Int               @default(0)
+  importedAt  DateTime          @default(now())
+  shop        Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  metrics     InventoryMetric[]
+
+  @@unique([shopId, sourceHash])
+  @@index([shopId, importedAt])
+}
+
+model InventoryMetric {
+  id                    String                @id @default(cuid())
+  reportId              String
+  shopId                String
+  skuId                 String?
+  productExternalId     String?
+  productTitle          String
+  sellerSku             String
+  barcode               String?
+  endingSoon            Boolean               @default(false)
+  coverageIndicator     String?
+  stockoutAt            DateTime?
+  coverageDays          Int                    @default(0)
+  recommendedSupply     Int                    @default(0)
+  sellerFbsStock        Int                    @default(0)
+  marketplaceTotal      Int                    @default(0)
+  inSupply              Int                    @default(0)
+  availableForSale      Int                    @default(0)
+  toCustomer            Int                    @default(0)
+  fromCustomer          Int                    @default(0)
+  longTermStorage       Int                    @default(0)
+  photoStudio           Int                    @default(0)
+  defective             Int                    @default(0)
+  potentialPayoutUnit   Decimal                @default(0) @db.Decimal(18, 2)
+  potentialPayoutTotal  Decimal                @default(0) @db.Decimal(18, 2)
+  createdAt             DateTime               @default(now())
+  report                InventoryReportImport  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  shop                  Shop                   @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  sku                   Sku?                   @relation(fields: [skuId], references: [id], onDelete: SetNull)
+
+  @@unique([reportId, sellerSku])
+  @@index([shopId, createdAt])
+  @@index([sellerSku])
+  @@index([barcode])
+}
+
+model Goal {
+  id          String     @id @default(cuid())
+  shopId      String
+  metric      GoalMetric
+  period      GoalPeriod
+  targetValue Decimal    @db.Decimal(18, 2)
+  startAt     DateTime
+  endAt       DateTime
+  note        String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  shop        Shop       @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, startAt, endAt])
+}
+
+model FinancialSettings {
+  id                                    String   @id @default(cuid())
+  shopId                                String   @unique
+  taxPercent                            Decimal  @default(1) @db.Decimal(6, 3)
+  advertisingPercent                    Decimal  @default(0) @db.Decimal(6, 3)
+  marketplaceCommissionFallbackPercent Decimal  @default(0) @db.Decimal(6, 3)
+  payoutDelayDays                      Int      @default(10)
+  payoutSchedule                       String   @default("BIWEEKLY")
+  payoutServiceFeePercent              Decimal  @default(0) @db.Decimal(6, 3)
+  urgentWithdrawalFeePercent           Decimal  @default(2.5) @db.Decimal(6, 3)
+  createdAt                             DateTime @default(now())
+  updatedAt                             DateTime @updatedAt
+  shop                                  Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+}
+
+model Supply {
+  id             String                @id @default(cuid())
+  shopId         String
+  externalId     String
+  type           SupplyType
+  status         String
+  statusLabel    String?
+  warehouseName  String?
+  dropOffPointId String?
+  plannedAt      DateTime?
+  slotFrom       DateTime?
+  slotTo         DateTime?
+  itemCount      Int                   @default(0)
+  units          Int                   @default(0)
+  logisticsCost  Decimal               @default(0) @db.Decimal(18, 2)
+  raw            Json?
+  lastSeenAt     DateTime              @default(now())
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  shop           Shop                  @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  history        SupplyStatusHistory[]
+  slotWatch      SupplySlotWatch?
+  items          SupplyItem[]
+
+  @@unique([shopId, type, externalId])
+  @@index([shopId, type, status])
+}
+
+model SupplyItem {
+  id               String   @id @default(cuid())
+  supplyId         String
+  skuId            String?
+  externalSkuId    String
+  title            String?
+  plannedQuantity  Int      @default(0)
+  acceptedQuantity Int      @default(0)
+  raw              Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  supply           Supply   @relation(fields: [supplyId], references: [id], onDelete: Cascade)
+  sku              Sku?     @relation(fields: [skuId], references: [id], onDelete: SetNull)
+
+  @@unique([supplyId, externalSkuId])
+  @@index([skuId])
+}
+
+model MarketplaceExpense {
+  id                String   @id @default(cuid())
+  shopId            String
+  externalId        String
+  code              String?
+  source            String?
+  name              String?
+  type              String?
+  amount            Decimal  @default(0) @db.Decimal(18, 2)
+  serviceAt         DateTime
+  orderExternalId   String?
+  productExternalId String?
+  campaignExternalId String?
+  raw               Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  shop              Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, externalId])
+  @@index([shopId, serviceAt, code])
+}
+
+model FinancialStatementImport {
+  id                String   @id @default(cuid())
+  shopId            String
+  fileName          String
+  sourceHash        String
+  reportAsOf        DateTime?
+  incomeRows        Int      @default(0)
+  expenseRows       Int      @default(0)
+  withdrawalRows    Int      @default(0)
+  matchedOrders     Int      @default(0)
+  unmatchedOrders   Int      @default(0)
+  updatedOrders     Int      @default(0)
+  summary           Json?
+  importedAt        DateTime @default(now())
+  shop              Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, sourceHash])
+  @@index([shopId, importedAt])
+}
+
+model Withdrawal {
+  id              String   @id @default(cuid())
+  shopId          String
+  externalId      String
+  mode            String?
+  amount          Decimal  @default(0) @db.Decimal(18, 2)
+  feePercent      Decimal? @db.Decimal(6, 3)
+  netAmount       Decimal? @db.Decimal(18, 2)
+  requestedAt     DateTime?
+  payoutPeriod    String?
+  status          String?
+  rejectionReason String?
+  raw             Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  shop            Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, externalId])
+  @@index([shopId, requestedAt])
+  @@index([shopId, status])
+}
+
+model Review {
+  id                       String   @id @default(cuid())
+  shopId                   String
+  externalId               String
+  productId                String?
+  externalProductId        String?
+  productTitle             String
+  skuTitle                 String?
+  productPhotoUrl          String?
+  rating                   Int
+  packagingQualityRating   Int?
+  deliveryRating           Int?
+  content                  String?
+  pros                     String?
+  cons                     String?
+  photos                   Json?
+  customerName             String?
+  anonymous                Boolean  @default(false)
+  replyStatus              String?
+  needsReply               Boolean  @default(true)
+  dateCreated              DateTime
+  dateBought               DateTime?
+  characteristics          Json?
+  isRead                   Boolean  @default(false)
+  pinned                   Boolean  @default(false)
+  aiReplyText              String?
+  aiReplyLanguage          String?
+  aiReplyRisk              String?
+  aiReplyModel             String?
+  aiReplyGeneratedAt       DateTime?
+  syncedAt                 DateTime @default(now())
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+  shop                     Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  product                  Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@unique([shopId, externalId])
+  @@index([shopId, dateCreated])
+  @@index([shopId, needsReply, dateCreated])
+  @@index([productId, rating])
+}
+
+model SupplyStatusHistory {
+  id         String   @id @default(cuid())
+  supplyId   String
+  fromStatus String?
+  toStatus   String
+  changedAt  DateTime @default(now())
+  raw        Json?
+  supply     Supply   @relation(fields: [supplyId], references: [id], onDelete: Cascade)
+
+  @@index([supplyId, changedAt])
+}
+
+model SupplySlotWatch {
+  id             String   @id @default(cuid())
+  supplyId       String   @unique
+  enabled        Boolean  @default(true)
+  dropOffPointId String?
+  lastCheckedAt  DateTime?
+  lastFoundAt    DateTime?
+  lastError      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  supply         Supply   @relation(fields: [supplyId], references: [id], onDelete: Cascade)
+}
+
+model NotificationLog {
+  id        String   @id @default(cuid())
+  type      String
+  dedupeKey String   @unique
+  payload   Json?
+  sentAt    DateTime @default(now())
+
+  @@index([type, sentAt])
+}
+
+model SyncRun {
+  id         String   @id @default(cuid())
+  shopId     String?
+  type       String
+  status     String
+  records    Int      @default(0)
+  message    String?
+  startedAt  DateTime @default(now())
+  finishedAt DateTime?
+  shop       Shop?    @relation(fields: [shopId], references: [id], onDelete: SetNull)
+
+  @@index([startedAt])
+}
+
+/// Журнал изменений цен через sendPriceData: и dry-run, и отказы защиты, и реальные отправки.
+model PriceChange {
+  id                String   @id @default(cuid())
+  shopExternalId    String
+  productExternalId String
+  skuExternalId     String
+  oldPrice          Int?
+  newPrice          Int
+  fullPrice         Int?
+  dryRun            Boolean
+  status            String
+  violations        Json?
+  request           Json
+  response          Json?
+  verifiedPrice     Int?
+  source            String   @default("manual")
+  reason            String?
+  error             String?
+  createdAt         DateTime @default(now())
+
+  @@index([skuExternalId, createdAt])
+}

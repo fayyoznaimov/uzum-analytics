@@ -1,0 +1,24 @@
+{
+  "name": "uzum-analytics",
+  "private": true,
+  "version": "1.0.7",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run start:dev -w apps/api\" \"npm run dev -w apps/web\"",
+    "build": "npm run build -w apps/api && npm run build -w apps/web",
+    "lint": "npm run lint -w apps/api && npm run lint -w apps/web",
+    "db:generate": "npm run prisma:generate -w apps/api",
+    "db:migrate": "npm run prisma:migrate -w apps/api",
+    "db:seed": "npm run prisma:seed -w apps/api",
+    "test": "npm run test -w apps/api",
+    "check": "npm run test && npm run lint && npm run build",
+    "test:types:api": "tsc -p apps/api/tsconfig.audit.json",
+    "test:web": "npm run lint -w apps/web && NEXT_PUBLIC_API_URL=/api NEXT_OUTPUT_STANDALONE=false NEXT_TELEMETRY_DISABLED=1 npm run build -w apps/web",
+    "test:all": "npm test && npm run test:types:api && npm run test:web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
