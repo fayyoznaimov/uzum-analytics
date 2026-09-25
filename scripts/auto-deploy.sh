@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Автодеплой с GitHub: раз в минуту запускается таймером uzum-deploy.timer
-# (systemd --user) на сервере ParisaUbuntu.
+# Автодеплой с GitHub на сервере ParisaUbuntu. Запускается через юнит
+# uzum-deploy.service (systemd --user): сразу после push — из GitHub Actions
+# (self-hosted runner, .github/workflows/deploy.yml), и запасным таймером
+# uzum-deploy.timer раз в 5 минут, если runner недоступен.
 #
 # Если в origin/main появились новые коммиты:
 #   pull (только fast-forward) → npm install (если менялись зависимости) →

@@ -1,0 +1,19 @@
+# Self-hosted runner GitHub Actions для .github/workflows/deploy.yml.
+# Ставится скриптом scripts/install-github-runner.sh.
+[Unit]
+Description=GitHub Actions runner (uzum-analytics deploy)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/actions-runner
+Environment=PATH=%h/.nvm/versions/node/v20.20.2/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/actions-runner/run.sh
+Restart=always
+RestartSec=10
+KillMode=process
+KillSignal=SIGINT
+TimeoutStopSec=5min
+
+[Install]
+WantedBy=default.target

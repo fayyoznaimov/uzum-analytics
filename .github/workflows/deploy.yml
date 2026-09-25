@@ -1,0 +1,33 @@
+# Мгновенный деплой при push в main. Задачу выполняет self-hosted runner на
+# сервере ParisaUbuntu (метка uzum-server): он держит исходящее соединение с
+# GitHub, входящие порты не нужны. Сам деплой — тот же scripts/auto-deploy.sh,
+# что запускает запасной таймер uzum-deploy.timer; оба идут через один
+# systemd-юнит, поэтому одновременно два деплоя не запустятся.
+#
+# Код здесь не выкачивается (нет actions/checkout): рабочую копию ~/uzum
+# обновляет сам auto-deploy.sh.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, uzum-server]
+    timeout-minutes: 40
+    steps:
+      - name: Деплой на ParisaUbuntu
+        run: |
+          log=~/.local/state/uzum-deploy/deploy.log
+          from=$(( $(wc -l < "$log" 2>/dev/null || echo 0) + 1 ))
+          status=0
+          systemctl --user start uzum-deploy.service || status=$?
+          echo "--- лог деплоя"
+          tail -n +"$from" "$log" 2>/dev/null | tail -n 200
+          exit $status

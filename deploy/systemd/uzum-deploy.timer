@@ -1,9 +1,9 @@
 [Unit]
-Description=Check GitHub for Uzum Analytics updates every minute
+Description=Fallback check of GitHub for Uzum Analytics updates (main trigger: GitHub Actions runner)
 
 [Timer]
 OnBootSec=2min
-OnUnitInactiveSec=60s
+OnUnitInactiveSec=5min
 AccuracySec=10s
 
 [Install]
