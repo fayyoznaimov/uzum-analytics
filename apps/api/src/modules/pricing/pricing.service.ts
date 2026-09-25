@@ -113,7 +113,8 @@ export class PricingService {
     return null;
   }
 
-  private async unitCost(skuExternalId: string, shopId: string) {
+  /** Полная себестоимость единицы из актуальной записи SkuCost (null, если не заведена). */
+  async unitCost(skuExternalId: string, shopId: string) {
     const sku = await this.prisma.sku.findFirst({
       where: { externalId: skuExternalId, product: { shopId } },
       include: { costs: { where: { validTo: null }, orderBy: { validFrom: 'desc' }, take: 1 } },
@@ -122,6 +123,15 @@ export class PricingService {
     if (!row) return { sku, unitCost: null };
     const total = Number(row.amount) + Number(row.packagingCost) + Number(row.additionalCost) + Number(row.warehouseLogisticsCost);
     return { sku, unitCost: total > 0 ? total : null };
+  }
+
+  /** Порог и шаг: явные параметры поверх PRICE_MIN_UZS / PRICE_MAX_STEP_PERCENT из окружения. */
+  guardSettings(options: { minPrice?: number; maxStepPercent?: number }) {
+    const envMin = Number(process.env.PRICE_MIN_UZS || 0);
+    const minPrice = Math.max(options.minPrice ?? 0, Number.isFinite(envMin) ? envMin : 0) || null;
+    const envStep = Number(process.env.PRICE_MAX_STEP_PERCENT);
+    const maxStepPercent = options.maxStepPercent ?? (Number.isFinite(envStep) && envStep > 0 ? envStep : DEFAULT_MAX_STEP_PERCENT);
+    return { minPrice, maxStepPercent };
   }
 
   /**
@@ -139,10 +149,7 @@ export class PricingService {
     const live = await this.readLiveSku(shop.externalId, skuExternalId, cfg.token);
     if (!live) throw new BadRequestException(`SKU ${skuExternalId} не найден в магазине ${shop.externalId}`);
     const { sku, unitCost } = await this.unitCost(skuExternalId, shop.id);
-    const envMin = Number(process.env.PRICE_MIN_UZS || 0);
-    const minPrice = Math.max(options.minPrice ?? 0, Number.isFinite(envMin) ? envMin : 0) || null;
-    const envStep = Number(process.env.PRICE_MAX_STEP_PERCENT);
-    const maxStepPercent = options.maxStepPercent ?? (Number.isFinite(envStep) && envStep > 0 ? envStep : DEFAULT_MAX_STEP_PERCENT);
+    const { minPrice, maxStepPercent } = this.guardSettings(options);
 
     const plan = planPriceChange({
       shopExternalId: shop.externalId,
@@ -225,9 +232,9 @@ export class PricingService {
     return { ...summary, sent: true, response, verifiedPrice };
   }
 
-  async changes(skuId?: string, limit = 50) {
+  async changes(skuId?: string, limit = 50, kind?: string) {
     return this.prisma.priceChange.findMany({
-      where: skuId ? { skuExternalId: skuId } : undefined,
+      where: { ...(skuId ? { skuExternalId: skuId } : {}), ...(kind ? { kind } : {}) },
       orderBy: { createdAt: 'desc' },
       take: Math.min(Math.max(1, limit), 200),
     });

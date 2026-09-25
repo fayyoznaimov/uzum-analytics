@@ -71,7 +71,25 @@ export type PriceChangePlan = {
 const isUzumPrice = (value: number) => Number.isInteger(value) && value >= UZUM_PRICE_MIN && value <= UZUM_PRICE_MAX;
 const positive = (value: number | null | undefined) => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null);
 
-export function planPriceChange(input: PriceChangeInput): PriceChangePlan {
+export type PriceGuardInput = {
+  /** Текущая цена, прочитанная из Uzum непосредственно перед изменением. */
+  currentPrice: number | null;
+  newPrice: number;
+  /** Абсолютный порог: ниже этой цены не опускаемся. */
+  minPrice?: number | null;
+  /** Полная себестоимость единицы (товар + упаковка + логистика + прочее), если известна. */
+  unitCost?: number | null;
+  maxStepPercent?: number;
+};
+
+export type PriceGuardResult = { violations: PriceViolation[]; deltaPercent: number | null; floor: number | null };
+
+/**
+ * Общие защиты любого изменения цены — базовой (sendPriceData) и акционной (кабинет):
+ * корректная сумма, шаг не больше ±maxStepPercent от текущей, не ниже минимальной цены
+ * и себестоимости, без порога не меняем вовсе.
+ */
+export function checkPriceGuards(input: PriceGuardInput): PriceGuardResult {
   const violations: PriceViolation[] = [];
   const maxStepPercent = input.maxStepPercent ?? DEFAULT_MAX_STEP_PERCENT;
   const currentPrice = positive(input.currentPrice);
@@ -81,10 +99,6 @@ export function planPriceChange(input: PriceChangeInput): PriceChangePlan {
 
   if (!isUzumPrice(input.newPrice)) {
     violations.push({ code: 'INVALID_PRICE', message: `Цена должна быть целым числом от ${UZUM_PRICE_MIN} до ${UZUM_PRICE_MAX}` });
-  }
-  const fullPrice = input.fullPrice ?? null;
-  if (fullPrice !== null && (!isUzumPrice(fullPrice) || fullPrice < input.newPrice)) {
-    violations.push({ code: 'INVALID_FULL_PRICE', message: 'Полная цена должна быть целым числом и не ниже цены продажи' });
   }
 
   let deltaPercent: number | null = null;
@@ -107,6 +121,15 @@ export function planPriceChange(input: PriceChangeInput): PriceChangePlan {
   }
   if (unitCost !== null && input.newPrice < unitCost) {
     violations.push({ code: 'BELOW_UNIT_COST', message: `Цена ниже себестоимости единицы ${Math.round(unitCost)}` });
+  }
+  return { violations, deltaPercent, floor };
+}
+
+export function planPriceChange(input: PriceChangeInput): PriceChangePlan {
+  const { violations, deltaPercent, floor } = checkPriceGuards(input);
+  const fullPrice = input.fullPrice ?? null;
+  if (fullPrice !== null && (!isUzumPrice(fullPrice) || fullPrice < input.newPrice)) {
+    violations.push({ code: 'INVALID_FULL_PRICE', message: 'Полная цена должна быть целым числом и не ниже цены продажи' });
   }
   if (input.blocked) violations.push({ code: 'SKU_BLOCKED', message: 'SKU заблокирован в Uzum' });
   if (input.archived) violations.push({ code: 'SKU_ARCHIVED', message: 'SKU в архиве' });

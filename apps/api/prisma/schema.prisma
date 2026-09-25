@@ -612,6 +612,8 @@ model PriceChange {
   shopExternalId    String
   productExternalId String
   skuExternalId     String
+  /// BASE — базовая цена через OpenAPI sendPriceData, PROMO — цена в акции через API кабинета.
+  kind              String   @default("BASE")
   oldPrice          Int?
   newPrice          Int
   fullPrice         Int?
