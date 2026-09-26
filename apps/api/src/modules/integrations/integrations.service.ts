@@ -453,6 +453,7 @@ export class IntegrationsService {
             notifyErrors: dto.notifyErrors ?? previousMetadata.notifyErrors ?? true,
             notifySupplyStatus: dto.notifySupplyStatus ?? previousMetadata.notifySupplyStatus ?? true,
             notifySlotFound: dto.notifySlotFound ?? previousMetadata.notifySlotFound ?? true,
+            notifyAgents: dto.notifyAgents ?? previousMetadata.notifyAgents ?? true,
           };
 
     if (type === IntegrationType.UZUM && !metadata.shopId) throw new BadRequestException('Укажите Shop ID');
@@ -601,7 +602,7 @@ export class IntegrationsService {
 
   async notifyTelegram(
     text: string,
-    option: 'notifyErrors' | 'notifyNewOrders' | 'notifyLowStock' | 'notifyGoals' | 'notifySupplyStatus' | 'notifySlotFound' | 'notifyDailyDigest' = 'notifyErrors',
+    option: 'notifyErrors' | 'notifyNewOrders' | 'notifyLowStock' | 'notifyGoals' | 'notifySupplyStatus' | 'notifySlotFound' | 'notifyDailyDigest' | 'notifyAgents' = 'notifyErrors',
     parseMode?: 'HTML' | 'MarkdownV2',
   ) {
     const stored = await this.getPlain(IntegrationType.TELEGRAM);

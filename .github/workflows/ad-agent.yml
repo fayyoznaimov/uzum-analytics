@@ -1,0 +1,40 @@
+# Агент по рекламе — ручной запуск из GitHub (Actions → «Реклама» → Run workflow).
+# Выполняется на сервере ParisaUbuntu тем же self-hosted runner, что и деплой, в рабочей копии
+# ~/uzum с её .env: БД и токен кабинета есть только там. Только советы — в кабинете ничего не меняется.
+name: Реклама
+
+on:
+  workflow_dispatch:
+    inputs:
+      telegram:
+        description: 'Отправить отчёт в Telegram'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  ad-agent:
+    runs-on: [self-hosted, uzum-server]
+    timeout-minutes: 15
+    steps:
+      - name: Диагностика (версия, деплой, журнал агентов за сутки)
+        run: |
+          cd ~/uzum
+          echo "Версия на сервере: $(git log --oneline -1)"
+          echo "--- конец лога деплоя ---"
+          tail -n 15 ~/.local/state/uzum-deploy/deploy.log 2>/dev/null || echo "лог деплоя не найден"
+          echo "--- журнал API: агенты за сутки ---"
+          journalctl --user -u uzum-api --since "-1 day" --no-pager -o short-iso 2>/dev/null | grep -E "Автоцены|Агент рекламы|AutoPricing|AdAgent" | tail -n 60 || echo "записей нет или журнал недоступен"
+      - name: Агент по рекламе (советы)
+        env:
+          TELEGRAM: ${{ inputs.telegram }}
+        run: |
+          set -euo pipefail
+          args=()
+          [ "$TELEGRAM" = "true" ] && args+=(--telegram)
+          cd ~/uzum
+          set -a && . ./.env && set +a
+          npx tsx apps/api/scripts/ad-agent.ts "${args[@]}"

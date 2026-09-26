@@ -28,6 +28,14 @@ jobs:
     runs-on: [self-hosted, uzum-server]
     timeout-minutes: 15
     steps:
+      - name: Диагностика (версия, деплой, журнал агентов за сутки)
+        run: |
+          cd ~/uzum
+          echo "Версия на сервере: $(git log --oneline -1)"
+          echo "--- конец лога деплоя ---"
+          tail -n 15 ~/.local/state/uzum-deploy/deploy.log 2>/dev/null || echo "лог деплоя не найден"
+          echo "--- журнал API: агенты за сутки ---"
+          journalctl --user -u uzum-api --since "-1 day" --no-pager -o short-iso 2>/dev/null | grep -E "Автоцены|Агент рекламы|AutoPricing|AdAgent" | tail -n 60 || echo "записей нет или журнал недоступен"
       - name: Автоцены (рекомендации)
         env:
           TELEGRAM: ${{ inputs.telegram }}

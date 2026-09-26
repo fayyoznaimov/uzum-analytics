@@ -74,12 +74,13 @@ export class AutoPricingService {
   @Cron(process.env.AUTO_PRICING_CRON || '30 9,19 * * *', { name: 'auto-pricing', timeZone: 'Asia/Tashkent' })
   async scheduled() {
     if (process.env.AUTO_PRICING_ENABLED === 'false') return;
+    this.logger.log('Автоцены: запуск по расписанию');
     try {
       await this.run({ apply: process.env.AUTO_PRICING_APPLY === 'true', notify: true });
     } catch (error: any) {
       const message = String(error?.message || error);
       this.logger.error(`Автоцены: ${message}`);
-      await this.integrations.notifyTelegram(`⚠️ Автоцены: запуск не выполнен — ${message}`, 'notifyErrors').catch(() => undefined);
+      await this.integrations.notifyTelegram(`⚠️ Автоцены: запуск не выполнен — ${message}`, 'notifyAgents').catch(() => undefined);
     }
   }
 
@@ -110,7 +111,12 @@ export class AutoPricingService {
         apply: options.apply, label, stockNote: notes.length ? notes.join('; ') : null, aiNote, outcomes, maxChangesPerRun: cfg.maxChangesPerRun,
       });
       if (options.notify) {
-        for (const text of messages) await this.integrations.notifyTelegram(text, 'notifyDailyDigest');
+        for (const text of messages) {
+          if (!(await this.integrations.notifyTelegram(text, 'notifyAgents'))) {
+            this.logger.warn('Автоцены: отчёт не отправлен — Telegram не настроен или выключено «Автоцены и реклама»');
+            break;
+          }
+        }
       }
       this.logger.log(`Автоцены (${options.apply ? 'изменение' : 'рекомендации'}): изменений ${plan.changes.length}, отложено ${plan.deferred.length}, вручную ${plan.recommendations.length}, без изменений ${plan.holds.length}, пропущено ${plan.skips.length}`);
       return { apply: options.apply, today, plan, outcomes, notes, aiNote, messages };

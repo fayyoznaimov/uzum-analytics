@@ -37,6 +37,7 @@ import { PricingController } from './modules/pricing/pricing.controller';
 import { PricingService } from './modules/pricing/pricing.service';
 import { PromoPricingService } from './modules/pricing/promo-pricing.service';
 import { AutoPricingService } from './modules/pricing/auto-pricing.service';
+import { AdAgentService } from './modules/ads/ad-agent.service';
 
 @Module({
   imports: [
@@ -61,7 +62,7 @@ import { AutoPricingService } from './modules/pricing/auto-pricing.service';
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     PrismaService, CryptoService, TelegramClient, OpenclawClient, AuthService, AuthGuard, IntegrationsService,
     CostsService, GoalsService, DashboardService, ProductsService, SyncService, SuppliesService,
-    WarehouseService, DigestService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService,
+    WarehouseService, DigestService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService, AdAgentService,
   ],
 })
 export class AppModule {}

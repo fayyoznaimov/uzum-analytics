@@ -145,6 +145,17 @@ export class PromoPricingService {
     return { shopExternalId, positions };
   }
 
+  /** Shop ID кабинета: из настроек UZUM_INTERNAL или активного магазина. */
+  async cabinetShopId(): Promise<string> {
+    return (await this.session()).shopExternalId;
+  }
+
+  /** Запрос к API кабинета (любой раздел) с токеном UZUM_INTERNAL — для агента по рекламе. */
+  async cabinet(method: 'GET' | 'POST', url: string, params?: Record<string, string | number>, body?: unknown): Promise<{ shopExternalId: string; body: any }> {
+    const { token, shopExternalId } = await this.session();
+    return { shopExternalId, body: await this.request(method, url, token, params, body) };
+  }
+
   /**
    * Запас SKU по данным кабинета: GET api-seller.uzum.uz/api/seller/shop/{shopId}/product/getProducts
    * (skuList[].avgdsales, turnover, forecastOutOfStock). raw — первая страница как есть, для проверки полей.

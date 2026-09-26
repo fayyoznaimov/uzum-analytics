@@ -21,6 +21,7 @@ class SaveIntegrationDto {
   @IsOptional() @IsBoolean() notifySupplyStatus?: boolean;
   @IsOptional() @IsBoolean() notifySlotFound?: boolean;
   @IsOptional() @IsBoolean() notifyDailyDigest?: boolean;
+  @IsOptional() @IsBoolean() notifyAgents?: boolean;
 }
 
 @UseGuards(AuthGuard)
