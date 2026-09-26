@@ -575,6 +575,8 @@ export type AutoPricingReportOptions = {
   /** Время запуска для заголовка, «26.09 09:30». */
   label: string;
   stockNote: string | null;
+  /** Итог ИИ-проверки: «проверено моделью …» или почему не выполнена. */
+  aiNote?: string | null;
   outcomes?: AutoPricingOutcome[];
   maxChangesPerRun: number;
 };
@@ -597,6 +599,7 @@ export function formatAutoPricingReport(plan: AutoPricingPlan, options: AutoPric
     `🤖 Автоцены — ${options.label}`,
     options.apply ? 'Режим: изменение цен включено' : 'Режим: только рекомендации — цены не меняются',
   ];
+  if (options.aiNote) lines.push(`🧠 ${options.aiNote}`);
   if (options.stockNote) lines.push(`⚠️ ${options.stockNote}`);
   lines.push('');
   if (plan.changes.length) {

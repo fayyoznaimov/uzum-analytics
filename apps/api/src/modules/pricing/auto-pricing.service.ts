@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { applyAiPriceReview, buildAiPriceReviewPrompt, parseAiPriceReview } from '../../common/ai-price-review';
 import { ADVERTISING_EXPENSE_CODES, advertisingRateTimeline, baseAdvertisingCode, ORDER_BOOST_CODE, TOP_PROMOTION_CODE } from '../../common/advertising';
 import {
   adSharePercent,
@@ -23,6 +24,7 @@ import {
   StockForecast,
   tashkentDay,
 } from '../../common/auto-pricing';
+import { DEFAULT_OPENCLAW_MODEL, OpenclawClient } from '../../common/openclaw.client';
 import { classifyStoredOrder } from '../../common/order-state';
 import { PrismaService } from '../../common/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
@@ -42,6 +44,7 @@ export type AutoPricingRunResult = {
   plan: AutoPricingPlan;
   outcomes: AutoPricingOutcome[];
   notes: string[];
+  aiNote: string | null;
   messages: string[];
 };
 
@@ -65,6 +68,7 @@ export class AutoPricingService {
     private readonly integrations: IntegrationsService,
     private readonly pricing: PricingService,
     private readonly promo: PromoPricingService,
+    private readonly openclaw: OpenclawClient,
   ) {}
 
   @Cron(process.env.AUTO_PRICING_CRON || '30 9,19 * * *', { name: 'auto-pricing', timeZone: 'Asia/Tashkent' })
@@ -97,20 +101,44 @@ export class AutoPricingService {
       const today = tashkentDay(now);
       const cfg = this.config();
       const { inputs, notes } = await this.collect(now, today);
-      const plan = planAutoPricingRun(inputs.map((input) => evaluateSku(input, today, cfg)), cfg);
+      const rulesPlan = planAutoPricingRun(inputs.map((input) => evaluateSku(input, today, cfg)), cfg);
+      const { plan, aiNote } = await this.aiReview(rulesPlan, inputs, today, options.apply);
       const outcomes = options.apply ? await this.applyChanges(plan.changes, inputs) : [];
 
       const label = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Asia/Tashkent', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(now);
       const messages = formatAutoPricingReport(plan, {
-        apply: options.apply, label, stockNote: notes.length ? notes.join('; ') : null, outcomes, maxChangesPerRun: cfg.maxChangesPerRun,
+        apply: options.apply, label, stockNote: notes.length ? notes.join('; ') : null, aiNote, outcomes, maxChangesPerRun: cfg.maxChangesPerRun,
       });
       if (options.notify) {
         for (const text of messages) await this.integrations.notifyTelegram(text, 'notifyDailyDigest');
       }
       this.logger.log(`Автоцены (${options.apply ? 'изменение' : 'рекомендации'}): изменений ${plan.changes.length}, отложено ${plan.deferred.length}, вручную ${plan.recommendations.length}, без изменений ${plan.holds.length}, пропущено ${plan.skips.length}`);
-      return { apply: options.apply, today, plan, outcomes, notes, messages };
+      return { apply: options.apply, today, plan, outcomes, notes, aiNote, messages };
     } finally {
       this.running = false;
+    }
+  }
+
+  /**
+   * ИИ-проверка изменений, предложенных правилами (Claude через OpenClaw на сервере).
+   * ИИ недоступен: в режиме изменений ничего не меняем, в режиме рекомендаций показываем решения правил с пометкой.
+   */
+  private async aiReview(plan: AutoPricingPlan, inputs: AutoPricingSkuInput[], today: string, apply: boolean): Promise<{ plan: AutoPricingPlan; aiNote: string | null }> {
+    if (process.env.AUTO_PRICING_AI === 'false') return { plan, aiNote: 'ИИ-проверка выключена (AUTO_PRICING_AI=false) — решения только по правилам' };
+    if (!plan.changes.length) return { plan, aiNote: null };
+    const model = process.env.AUTO_PRICING_AI_MODEL || DEFAULT_OPENCLAW_MODEL;
+    try {
+      const prompt = buildAiPriceReviewPrompt(plan.changes, new Map(inputs.map((input) => [input.skuId, input])), today);
+      const result = await this.openclaw.run(prompt, { model, thinking: 'low', timeoutSec: 300 });
+      const review = parseAiPriceReview(result.text, plan.changes);
+      const approved = review.filter((row) => row.verdict !== 'REJECT').length;
+      return { plan: applyAiPriceReview(plan, review), aiNote: `Проверено ИИ (${result.model || model}): одобрено ${approved} из ${review.length}` };
+    } catch (error: any) {
+      const message = String(error?.message || error);
+      this.logger.warn(`Автоцены: ИИ-проверка не выполнена — ${message}`);
+      return apply
+        ? { plan: applyAiPriceReview(plan, []), aiNote: `ИИ-проверка не выполнена (${message}) — цены в этот запуск не меняются` }
+        : { plan, aiNote: `ИИ-проверка не выполнена (${message}) — ниже решения только по правилам` };
     }
   }
 

@@ -10,6 +10,7 @@
  */
 import { IntegrationType } from '@prisma/client';
 import { CryptoService } from '../src/common/crypto.service';
+import { OpenclawClient } from '../src/common/openclaw.client';
 import { PrismaService } from '../src/common/prisma.service';
 import { TelegramClient } from '../src/common/telegram.client';
 import { IntegrationsService } from '../src/modules/integrations/integrations.service';
@@ -40,7 +41,7 @@ async function main() {
   } as unknown as IntegrationsService;
   const pricing = new PricingService(prisma, integrations);
   const promo = new PromoPricingService(prisma, integrations, pricing);
-  const service = new AutoPricingService(prisma, integrations, pricing, promo);
+  const service = new AutoPricingService(prisma, integrations, pricing, promo, new OpenclawClient());
   try {
     if (flag('dump-stock')) {
       const { forecasts, raw } = await promo.cabinetStock();

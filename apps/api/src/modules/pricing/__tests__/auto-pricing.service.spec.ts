@@ -11,7 +11,7 @@ const DAY = 86_400_000;
 const daysAgo = (days: number) => new Date(Date.now() - days * DAY);
 
 /** Один маржинальный SKU с потоком (7 выкупов за неделю, до этого почти ничего) и один «не используется». */
-function setup(patch: { promoPositions?: any[]; stockError?: boolean; history?: any[] } = {}) {
+function setup(patch: { promoPositions?: any[]; stockError?: boolean; history?: any[]; aiText?: string | Error } = {}) {
   const orders = Array.from({ length: 7 }, (_, index) => ({
     status: 'TO_WITHDRAW', state: 'PAID', paidAt: daysAgo(index + 1), issuedAt: daysAgo(index + 1), returnedUnits: 0,
     payout: 22_500, payoutReported: true, grossRevenue: 30_000,
@@ -49,8 +49,10 @@ function setup(patch: { promoPositions?: any[]; stockError?: boolean; history?: 
       : vi.fn().mockResolvedValue({ shopExternalId: '92776', raw: {}, forecasts: [{ skuId: '100', quantity: 40, avgDailySales: 1, turnoverDays: 40, outOfStockDays: null }] }),
     sendPromoPrice: vi.fn(),
   };
-  const service = new AutoPricingService(prisma as any, integrations as any, pricing as any, promo as any);
-  return { service, prisma, integrations, pricing, promo };
+  const aiText = patch.aiText ?? '[{"skuId":"100","verdict":"APPROVE","price":null,"comment":"спрос растёт, запас есть"}]';
+  const openclaw = { run: aiText instanceof Error ? vi.fn().mockRejectedValue(aiText) : vi.fn().mockResolvedValue({ text: aiText, model: 'claude-sonnet-5', provider: 'claude-cli', usage: null }) };
+  const service = new AutoPricingService(prisma as any, integrations as any, pricing as any, promo as any, openclaw as any);
+  return { service, prisma, integrations, pricing, promo, openclaw };
 }
 
 describe('AutoPricingService', () => {
@@ -76,6 +78,26 @@ describe('AutoPricingService', () => {
     expect([skuId, price]).toEqual(['100', 30_600]);
     expect(options).toMatchObject({ dryRun: false, source: 'auto', rule: 'FLOW', maxStepPercent: 5, context: { role: 'MARGINAL', stock: 40, units7: 7 } });
     expect(result.outcomes).toEqual([{ skuId: '100', ok: true, message: 'Uzum показывает 30600' }]);
+  });
+
+  it('ИИ отклонил — цена не меняется, причина в отчёте', async () => {
+    const { service, pricing } = setup({ aiText: '[{"skuId":"100","verdict":"REJECT","comment":"рост из-за акции конкурента"}]' });
+    const result = await service.run({ apply: true, notify: false });
+    expect(pricing.sendPrice).not.toHaveBeenCalled();
+    expect(result.aiNote).toContain('одобрено 0 из 1');
+    expect(result.plan.holds.find((row) => row.skuId === '100')?.reason).toContain('ИИ отклонил: рост из-за акции конкурента');
+  });
+
+  it('ИИ недоступен: в режиме изменений ничего не меняем, в режиме рекомендаций — решения правил с пометкой', async () => {
+    const applied = setup({ aiText: new Error('OpenClaw не ответил за 330 с') });
+    const result = await applied.service.run({ apply: true, notify: false });
+    expect(applied.pricing.sendPrice).not.toHaveBeenCalled();
+    expect(result.aiNote).toContain('цены в этот запуск не меняются');
+
+    const advised = setup({ aiText: new Error('OpenClaw не ответил за 330 с') });
+    const advice = await advised.service.run({ apply: false, notify: false });
+    expect(advice.plan.changes).toHaveLength(1);
+    expect(advice.messages[0]).toContain('решения только по правилам');
   });
 
   it('цена в акции на лимите — рекомендация вместо изменения', async () => {
