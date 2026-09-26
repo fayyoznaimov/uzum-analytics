@@ -15,9 +15,13 @@ export type SendPriceOptions = {
   allowDuringPromo?: boolean;
   source?: string;
   reason?: string;
+  /** Правило автоцен — пишется в PriceChange.rule. */
+  rule?: string;
+  /** Данные решения автоцен — пишутся в PriceChange.context. */
+  context?: Record<string, unknown>;
 };
 
-type LiveSku = {
+export type LiveSku = {
   productExternalId: string;
   skuExternalId: string;
   title: string;
@@ -85,8 +89,8 @@ export class PricingService {
     return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : null;
   }
 
-  /** Свежая цена SKU прямо из Uzum: сохранённая в БД может отставать на интервал синхронизации. */
-  private async readLiveSku(externalShopId: string, skuExternalId: string, token: string): Promise<LiveSku | null> {
+  /** Все SKU магазина из Uzum постранично; onSku возвращает true, чтобы остановиться. */
+  private async scanLiveSkus(externalShopId: string, token: string, onSku: (sku: LiveSku) => boolean | void): Promise<void> {
     const pageLimit = Math.max(1, Number(process.env.PRODUCT_SYNC_MAX_PAGES || 100));
     for (let page = 0; page < pageLimit; page++) {
       const data = await this.request('GET', `/v1/product/shop/${externalShopId}`, token, { page, size: 100 });
@@ -94,23 +98,45 @@ export class PricingService {
       if (!products) throw new Error(`/v1/product/shop/${externalShopId} returned an unrecognized payload`);
       for (const item of products) {
         const skus = ['skus', 'skuList', 'variants', 'items'].map((key) => item?.[key]).find(Array.isArray) || [];
-        const sku = skus.find((row: any) => String(row?.skuId ?? row?.id ?? '') === skuExternalId);
-        if (!sku) continue;
-        return {
-          productExternalId: String(item.productId ?? item.id ?? item.cardId ?? ''),
-          skuExternalId,
-          title: String(sku.skuFullTitle ?? sku.productTitle ?? item.title ?? ''),
-          skuTitle: sku.skuTitle ? String(sku.skuTitle) : null,
-          price: this.int(sku.price ?? sku.sellPrice),
-          blocked: Boolean(sku.blocked),
-          archived: Boolean(sku.archived),
-          inPromo: Boolean(sku.specialOffer?.inOffer),
-          promoName: sku.specialOffer?.promoName ?? null,
-        };
+        for (const sku of skus) {
+          const skuExternalId = String(sku?.skuId ?? sku?.id ?? '');
+          if (!skuExternalId) continue;
+          const stop = onSku({
+            productExternalId: String(item.productId ?? item.id ?? item.cardId ?? ''),
+            skuExternalId,
+            title: String(sku.skuFullTitle ?? sku.productTitle ?? item.title ?? ''),
+            skuTitle: sku.skuTitle ? String(sku.skuTitle) : null,
+            price: this.int(sku.price ?? sku.sellPrice),
+            blocked: Boolean(sku.blocked),
+            archived: Boolean(sku.archived),
+            inPromo: Boolean(sku.specialOffer?.inOffer),
+            promoName: sku.specialOffer?.promoName ?? null,
+          });
+          if (stop) return;
+        }
       }
       if (products.length < 100) break;
     }
-    return null;
+  }
+
+  /** Свежая цена SKU прямо из Uzum: сохранённая в БД может отставать на интервал синхронизации. */
+  private async readLiveSku(externalShopId: string, skuExternalId: string, token: string): Promise<LiveSku | null> {
+    let found: LiveSku | null = null;
+    await this.scanLiveSkus(externalShopId, token, (sku) => {
+      if (sku.skuExternalId !== skuExternalId) return false;
+      found = sku;
+      return true;
+    });
+    return found;
+  }
+
+  /** Текущие цены и статусы всех SKU магазина из Uzum OpenAPI (для автоцен). */
+  async liveSkus(externalShopId: string): Promise<Map<string, LiveSku>> {
+    const cfg = await this.integrations.getPlain(IntegrationType.UZUM);
+    if (!cfg?.token) throw new BadRequestException('Uzum API token не настроен');
+    const result = new Map<string, LiveSku>();
+    await this.scanLiveSkus(externalShopId, cfg.token, (sku) => { result.set(sku.skuExternalId, sku); });
+    return result;
   }
 
   /** Полная себестоимость единицы из актуальной записи SkuCost (null, если не заведена). */
@@ -196,6 +222,8 @@ export class PricingService {
         verifiedPrice: extra.verifiedPrice ?? null,
         source: options.source || 'manual',
         reason: options.reason || null,
+        rule: options.rule || null,
+        context: options.context ? (options.context as Prisma.InputJsonValue) : undefined,
         error: extra.error || null,
       },
     });

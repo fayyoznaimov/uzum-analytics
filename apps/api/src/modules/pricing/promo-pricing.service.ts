@@ -13,6 +13,7 @@ import {
   PromoSku,
   UZUM_PROMO_API_BASE,
 } from '../../common/promo-pricing';
+import { cabinetProductsPageSize, parseCabinetProducts, StockForecast } from '../../common/auto-pricing';
 import { PrismaService } from '../../common/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { PricingService } from './pricing.service';
@@ -26,6 +27,8 @@ export type SendPromoPriceOptions = {
   maxStepPercent?: number;
   source?: string;
   reason?: string;
+  rule?: string;
+  context?: Record<string, unknown>;
 };
 
 export type PromoPosition = PromoSku & { saleTitle: string; saleStatus: string; startDate: string | null; finishDate: string | null };
@@ -34,6 +37,9 @@ const SALES_PAGE_SIZE = 24;
 const SALES_MAX_PAGES = 20;
 const PRODUCTS_PAGE_SIZE = 24;
 const PRODUCTS_MAX_PAGES = 50;
+const CABINET_API_BASE = 'https://api-seller.uzum.uz/api/seller';
+const CABINET_PRODUCTS_PAGE_SIZE = 100;
+const CABINET_PRODUCTS_MAX_PAGES = 20;
 
 /**
  * Цены в акциях Uzum через внутренний API кабинета (токен интеграции UZUM_INTERNAL).
@@ -58,7 +64,8 @@ export class PromoPricingService {
   }
 
   private async request(method: 'GET' | 'POST', path: string, token: string, params?: Record<string, string | number>, body?: unknown, attempt = 0): Promise<any> {
-    const url = new URL(UZUM_PROMO_API_BASE + path);
+    // Абсолютный URL — другие разделы API кабинета (api-seller.uzum.uz) с тем же токеном.
+    const url = new URL(/^https:\/\//.test(path) ? path : UZUM_PROMO_API_BASE + path);
     Object.entries(params || {}).forEach(([key, value]) => url.searchParams.append(key, String(value)));
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
@@ -139,6 +146,26 @@ export class PromoPricingService {
   }
 
   /**
+   * Запас SKU по данным кабинета: GET api-seller.uzum.uz/api/seller/shop/{shopId}/product/getProducts
+   * (skuList[].avgdsales, turnover, forecastOutOfStock). raw — первая страница как есть, для проверки полей.
+   */
+  async cabinetStock(now = new Date()): Promise<{ shopExternalId: string; forecasts: StockForecast[]; raw: unknown }> {
+    const { token, shopExternalId } = await this.session();
+    const url = `${CABINET_API_BASE}/shop/${shopExternalId}/product/getProducts`;
+    const extra = new URLSearchParams(process.env.AUTO_PRICING_STOCK_QUERY || '');
+    const forecasts: StockForecast[] = [];
+    let raw: unknown = null;
+    for (let page = 0; page < CABINET_PRODUCTS_MAX_PAGES; page++) {
+      const params: Record<string, string | number> = { ...Object.fromEntries(extra), page, size: CABINET_PRODUCTS_PAGE_SIZE };
+      const body = await this.request('GET', url, token, params);
+      if (page === 0) raw = body;
+      forecasts.push(...parseCabinetProducts(body, now));
+      if (cabinetProductsPageSize(body) < CABINET_PRODUCTS_PAGE_SIZE) break;
+    }
+    return { shopExternalId, forecasts, raw };
+  }
+
+  /**
    * Изменение цены SKU в акции. Без dryRun: false ничего не отправляет.
    * Каждая попытка пишется в PriceChange с kind = PROMO.
    */
@@ -206,6 +233,8 @@ export class PromoPricingService {
         verifiedPrice: extra.verifiedPrice ?? null,
         source: options.source || 'manual',
         reason: options.reason || null,
+        rule: options.rule || null,
+        context: options.context ? (options.context as Prisma.InputJsonValue) : undefined,
         error: extra.error || null,
       },
     });

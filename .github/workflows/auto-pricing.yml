@@ -1,0 +1,43 @@
+# Автоцены — ручной запуск из GitHub (Actions → «Автоцены» → Run workflow).
+# Выполняется на сервере ParisaUbuntu тем же self-hosted runner, что и деплой, в рабочей
+# копии ~/uzum с её .env: БД и токены есть только там. Токены в лог не попадают.
+#
+# Цены отсюда НЕ меняются — только отчёт (рекомендации). Реальные изменения делает сам API
+# по расписанию 09:30 и 19:30, когда в .env включено AUTO_PRICING_APPLY=true.
+name: Автоцены
+
+on:
+  workflow_dispatch:
+    inputs:
+      telegram:
+        description: 'Отправить отчёт в Telegram'
+        type: boolean
+        default: false
+      dump_stock:
+        description: 'Показать сырой ответ getProducts кабинета (проверить поля запаса) вместо отчёта'
+        type: boolean
+        default: false
+
+# Та же группа, что у деплоя: не запускаемся посреди обновления рабочей копии.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  auto-pricing:
+    runs-on: [self-hosted, uzum-server]
+    timeout-minutes: 15
+    steps:
+      - name: Автоцены (рекомендации)
+        env:
+          TELEGRAM: ${{ inputs.telegram }}
+          DUMP_STOCK: ${{ inputs.dump_stock }}
+        run: |
+          set -euo pipefail
+          args=()
+          [ "$TELEGRAM" = "true" ] && args+=(--telegram)
+          [ "$DUMP_STOCK" = "true" ] && args+=(--dump-stock)
+          cd ~/uzum
+          set -a && . ./.env && set +a
+          echo "auto-pricing.ts ${args[*]:-}"
+          npx tsx apps/api/scripts/auto-pricing.ts "${args[@]}"

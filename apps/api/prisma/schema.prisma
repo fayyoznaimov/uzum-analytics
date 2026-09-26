@@ -606,7 +606,7 @@ model SyncRun {
   @@index([startedAt])
 }
 
-/// Журнал изменений цен через sendPriceData: и dry-run, и отказы защиты, и реальные отправки.
+/// Журнал изменений цен (базовых и в акциях): и dry-run, и отказы защиты, и реальные отправки.
 model PriceChange {
   id                String   @id @default(cuid())
   shopExternalId    String
@@ -625,6 +625,10 @@ model PriceChange {
   verifiedPrice     Int?
   source            String   @default("manual")
   reason            String?
+  /// Правило автоцен (LOCO_DEFICIT, LOCO_RESTORE, DEFICIT, FLOW, FLOW_REVERT, SLOW); null — не автоцены.
+  rule              String?
+  /// Данные, на которых автоцены приняли решение: остаток, дни запаса, выкупы, маржа.
+  context           Json?
   error             String?
   createdAt         DateTime @default(now())
 

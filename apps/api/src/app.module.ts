@@ -36,6 +36,7 @@ import { FinancialStatementsService } from './modules/financial-statements/finan
 import { PricingController } from './modules/pricing/pricing.controller';
 import { PricingService } from './modules/pricing/pricing.service';
 import { PromoPricingService } from './modules/pricing/promo-pricing.service';
+import { AutoPricingService } from './modules/pricing/auto-pricing.service';
 
 @Module({
   imports: [
@@ -60,7 +61,7 @@ import { PromoPricingService } from './modules/pricing/promo-pricing.service';
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     PrismaService, CryptoService, TelegramClient, OpenclawClient, AuthService, AuthGuard, IntegrationsService,
     CostsService, GoalsService, DashboardService, ProductsService, SyncService, SuppliesService,
-    WarehouseService, DigestService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService,
+    WarehouseService, DigestService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService,
   ],
 })
 export class AppModule {}
