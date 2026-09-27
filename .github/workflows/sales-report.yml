@@ -1,0 +1,23 @@
+# Разбор падения продаж — ручной запуск из GitHub (Actions → «Анализ продаж» → Run workflow).
+# Выполняется на сервере ParisaUbuntu в рабочей копии ~/uzum с её .env: БД есть только там.
+# Только чтение: заказы по дням, выходные по товарам и SKU, цены в заказах, остатки, реклама, журнал цен.
+name: Анализ продаж
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  sales-report:
+    runs-on: [self-hosted, uzum-server]
+    timeout-minutes: 10
+    steps:
+      - name: Анализ продаж
+        run: |
+          set -euo pipefail
+          cd ~/uzum
+          set -a && . ./.env && set +a
+          npx tsx apps/api/scripts/sales-report.ts
