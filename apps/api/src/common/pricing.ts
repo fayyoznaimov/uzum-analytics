@@ -125,9 +125,21 @@ export function checkPriceGuards(input: PriceGuardInput): PriceGuardResult {
   return { violations, deltaPercent, floor };
 }
 
+/**
+ * Зачёркнутая цена (fullPrice) «цена + markupPercent%», округлённая вверх до 1 000 сум.
+ * Нужна вместо нереальных «было 600 000» — такие скидки выглядят недостоверно.
+ */
+export function proposeFullPrice(price: number, markupPercent = 20): number {
+  const raw = price * (1 + Math.max(1, markupPercent) / 100);
+  return Math.max(Math.ceil(raw / 1000) * 1000, price + 1000);
+}
+
 export function planPriceChange(input: PriceChangeInput): PriceChangePlan {
-  const { violations, deltaPercent, floor } = checkPriceGuards(input);
+  const guards = checkPriceGuards(input);
+  const { deltaPercent, floor } = guards;
   const fullPrice = input.fullPrice ?? null;
+  // Меняем только зачёркнутую цену — цена продажи та же, это не «нет изменений».
+  const violations = fullPrice !== null ? guards.violations.filter((row) => row.code !== 'NO_CHANGE') : guards.violations;
   if (fullPrice !== null && (!isUzumPrice(fullPrice) || fullPrice < input.newPrice)) {
     violations.push({ code: 'INVALID_FULL_PRICE', message: 'Полная цена должна быть целым числом и не ниже цены продажи' });
   }

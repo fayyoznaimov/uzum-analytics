@@ -1,0 +1,46 @@
+# Честные зачёркнутые цены — ручной запуск из GitHub (Actions → «Зачёркнутые цены» → Run workflow).
+# Выполняется на сервере ParisaUbuntu в рабочей копии ~/uzum с её .env: БД и токен Uzum есть только там.
+# Без галочки «apply» — только список «было → станет». Цена продажи не меняется, только «цена до скидки».
+# SKU в акции пропускаются — запускать после окончания акции.
+name: Зачёркнутые цены
+
+on:
+  workflow_dispatch:
+    inputs:
+      markup:
+        description: 'Зачёркнутая цена = цена продажи + N% (по умолчанию 20)'
+        required: false
+        default: '20'
+      sku:
+        description: 'Только один SKU ID (пусто — все)'
+        required: false
+        default: ''
+      apply:
+        description: 'Реально изменить в Uzum (без галочки — только список)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  full-prices:
+    runs-on: [self-hosted, uzum-server]
+    timeout-minutes: 30
+    steps:
+      - name: Зачёркнутые цены
+        env:
+          MARKUP: ${{ inputs.markup }}
+          SKU: ${{ inputs.sku }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          set -euo pipefail
+          [[ "$MARKUP" =~ ^[0-9]+$ ]] || { echo "::error::markup должен быть целым числом"; exit 1; }
+          [ -z "$SKU" ] || [[ "$SKU" =~ ^[0-9]+$ ]] || { echo "::error::SKU должен быть числом"; exit 1; }
+          args=(--markup "$MARKUP")
+          [ -n "$SKU" ] && args+=(--sku "$SKU")
+          [ "$APPLY" = "true" ] && args+=(--apply)
+          cd ~/uzum
+          set -a && . ./.env && set +a
+          npx tsx apps/api/scripts/set-full-prices.ts "${args[@]}"

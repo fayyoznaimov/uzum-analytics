@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planPriceChange, PriceChangeInput } from '../pricing';
+import { planPriceChange, PriceChangeInput, proposeFullPrice } from '../pricing';
 
 const base: PriceChangeInput = {
   shopExternalId: '92776',
@@ -23,6 +23,20 @@ describe('planPriceChange', () => {
   it('sends fullPrice only when given and not below the sell price', () => {
     expect(planPriceChange({ ...base, fullPrice: 65_000 }).body.skuList[0]).toEqual({ skuId: 11100529, sellPrice: 58_900, fullPrice: 65_000 });
     expect(codes({ fullPrice: 50_000 })).toContain('INVALID_FULL_PRICE');
+  });
+
+  it('allows changing only the crossed-out price (same sell price)', () => {
+    const plan = planPriceChange({ ...base, newPrice: 59_400, fullPrice: 72_000 });
+    expect(plan.allowed).toBe(true);
+    expect(plan.body.skuList[0]).toEqual({ skuId: 11100529, sellPrice: 59_400, fullPrice: 72_000 });
+    expect(codes({ newPrice: 59_400 })).toContain('NO_CHANGE');
+  });
+
+  it('proposes a realistic crossed-out price: +20%, rounded up to 1 000', () => {
+    expect(proposeFullPrice(169_000)).toBe(203_000);
+    expect(proposeFullPrice(69_200)).toBe(84_000);
+    expect(proposeFullPrice(59_400, 15)).toBe(69_000);
+    expect(proposeFullPrice(1_000, 1)).toBe(2_000);
   });
 
   it('sends skuTitle only when given', () => {

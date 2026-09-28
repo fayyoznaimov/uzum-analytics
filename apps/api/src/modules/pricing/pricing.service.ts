@@ -27,6 +27,8 @@ export type LiveSku = {
   title: string;
   skuTitle: string | null;
   price: number | null;
+  /** Зачёркнутая цена («цена до скидки»), если Uzum её отдаёт. */
+  fullPrice: number | null;
   blocked: boolean;
   archived: boolean;
   inPromo: boolean;
@@ -107,6 +109,7 @@ export class PricingService {
             title: String(sku.skuFullTitle ?? sku.productTitle ?? item.title ?? ''),
             skuTitle: sku.skuTitle ? String(sku.skuTitle) : null,
             price: this.int(sku.price ?? sku.sellPrice),
+            fullPrice: this.int(sku.fullPrice ?? sku.oldPrice),
             blocked: Boolean(sku.blocked),
             archived: Boolean(sku.archived),
             inPromo: Boolean(sku.specialOffer?.inOffer),
