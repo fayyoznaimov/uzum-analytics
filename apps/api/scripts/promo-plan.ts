@@ -3,6 +3,8 @@
  *
  *   npx tsx apps/api/scripts/promo-plan.ts              все SKU магазина
  *   ... --sale 394                                     только товары, подходящие для акции 394 (из кабинета)
+ *   ... --sale 394 --send                              ещё и список «цена в акции сейчас → по плану» для SKU, уже добавленных в акцию
+ *   ... --sale 394 --send --apply [--max-step 60]      реально поставить эти цены (через PromoPricingService, со всеми защитами)
  *
  * Правила — в src/common/promo-plan.ts: якорь — цена, по которой SKU реально выкупали за 28 (90) дней,
  * мало остатка — минимальная скидка, нет продаж — ниже якоря, поток — чуть выше; потолок — базовая −1%,
@@ -25,8 +27,15 @@ function arg(name: string) {
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
+const flag = (name: string) => process.argv.includes(`--${name}`);
+
 async function main() {
   const saleId = arg('sale');
+  const send = flag('send');
+  const apply = flag('apply');
+  const maxStep = Number(arg('max-step') ?? 60);
+  if (send && !saleId) throw new Error('--send: нужен --sale');
+  if (!Number.isFinite(maxStep) || maxStep <= 0 || maxStep > 90) throw new Error('--max-step: от 1 до 90 (%)');
   if (saleId !== undefined && !/^\d+$/.test(saleId)) throw new Error('--sale: номер акции');
   const prisma = new PrismaService();
   const crypto = new CryptoService();

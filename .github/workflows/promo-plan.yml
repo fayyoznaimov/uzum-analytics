@@ -1,6 +1,7 @@
 # План цен для участия в акции — ручной запуск из GitHub (Actions → «План цен в акции» → Run workflow).
 # Выполняется на сервере ParisaUbuntu в рабочей копии ~/uzum с её .env: БД и токены Uzum есть только там.
-# Только рекомендации: ничего не меняет ни в Uzum, ни в БД.
+# Без галочек — только рекомендации. «send» — список «в акции сейчас → по плану» для SKU, уже добавленных в акцию;
+# «send» + «apply» — реально поставить эти цены в акции (PromoPricingService, защиты, журнал PriceChange).
 name: План цен в акции
 
 on:
@@ -10,6 +11,18 @@ on:
         description: 'Номер акции Uzum (например 394) — только подходящие товары; пусто — все SKU'
         required: false
         default: ''
+      send:
+        description: 'Показать цены в акции «сейчас → по плану» (нужен номер акции)'
+        type: boolean
+        default: false
+      apply:
+        description: 'Реально поставить цены в акции (вместе с send)'
+        type: boolean
+        default: false
+      max_step:
+        description: 'Максимальное изменение цены в акции за раз, %'
+        required: false
+        default: '60'
 
 concurrency:
   group: deploy
@@ -18,16 +31,22 @@ concurrency:
 jobs:
   promo-plan:
     runs-on: [self-hosted, uzum-server]
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - name: План цен в акции
         env:
           SALE: ${{ inputs.sale }}
+          SEND: ${{ inputs.send }}
+          APPLY: ${{ inputs.apply }}
+          MAX_STEP: ${{ inputs.max_step }}
         run: |
           set -euo pipefail
           [ -z "$SALE" ] || [[ "$SALE" =~ ^[0-9]+$ ]] || { echo "::error::номер акции должен быть числом"; exit 1; }
-          args=()
+          [[ "$MAX_STEP" =~ ^[0-9]+$ ]] || { echo "::error::max_step должен быть целым числом"; exit 1; }
+          args=(--max-step "$MAX_STEP")
           [ -n "$SALE" ] && args+=(--sale "$SALE")
+          [ "$SEND" = "true" ] && args+=(--send)
+          [ "$SEND" = "true" ] && [ "$APPLY" = "true" ] && args+=(--apply)
           cd ~/uzum
           set -a && . ./.env && set +a
           npx tsx apps/api/scripts/promo-plan.ts "${args[@]}"
