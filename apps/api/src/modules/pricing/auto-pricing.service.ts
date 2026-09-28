@@ -148,8 +148,11 @@ export class AutoPricingService {
     }
   }
 
-  /** Входные данные по всем SKU магазина. Сбой необязательных источников — заметка в отчёте, а не отказ. */
-  private async collect(now: Date, today: string): Promise<{ inputs: AutoPricingSkuInput[]; notes: string[] }> {
+  /**
+   * Входные данные по всем SKU магазина. Сбой необязательных источников — заметка в отчёте, а не отказ.
+   * Открыт и для скрипта плана цен в акции (scripts/promo-plan.ts).
+   */
+  async collect(now: Date, today: string): Promise<{ inputs: AutoPricingSkuInput[]; notes: string[] }> {
     const notes: string[] = [];
     const shop = await this.prisma.shop.findFirst({ where: { isActive: true } });
     if (!shop) throw new Error('нет активного магазина');
@@ -269,6 +272,7 @@ export class AutoPricingService {
         unitCost: unitCost && unitCost > 0 ? unitCost : null,
         forecast,
         buyouts: buyouts.bySku.get(sku.id) ?? {},
+        buyoutRevenue: buyouts.revenueBySku.get(sku.id) ?? {},
         payoutRatio: payoutRatio(productMoney) ?? shopPayoutRatio,
         adPercent: adSharePercent(adSpend.get(productId) ?? 0, productMoney),
         taxPercent,

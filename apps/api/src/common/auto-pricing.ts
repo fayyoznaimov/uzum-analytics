@@ -127,6 +127,8 @@ export type AutoPricingSkuInput = {
   forecast: StockForecast | null;
   /** Выкупленные штуки по дням Asia/Tashkent (YYYY-MM-DD → шт.). */
   buyouts: Record<string, number>;
+  /** Выручка этих выкупов по дням (цена покупателя × выкупленные шт.). */
+  buyoutRevenue?: Record<string, number>;
   /** Выплата Uzum / цена продажи по выкупам товара (null — нет выкупов с известной выплатой). */
   payoutRatio: number | null;
   /** Фактический расход на рекламу товара / выручка выкупов, % (null — не рассчитан). */
@@ -287,6 +289,8 @@ export type BuyoutMoney = { gross: number; payout: number; payoutGross: number }
  */
 export function aggregateBuyouts(orders: BuyoutOrder[]) {
   const bySku = new Map<string, Record<string, number>>();
+  /** Сколько заплатили покупатели за выкупленные штуки SKU по дням — средняя цена продаж = выручка / штуки. */
+  const revenueBySku = new Map<string, Record<string, number>>();
   const products = new Map<string, BuyoutMoney>();
   const shop: BuyoutMoney = { gross: 0, payout: 0, payoutGross: 0 };
   const add = (target: BuyoutMoney, gross: number, payout: number, payoutGross: number) => {
@@ -302,6 +306,11 @@ export function aggregateBuyouts(orders: BuyoutOrder[]) {
         const row = bySku.get(item.skuId) ?? {};
         row[day] = (row[day] ?? 0) + units;
         bySku.set(item.skuId, row);
+        if (item.quantity > 0) {
+          const revenue = revenueBySku.get(item.skuId) ?? {};
+          revenue[day] = (revenue[day] ?? 0) + (Math.max(0, item.amount) * units) / item.quantity;
+          revenueBySku.set(item.skuId, revenue);
+        }
       }
       const share = itemsAmount > 0 ? Math.max(0, item.amount) / itemsAmount : 1 / order.items.length;
       const gross = order.gross * share;
@@ -315,7 +324,7 @@ export function aggregateBuyouts(orders: BuyoutOrder[]) {
       }
     }
   }
-  return { bySku, products, shop };
+  return { bySku, revenueBySku, products, shop };
 }
 
 /** Доля выплаты Uzum в цене продажи по выкупам с известной выплатой. */

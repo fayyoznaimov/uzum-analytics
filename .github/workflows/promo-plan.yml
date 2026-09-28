@@ -1,0 +1,33 @@
+# План цен для участия в акции — ручной запуск из GitHub (Actions → «План цен в акции» → Run workflow).
+# Выполняется на сервере ParisaUbuntu в рабочей копии ~/uzum с её .env: БД и токены Uzum есть только там.
+# Только рекомендации: ничего не меняет ни в Uzum, ни в БД.
+name: План цен в акции
+
+on:
+  workflow_dispatch:
+    inputs:
+      sale:
+        description: 'Номер акции Uzum (например 394) — только подходящие товары; пусто — все SKU'
+        required: false
+        default: ''
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  promo-plan:
+    runs-on: [self-hosted, uzum-server]
+    timeout-minutes: 15
+    steps:
+      - name: План цен в акции
+        env:
+          SALE: ${{ inputs.sale }}
+        run: |
+          set -euo pipefail
+          [ -z "$SALE" ] || [[ "$SALE" =~ ^[0-9]+$ ]] || { echo "::error::номер акции должен быть числом"; exit 1; }
+          args=()
+          [ -n "$SALE" ] && args+=(--sale "$SALE")
+          cd ~/uzum
+          set -a && . ./.env && set +a
+          npx tsx apps/api/scripts/promo-plan.ts "${args[@]}"
