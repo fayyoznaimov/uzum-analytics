@@ -130,7 +130,10 @@ export function checkPriceGuards(input: PriceGuardInput): PriceGuardResult {
  * Нужна вместо нереальных «было 600 000» — такие скидки выглядят недостоверно.
  */
 export function proposeFullPrice(price: number, markupPercent = 20): number {
-  const raw = price * (1 + Math.max(1, markupPercent) / 100);
+  // 0% — зачёркнутая равна базовой цене (округление вверх до 1 000, не ниже цены продажи):
+  // базовая цена — потолок «не более» в акциях, скидка в акции тогда показывается честно.
+  if (markupPercent <= 0) return Math.ceil(price / 1000) * 1000;
+  const raw = price * (1 + markupPercent / 100);
   return Math.max(Math.ceil(raw / 1000) * 1000, price + 1000);
 }
 

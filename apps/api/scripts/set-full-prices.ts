@@ -2,11 +2,14 @@
  * Честные зачёркнутые цены («цена до скидки») вместо нереальных «было 600 000»:
  *
  *   npx tsx apps/api/scripts/set-full-prices.ts                 список «было → станет», ничего не меняет
- *   ... --markup 20                                            зачёркнутая = цена продажи +20%, вверх до 1 000 (по умолчанию 20)
+ *   ... --markup 20                                            зачёркнутая = базовая цена +20%, вверх до 1 000 (по умолчанию 20);
+ *                                                              --markup 0 — зачёркнутая = базовая цена
  *   ... --sku 8108058                                          только один SKU
  *   ... --apply                                                реально отправить в Uzum (sendPriceData, цена продажи та же)
  *
- * SKU в акции пропускаются: Uzum не даёт менять их цены (sku-price-001) — запускать после окончания акции.
+ * Базовая цена не меняется: она — потолок «не более» для цены в акциях.
+ * Запускать, когда товары вне акции: в акции Uzum отвечает sku-price-001 (признак акции OpenAPI
+ * для UZUM_PROMO не отдаёт, такие SKU просто получат отказ).
  * Каждая отправка проходит защиты PricingService и пишется в журнал PriceChange (source = cli).
  * Токен Uzum берётся из БД и нигде не печатается.
  */
@@ -26,7 +29,7 @@ const fmt = (value: number | null) => (value === null ? '—' : Math.round(value
 
 async function main() {
   const markup = Number(arg('markup') ?? 20);
-  if (!Number.isFinite(markup) || markup < 5 || markup > 100) throw new Error('--markup: от 5 до 100 (%)');
+  if (!Number.isFinite(markup) || markup < 0 || markup > 100) throw new Error('--markup: от 0 до 100 (%)');
   const onlySku = arg('sku');
   const apply = flag('apply');
   const prisma = new PrismaService();
@@ -46,7 +49,7 @@ async function main() {
     const skus = [...(await pricing.liveSkus(shop.externalId)).values()]
       .filter((sku) => !onlySku || sku.skuExternalId === onlySku)
       .sort((a, b) => a.title.localeCompare(b.title));
-    console.log(`Зачёркнутая цена = цена продажи +${markup}%, вверх до 1 000 сум. Режим: ${apply ? 'ОТПРАВКА В UZUM' : 'только список, ничего не меняется'}`);
+    console.log(`Зачёркнутая цена = ${markup ? `базовая цена +${markup}%` : 'базовая цена'}, вверх до 1 000 сум. Режим: ${apply ? 'ОТПРАВКА В UZUM' : 'только список, ничего не меняется'}`);
     console.log('SKU | название | цена продажи | зачёркнутая сейчас | станет | результат');
     const counts = { sent: 0, refused: 0, promo: 0, skipped: 0, same: 0 };
     for (const sku of skus) {

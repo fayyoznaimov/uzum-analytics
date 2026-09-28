@@ -37,6 +37,8 @@ describe('planPriceChange', () => {
     expect(proposeFullPrice(69_200)).toBe(84_000);
     expect(proposeFullPrice(59_400, 15)).toBe(69_000);
     expect(proposeFullPrice(1_000, 1)).toBe(2_000);
+    expect(proposeFullPrice(199_000, 0)).toBe(199_000);
+    expect(proposeFullPrice(149_900, 0)).toBe(150_000);
   });
 
   it('sends skuTitle only when given', () => {
