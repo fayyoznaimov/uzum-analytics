@@ -137,6 +137,27 @@ export function proposeFullPrice(price: number, markupPercent = 20): number {
   return Math.max(Math.ceil(raw / 1000) * 1000, price + 1000);
 }
 
+export type FullPriceRule = { markupPercent: number; roundTo: number; caps?: Record<string, number> };
+
+/** Правило владельца (28.09.2026): +30%, вверх до 10 000; потолки по типам товара. */
+export const OWNER_FULL_PRICE_RULE: FullPriceRule = {
+  markupPercent: 30,
+  roundTo: 10_000,
+  caps: { 'сауна': 250_000, 'комплект': 250_000, 'банный': 200_000, 'лицевой': 100_000 },
+};
+
+/**
+ * Зачёркнутая цена по правилу: базовая +N%, вверх до roundTo, не выше потолка для типа товара,
+ * но никогда не ниже базовой цены (тогда — базовая, вверх до 1 000).
+ */
+export function fullPriceByRule(price: number, productType: string | null, rule: FullPriceRule): number {
+  const step = Math.max(1, rule.roundTo);
+  let target = Math.ceil((price * (1 + rule.markupPercent / 100)) / step) * step;
+  const cap = productType ? rule.caps?.[productType] : undefined;
+  if (cap !== undefined) target = Math.min(target, cap);
+  return Math.max(target, Math.ceil(price / 1000) * 1000);
+}
+
 export function planPriceChange(input: PriceChangeInput): PriceChangePlan {
   const guards = checkPriceGuards(input);
   const { deltaPercent, floor } = guards;

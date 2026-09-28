@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planPriceChange, PriceChangeInput, proposeFullPrice } from '../pricing';
+import { fullPriceByRule, OWNER_FULL_PRICE_RULE, planPriceChange, PriceChangeInput, proposeFullPrice } from '../pricing';
 
 const base: PriceChangeInput = {
   shopExternalId: '92776',
@@ -39,6 +39,22 @@ describe('planPriceChange', () => {
     expect(proposeFullPrice(1_000, 1)).toBe(2_000);
     expect(proposeFullPrice(199_000, 0)).toBe(199_000);
     expect(proposeFullPrice(149_900, 0)).toBe(150_000);
+  });
+
+  it('owner rule: +30% up to 10 000, capped per product type, never below the base price', () => {
+    const rule = OWNER_FULL_PRICE_RULE;
+    expect(fullPriceByRule(149_900, 'банный', rule)).toBe(200_000);
+    expect(fullPriceByRule(130_000, 'банный', rule)).toBe(170_000);
+    expect(fullPriceByRule(110_000, 'банный', rule)).toBe(150_000);
+    expect(fullPriceByRule(200_000, 'банный', rule)).toBe(200_000);
+    expect(fullPriceByRule(69_900, 'лицевой', rule)).toBe(100_000);
+    expect(fullPriceByRule(60_000, 'лицевой', rule)).toBe(80_000);
+    expect(fullPriceByRule(110_000, 'лицевой', rule)).toBe(110_000);
+    expect(fullPriceByRule(199_000, 'сауна', rule)).toBe(250_000);
+    expect(fullPriceByRule(249_000, 'сауна', rule)).toBe(250_000);
+    expect(fullPriceByRule(165_000, 'сауна', rule)).toBe(220_000);
+    expect(fullPriceByRule(160_000, 'комплект', rule)).toBe(210_000);
+    expect(fullPriceByRule(230_000, null, rule)).toBe(300_000);
   });
 
   it('sends skuTitle only when given', () => {

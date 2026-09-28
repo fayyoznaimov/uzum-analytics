@@ -7,6 +7,11 @@ name: Зачёркнутые цены
 on:
   workflow_dispatch:
     inputs:
+      rule:
+        description: 'owner — +30% с потолками (сауна и комплекты 250 000, банные 200 000, лицевые 100 000); markup — базовая + N%'
+        type: choice
+        options: [owner, markup]
+        default: owner
       markup:
         description: 'Зачёркнутая цена = базовая + N% (0 — равна базовой; по умолчанию 20)'
         required: false
@@ -31,6 +36,7 @@ jobs:
     steps:
       - name: Зачёркнутые цены
         env:
+          RULE: ${{ inputs.rule }}
           MARKUP: ${{ inputs.markup }}
           SKU: ${{ inputs.sku }}
           APPLY: ${{ inputs.apply }}
@@ -39,6 +45,7 @@ jobs:
           [[ "$MARKUP" =~ ^[0-9]+$ ]] || { echo "::error::markup должен быть целым числом"; exit 1; }
           [ -z "$SKU" ] || [[ "$SKU" =~ ^[0-9]+$ ]] || { echo "::error::SKU должен быть числом"; exit 1; }
           args=(--markup "$MARKUP")
+          [ "$RULE" = "owner" ] && args+=(--rule owner)
           [ -n "$SKU" ] && args+=(--sku "$SKU")
           [ "$APPLY" = "true" ] && args+=(--apply)
           cd ~/uzum
