@@ -1,0 +1,38 @@
+# Рекламный бот — ручной запуск из GitHub (Actions → «Рекламный бот» → Run workflow).
+# Выполняется на сервере ParisaUbuntu в рабочей копии ~/uzum с её .env: БД и токен кабинета есть только там.
+# Без галочки «apply» — только предложения; с ней — ставки и слова меняются так же, как по расписанию.
+name: Рекламный бот
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Реально изменить ставки и слова в кабинете'
+        type: boolean
+        default: false
+      telegram:
+        description: 'Отправить отчёт в Telegram'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  ad-bot:
+    runs-on: [self-hosted, uzum-server]
+    timeout-minutes: 20
+    steps:
+      - name: Рекламный бот
+        env:
+          APPLY: ${{ inputs.apply }}
+          TELEGRAM: ${{ inputs.telegram }}
+        run: |
+          set -euo pipefail
+          args=()
+          [ "$APPLY" = "true" ] && args+=(--apply)
+          [ "$TELEGRAM" = "true" ] && args+=(--telegram)
+          cd ~/uzum
+          set -a && . ./.env && set +a
+          npx tsx apps/api/scripts/ad-bot.ts "${args[@]}"

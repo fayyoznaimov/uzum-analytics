@@ -63,7 +63,7 @@ export class PromoPricingService {
     return { token: cfg.token.replace(/^Bearer\s+/i, '').trim(), shopExternalId, shopId: shop?.id ?? null };
   }
 
-  private async request(method: 'GET' | 'POST', path: string, token: string, params?: Record<string, string | number>, body?: unknown, attempt = 0): Promise<any> {
+  private async request(method: 'GET' | 'POST' | 'PUT', path: string, token: string, params?: Record<string, string | number>, body?: unknown, attempt = 0): Promise<any> {
     // Абсолютный URL — другие разделы API кабинета (api-seller.uzum.uz) с тем же токеном.
     const url = new URL(/^https:\/\//.test(path) ? path : UZUM_PROMO_API_BASE + path);
     Object.entries(params || {}).forEach(([key, value]) => url.searchParams.append(key, String(value)));
@@ -151,7 +151,7 @@ export class PromoPricingService {
   }
 
   /** Запрос к API кабинета (любой раздел) с токеном UZUM_INTERNAL — для агента по рекламе. */
-  async cabinet(method: 'GET' | 'POST', url: string, params?: Record<string, string | number>, body?: unknown): Promise<{ shopExternalId: string; body: any }> {
+  async cabinet(method: 'GET' | 'POST' | 'PUT', url: string, params?: Record<string, string | number>, body?: unknown): Promise<{ shopExternalId: string; body: any }> {
     const { token, shopExternalId } = await this.session();
     return { shopExternalId, body: await this.request(method, url, token, params, body) };
   }

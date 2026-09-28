@@ -634,3 +634,31 @@ model PriceChange {
 
   @@index([skuExternalId, createdAt])
 }
+
+/// Журнал рекламного бота («Буст в ТОП»): каждое изменение ставки / слова, отправленное или предложенное.
+model AdBotChange {
+  id           String   @id @default(cuid())
+  campaignId   String
+  campaignName String?
+  skuGroupId   String
+  /// id объявления (слова) в кабинете; null — новое слово до отправки.
+  adId         String?
+  query        String
+  /// LOWER, RAISE, SUSPEND, ADD.
+  action       String
+  oldCpm       Int?
+  newCpm       Int
+  dryRun       Boolean
+  /// SENT, FAILED, PLANNED.
+  status       String
+  reason       String?
+  /// Статистика слова, на которой бот принял решение.
+  context      Json?
+  request      Json?
+  response     Json?
+  error        String?
+  createdAt    DateTime @default(now())
+
+  @@index([adId, createdAt])
+  @@index([skuGroupId, query])
+}

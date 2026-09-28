@@ -131,7 +131,7 @@ export class AdAgentService {
     // Кампании «Буст в ТОП».
     let campaignList: any[] = [];
     if (sellerId) {
-      const campaignsBody = (await this.cabinet.cabinet('GET', `${CABINET}/advertising/management/ad-campaign`, { sellerId, page: 0, size: 50, from: w.from28, to: today, statusGroup: 'ALL' })).body;
+      const campaignsBody = (await this.cabinet.cabinet('GET', `${CABINET}/advertising/management/ad-campaign`, { sellerId, page: 0, size: 20, from: w.from28, to: today, statusGroup: 'ALL' })).body;
       campaignList = Array.isArray(campaignsBody?.payload) ? campaignsBody.payload : [];
     }
     const liveCampaigns = campaignList.filter((row) => ['ACTIVE', 'PAUSED'].includes(String(row.status)));
