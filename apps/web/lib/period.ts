@@ -33,6 +33,9 @@ export function resolvePreset(preset:PeriodPreset):AnalyticsPeriod{
 
 export function defaultPeriod(){ return resolvePreset('LAST_7'); }
 export function normalizePeriod(value?:Partial<AnalyticsPeriod>|null):AnalyticsPeriod{
+  // «Вчера», «7 дней», «Этот месяц»… — относительные периоды: даты пересчитываем от сегодняшнего дня,
+  // иначе сохранённое в браузере «Вчера» навсегда застревает на дате, когда его выбрали.
+  if(value?.preset&&value.preset!=='CUSTOM'&&value.preset in periodLabels)return{...resolvePreset(value.preset),compare:value.compare!==false};
   const fallback=defaultPeriod();
   const from=/^\d{4}-\d{2}-\d{2}$/.test(value?.from||'')?String(value?.from):fallback.from;
   const to=/^\d{4}-\d{2}-\d{2}$/.test(value?.to||'')?String(value?.to):fallback.to;
