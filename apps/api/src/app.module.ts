@@ -13,6 +13,7 @@ import { AuthService } from './modules/auth/auth.service';
 import { AuthGuard } from './modules/auth/auth.guard';
 import { IntegrationsController } from './modules/integrations/integrations.controller';
 import { IntegrationsService } from './modules/integrations/integrations.service';
+import { CabinetAuthService } from './modules/integrations/cabinet-auth.service';
 import { CostsController } from './modules/costs/costs.controller';
 import { CostsService } from './modules/costs/costs.service';
 import { GoalsController } from './modules/goals/goals.controller';
@@ -61,7 +62,7 @@ import { AdBotService } from './modules/ads/ad-bot.service';
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
-    PrismaService, CryptoService, TelegramClient, OpenclawClient, AuthService, AuthGuard, IntegrationsService,
+    PrismaService, CryptoService, TelegramClient, OpenclawClient, AuthService, AuthGuard, IntegrationsService, CabinetAuthService,
     CostsService, GoalsService, DashboardService, ProductsService, SyncService, SuppliesService,
     WarehouseService, DigestService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService, AdAgentService, AdBotService,
   ],

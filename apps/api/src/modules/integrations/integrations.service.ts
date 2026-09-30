@@ -400,7 +400,8 @@ export class IntegrationsService {
       status: row.status,
       enabled: row.enabled,
       metadata: this.publicMetadata(row.metadata),
-      tokenMasked: this.crypto.mask(this.safeDecrypt(row)),
+      // У входа под сотрудником секрет — пароль и refresh-токен, их маску не показываем даже частично.
+      tokenMasked: row.type === IntegrationType.UZUM_CABINET_LOGIN ? (row.encryptedValue ? '••••••••' : null) : this.crypto.mask(this.safeDecrypt(row)),
       lastTestedAt: row.lastTestedAt,
       lastError: row.lastError,
     }));

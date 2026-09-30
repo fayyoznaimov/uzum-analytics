@@ -16,6 +16,7 @@ enum Role {
 enum IntegrationType {
   UZUM
   UZUM_INTERNAL
+  UZUM_CABINET_LOGIN
   OPENAI
   ANTHROPIC
   TELEGRAM

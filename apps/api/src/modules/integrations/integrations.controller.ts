@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { IsBoolean, IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 import { AuthGuard } from '../auth/auth.guard';
+import { CabinetAuthService } from './cabinet-auth.service';
 import { IntegrationsService } from './integrations.service';
 
 class SaveIntegrationDto {
@@ -24,11 +25,19 @@ class SaveIntegrationDto {
   @IsOptional() @IsBoolean() notifyAgents?: boolean;
 }
 
+class CabinetLoginDto {
+  @IsString() @MaxLength(200) username!: string;
+  @IsString() @MaxLength(200) password!: string;
+}
+
 @UseGuards(AuthGuard)
 @Controller('integrations')
 export class IntegrationsController {
-  constructor(private service: IntegrationsService) {}
+  constructor(private service: IntegrationsService, private cabinetAuth: CabinetAuthService) {}
   @Get() list() { return this.service.list(); }
+  /** Вход в кабинет Uzum под сотрудником: сервер сам продлевает токен для отзывов, акций и рекламы. */
+  @Put('uzum-cabinet-login') saveCabinetLogin(@Body() dto: CabinetLoginDto) { return this.cabinetAuth.saveLogin(dto.username, dto.password); }
+  @Post('uzum-cabinet-login/refresh') refreshCabinetLogin() { return this.cabinetAuth.refreshIfNeeded(true); }
   @Post('telegram/test-latest-order') testLatestOrder() { return this.service.testLatestOrderNotification(); }
   @Post('telegram/menu') telegramMenu() { return this.service.sendTelegramMenu(); }
   @Put(':type') save(@Param('type') type: string, @Body() dto: SaveIntegrationDto) { return this.service.save(type, dto); }
