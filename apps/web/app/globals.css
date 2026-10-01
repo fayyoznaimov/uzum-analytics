@@ -74,3 +74,30 @@
 
 /* Profit rows use one factual issued-order cohort; legacy duplicate purchase column was removed. */
 @media(min-width:1101px){.profit-days-summary{grid-template-columns:repeat(6,1fr)}.profit-day-row{grid-template-columns:minmax(125px,1.15fr) repeat(4,minmax(100px,1fr)) minmax(180px,1.4fr) minmax(125px,1fr)}}
+
+/* === Редизайн 2026: светлая тема по макетам (холст «Uzum Analytics — редизайн кабинета»). Блок намеренно в конце файла и побеждает каскадом; базовые правила выше не трогаем. === */
+:root{--bg:#F4F5F8;--panel:#FFFFFF;--ink:#17191F;--muted:#717684;--line:#E7E9EF;--violet:#6C47FF;--violet2:#8B6EFF;--green:#0E7A4E;--red:#C2362B;--orange:#9A6700;--cyan:#0E7A8A;--blue:#2563C2;--shadow:0 1px 2px rgba(23,25,31,.04)}
+html,body{font-family:'Golos Text',ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+.sidebar{background:#fff;color:var(--ink);border-right:1px solid var(--line)}
+.brand-mark{background:var(--violet);box-shadow:none;border-radius:10px}
+.brand b{color:var(--ink)}.brand span{color:var(--muted)}
+.sidebar nav{margin-top:18px}
+.sidebar nav a{color:#4A4F5C;font-weight:500;padding:8px 10px;border-radius:9px}
+.sidebar nav a:hover{background:#F4F5F8;color:var(--ink)}
+.sidebar nav a.active,.sidebar nav a.active:hover{background:#F1EDFF;color:#5536D1;font-weight:600}
+.nav-group{font-size:10.5px;font-weight:700;letter-spacing:.08em;color:#9AA0AE;padding:14px 10px 4px;user-select:none}
+.sidebar nav .nav-group:first-child{padding-top:2px}
+.secure{background:#F6F7FA;border:1px solid var(--line)}.secure b{color:var(--ink)}.secure span{color:var(--muted)}
+.side-foot{border-top:1px solid var(--line)}.side-foot button{color:#4A4F5C}.side-foot button:hover{color:var(--ink)}
+.topbar{background:#ffffffe6}
+.shop-switch{background:#F1EDFF;border-color:#E3DAFB}.shop-switch small{color:#7A6FA8}
+.shop-avatar{background:var(--violet)}
+.avatar{background:var(--ink)}
+.eyebrow{color:#9AA0AE}
+.primary{background:var(--violet);box-shadow:none;border-radius:10px;font-weight:700}
+.primary:hover{background:#5536D1}
+.ghost{border-radius:10px}
+.panel{border-radius:14px;box-shadow:var(--shadow)}
+.metric{border-top:0;border-radius:14px;box-shadow:var(--shadow);padding:16px 18px}
+.metric strong{font-weight:800;letter-spacing:-.01em}
+@media(max-width:720px){.sidebar{background:#fff;border-top:1px solid var(--line)}.sidebar nav .nav-group{display:none}}
