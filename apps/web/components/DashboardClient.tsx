@@ -5,16 +5,15 @@ import { AlertTriangle, ArrowRight, CalendarDays, CheckCircle2, Clock3, CreditCa
 import AppShell from './AppShell';
 import { MetricCard, Progress, Status } from './UI';
 import { api, money, syncAndWait } from '@/lib/api';
-import { useAnalyticsPeriod } from '@/lib/period';
+import { invalidateOverview, useOverview } from '@/lib/overview';
 
 function payoutDateLabel(value:string){return new Date(`${value}T12:00:00+05:00`).toLocaleDateString('ru-RU',{weekday:'short',day:'2-digit',month:'short'});}
 const goalLabel=(metric:string)=>({ORDERED_REVENUE:'Сумма заказов',REVENUE:'Оплаченные продажи',PROFIT:'Чистая прибыль',ORDERS:'Оплаченные заказы',UNITS:'Продано единиц',ROAS:'Выручка / рекламные расходы'} as Record<string,string>)[metric]||metric;
 const goalValue=(metric:string,value:number)=>metric==='ORDERS'||metric==='UNITS'?String(value):metric==='ROAS'?`${Number(value).toFixed(2)}x`:money(value);
 
 export default function DashboardClient(){
- const [data,setData]=useState<any>(null);const [loading,setLoading]=useState(true);const [error,setError]=useState('');const [syncing,setSyncing]=useState(false);const {query,days}=useAnalyticsPeriod();
- const load=async()=>{setLoading(true);setError('');try{setData(await api(`/dashboard/overview?${query}`))}catch(e:any){setData(null);setError(e.message||'Не удалось загрузить обзор')}finally{setLoading(false)}};useEffect(()=>{void load()},[query]);
- async function sync(){setSyncing(true);try{await syncAndWait();await api('/supplies/sync',{method:'POST'}).catch(()=>null);await load()}catch(e:any){alert(e.message)}finally{setSyncing(false)}}
+ const {data,loading,error,reload:load,days}=useOverview();const [syncing,setSyncing]=useState(false);
+ async function sync(){setSyncing(true);try{await syncAndWait();await api('/supplies/sync',{method:'POST'}).catch(()=>null);invalidateOverview();await load()}catch(e:any){alert(e.message)}finally{setSyncing(false)}}
  const goals=useMemo(()=>{if(!data)return[];return(data.goals||[]).filter((g:any)=>g.current!=null&&g.progress!=null&&(g.targetValue??g.target)!=null&&Number.isFinite(Number(g.current))&&Number.isFinite(Number(g.progress))).map((g:any)=>({...g,current:Number(g.current),target:Number(g.targetValue??g.target),progress:Number(g.progress)}))},[data]);
  const advertisingRevenue=Number(data?.metrics?.revenue??0);const advertisingEffectivePercent=Number(data?.advertising?.effectivePercent??(advertisingRevenue>0?Number(data?.advertising?.totalExpense??data?.metrics?.advertisingExpense??0)/advertisingRevenue*100:0));const advertisingHasEstimate=Boolean(data?.advertising?.hasEstimate||Number(data?.advertising?.provisionalOrderBoostExpense??0)>0);const advertisingMayBeIncomplete=Boolean(data?.advertising?.freshExpenseMayBeIncomplete||data?.advertising?.orderBoostExpensePending||data?.advertising?.topExpensePending);
  const realizedInputsKnown=Number(data?.metrics?.realizedPayoutPendingOrders||0)===0&&Number(data?.metrics?.realizedMissingCostItems||0)===0;

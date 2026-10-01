@@ -4,11 +4,10 @@ import { AlertTriangle, ClipboardList, Image as ImageIcon, Search, Star, Wand2 }
 import AppShell from './AppShell';
 import { Status } from './UI';
 import { api, money } from '@/lib/api';
-import { useAnalyticsPeriod } from '@/lib/period';
+import { useOverview } from '@/lib/overview';
 
 export default function QualityClient(){
- const [data,setData]=useState<any>(null);const [loading,setLoading]=useState(true);const [error,setError]=useState('');const [q,setQ]=useState('');const {query}=useAnalyticsPeriod();
- useEffect(()=>{setLoading(true);setError('');api(`/dashboard/overview?${query}`).then(setData).catch((e:Error)=>{setData(null);setError(e.message)}).finally(()=>setLoading(false))},[query]);
+ const {data,loading,error}=useOverview();const [q,setQ]=useState('');
  const rows=useMemo(()=>{const needle=q.trim().toLowerCase();return(data?.topProducts||[]).filter((p:any)=>!needle||p.title?.toLowerCase().includes(needle))},[data,q]);
  const knownProfitRows=rows.filter((row:any)=>row.profitKnown===true).length;
  return <AppShell title="Качество карточек" subtitle="Только подтверждённые данные; скоринг появится после подключения каталога Uzum">

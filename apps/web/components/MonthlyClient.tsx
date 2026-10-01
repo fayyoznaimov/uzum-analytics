@@ -4,13 +4,12 @@ import { CalendarDays, Landmark, TrendingUp, WalletCards } from 'lucide-react';
 import AppShell from './AppShell';
 import { MetricCard, Status } from './UI';
 import { api, money } from '@/lib/api';
-import { useAnalyticsPeriod } from '@/lib/period';
+import { useOverview } from '@/lib/overview';
 
 function dayLabel(value:string){return new Date(`${value}T12:00:00+05:00`).toLocaleDateString('ru-RU',{day:'2-digit',month:'short'});}
 function pointLabel(value:string){return /^\d{4}-\d{2}-\d{2}$/.test(value)?dayLabel(value):value;}
 export default function MonthlyClient(){
- const [data,setData]=useState<any>(null);const [loading,setLoading]=useState(true);const [error,setError]=useState('');const {query}=useAnalyticsPeriod();
- useEffect(()=>{setLoading(true);setError('');api(`/dashboard/overview?${query}`).then(setData).catch((e:Error)=>{setData(null);setError(e.message)}).finally(()=>setLoading(false))},[query]);
+ const {data,loading,error}=useOverview();
  const m=data?.metrics||{};const chart=data?.chart||[];
  const profitKnown=m.profitKnown===true;
  const advertisingRevenue=Number(m.revenue??0);const advertisingEffectivePercent=Number(data?.advertising?.effectivePercent??(advertisingRevenue>0?Number(data?.advertising?.totalExpense??m.advertisingExpense??0)/advertisingRevenue*100:0));const advertisingMayBeIncomplete=Boolean(data?.advertising?.freshExpenseMayBeIncomplete||data?.advertising?.orderBoostExpensePending||data?.advertising?.topExpensePending);

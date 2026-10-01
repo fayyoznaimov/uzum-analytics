@@ -4,12 +4,10 @@ import { AlertTriangle, ArrowRight, BarChart3, CircleDollarSign, MousePointerCli
 import AppShell from './AppShell';
 import { MetricCard, Status } from './UI';
 import { api, money } from '@/lib/api';
-import { useAnalyticsPeriod } from '@/lib/period';
+import { useOverview } from '@/lib/overview';
 
 export default function AdsClient(){
- const [data,setData]=useState<any>(null);const [loading,setLoading]=useState(true);const [error,setError]=useState('');const {query}=useAnalyticsPeriod();
- const load=useCallback(async()=>{setLoading(true);setError('');try{setData(await api(`/dashboard/overview?${query}`))}catch(e:any){setData(null);setError(e.message||'Не удалось загрузить рекламные расходы')}finally{setLoading(false)}},[query]);
- useEffect(()=>{void load()},[load]);
+ const {data,loading,error,reload:load}=useOverview();
 
  const m=data?.metrics||{};const ads=data?.advertising||{};
  const revenue=Math.max(0,Number(m.revenue??0));

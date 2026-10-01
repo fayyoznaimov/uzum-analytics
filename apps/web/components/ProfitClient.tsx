@@ -4,7 +4,7 @@ import { AlertTriangle, BadgePercent, ChevronDown, ChevronRight, CircleDollarSig
 import AppShell from './AppShell';
 import { MetricCard, Status } from './UI';
 import { api, money } from '@/lib/api';
-import { useAnalyticsPeriod } from '@/lib/period';
+import { useOverview } from '@/lib/overview';
 
 const pct=(value:number,base:number)=>base?value/base*100:0;
 const signed=(value:number)=>`${value<0?'− ':''}${money(Math.abs(value))}`;
@@ -13,9 +13,7 @@ const adValue=(value:number,estimated:boolean)=>value===0?'—':`${estimated?'�
 const dayLabel=(value:string)=>new Date(`${value}T12:00:00+05:00`).toLocaleDateString('ru-RU',{weekday:'short',day:'2-digit',month:'long'});
 
 export default function ProfitClient(){
- const [data,setData]=useState<any>(null);const [loading,setLoading]=useState(true);const [error,setError]=useState('');const [openOrders,setOpenOrders]=useState<Record<string,boolean>>({});const {query}=useAnalyticsPeriod();
- const load=useCallback(async()=>{setLoading(true);setError('');try{setData(await api(`/dashboard/overview?${query}`))}catch(cause:any){setData(null);setError(cause.message||'Не удалось загрузить данные о прибыли')}finally{setLoading(false)}},[query]);
- useEffect(()=>{void load()},[load]);
+ const {data,loading,error,reload:load}=useOverview();const [openOrders,setOpenOrders]=useState<Record<string,boolean>>({});
  const m=data?.metrics||{};const ads=data?.advertising||{};
  const orderedPotentialKnown=Boolean(m.orderedPotentialProfitKnown);
  const realizedInputsKnown=Number(m.realizedPayoutPendingOrders||0)===0&&Number(m.realizedMissingCostItems||0)===0;

@@ -4,7 +4,7 @@ import { AlertTriangle, ArrowRight, CalendarClock, CalendarDays, CheckCircle2, C
 import AppShell from './AppShell';
 import { Status } from './UI';
 import { api, apiForm, money } from '@/lib/api';
-import { useAnalyticsPeriod } from '@/lib/period';
+import { invalidateOverview, useOverview } from '@/lib/overview';
 
 type StatementReturn = {
   id: string;
@@ -133,20 +133,12 @@ function returnStatus(value?: string | null) {
 }
 
 export default function WalletClient() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const { data, loading, error, reload } = useOverview();
   const [statement, setStatement] = useState<StatementPayload | null>(null);
   const [statementLoading, setStatementLoading] = useState(true);
   const [statementImporting, setStatementImporting] = useState(false);
   const [statementMessage, setStatementMessage] = useState('');
   const [statementError, setStatementError] = useState('');
-  const { query } = useAnalyticsPeriod();
-
-  useEffect(() => {
-    setLoading(true);
-    api(`/dashboard/overview?${query}`).then(setData).finally(() => setLoading(false));
-  }, [query]);
-
   useEffect(() => {
     setStatementLoading(true);
     api<StatementPayload>('/financial-statements/latest?returns=100')
@@ -170,8 +162,8 @@ export default function WalletClient() {
       const result = await apiForm<StatementPayload>('/financial-statements/import', form);
       setStatement(result);
       setStatementMessage(result.duplicate ? 'Этот отчёт уже был загружен — показываем сохранённую сверку.' : 'Отчёт загружен: заказы, расходы, выплаты и возвраты сверены.');
-      const overview = await api(`/dashboard/overview?${query}`);
-      setData(overview);
+      invalidateOverview();
+      await reload();
     } catch (error) {
       setStatementError(error instanceof Error ? error.message : 'Не удалось загрузить отчёт');
     } finally {
@@ -201,7 +193,7 @@ export default function WalletClient() {
   const hasMismatch = (unmatchedRows || 0) > 0 || expenseDelta !== 0;
 
   return <AppShell title="Кошелёк" subtitle="Главный экран денег: по дням, когда сумма попадает в корзину вывода, и отдельно когда Uzum отправит выплату по графику">
-    {loading || !pf ? <div className="loading">Загружаем кошелёк…</div> : <>
+    {loading ? <div className="loading">Загружаем кошелёк…</div> : error ? <div className="error-box settings-notice"><span>{error}</span><button className="ghost" onClick={() => void reload()}>Повторить</button></div> : !pf ? <div className="loading">Нет данных кошелька за период.</div> : <>
       <section className="wallet-hero" style={{ display: 'none' }}>
         <div className="wallet-hero-main">
           <span>ГЛАВНАЯ ЛОГИКА</span>

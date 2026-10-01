@@ -4,7 +4,7 @@ import { AlertTriangle } from 'lucide-react';
 import AppShell from './AppShell';
 import { MetricCard, Status } from './UI';
 import { api, money } from '@/lib/api';
-import { useAnalyticsPeriod } from '@/lib/period';
+import { useOverview } from '@/lib/overview';
 
 const pct=(value:number,base:number)=>base?value/base*100:0;
 const signed=(value:number)=>`${value<0?'− ':''}${money(Math.abs(value))}`;
@@ -12,9 +12,7 @@ const expenseValue=(value:number)=>value===0?'—':value<0?`+ ${money(Math.abs(v
 const stateLabel=(state:string)=>state==='PAID'?'выдан':state==='WAITING'?'ждёт выкупа':'в обработке';
 
 export default function OrderedClient(){
- const [data,setData]=useState<any>(null);const [loading,setLoading]=useState(true);const [error,setError]=useState('');const {query}=useAnalyticsPeriod();
- const load=useCallback(async()=>{setLoading(true);setError('');try{setData(await api(`/dashboard/overview?${query}`))}catch(cause:any){setData(null);setError(cause.message||'Не удалось загрузить данные о заказанном')}finally{setLoading(false)}},[query]);
- useEffect(()=>{void load()},[load]);
+ const {data,loading,error,reload:load}=useOverview();
  const m=data?.metrics||{};
  const orders:any[]=data?.orderedOrders||[];
  const orderedCommission=useMemo(()=>orders.reduce((sum,o)=>sum+Number(o.commission||0),0),[orders]);
