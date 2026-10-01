@@ -124,8 +124,8 @@ describe('минус-слова', () => {
   const g = '4160950';
   const feed = [
     { skuGroupId: g, searchQuery: 'полотенце для сауны большое', impressions: 900, clicks: 20, atc: 2, sold: 3, revenue: 600_000 },
-    { skuGroupId: g, searchQuery: 'халат для сауны', impressions: 400, clicks: 6, atc: 0, sold: 0, revenue: 0 },
-    { skuGroupId: g, searchQuery: 'халат махровый женский', impressions: 150, clicks: 5, atc: 0, sold: 0, revenue: 0 },
+    { skuGroupId: g, searchQuery: 'халат для сауны', impressions: 400, clicks: 3, atc: 0, sold: 0, revenue: 0 },
+    { skuGroupId: g, searchQuery: 'халат махровый женский', impressions: 150, clicks: 4, atc: 0, sold: 0, revenue: 0 },
     { skuGroupId: g, searchQuery: 'шапка для бани', impressions: 120, clicks: 2, atc: 0, sold: 0, revenue: 0 },
     { skuGroupId: g, searchQuery: 'полотенце детское 70', impressions: 350, clicks: 12, atc: 1, sold: 0, revenue: 0 },
     { skuGroupId: g, searchQuery: 'коврик 100', impressions: 500, clicks: 1, atc: 0, sold: 0, revenue: 0 },
@@ -133,7 +133,7 @@ describe('минус-слова', () => {
   it('слово из запросов без продаж и корзин, которого нет в продающих запросах и во фразе', () => {
     const rows = stopWordCandidates(g, [kw({ stopWords: [] })], feed);
     expect(rows.map((row) => row.word)).toEqual(['халат', 'коврик']);
-    expect(rows[0]).toMatchObject({ impressions: 550, clicks: 11 });
+    expect(rows[0]).toMatchObject({ impressions: 550, clicks: 7 });
   });
   it('корзина — не минус-слово; уже добавленные и числа не повторяем; шапка — мало показов и кликов', () => {
     const rows = stopWordCandidates(g, [kw({ stopWords: ['Халат'] })], feed).map((row) => row.word);
@@ -157,13 +157,30 @@ describe('минус-слова', () => {
   });
   it('кулдаун действует и на чистую правку минус-слов', () => {
     const feed = [
-      { skuGroupId: '4160950', searchQuery: 'полотенце детское', impressions: 500, clicks: 15, sold: 0, atc: 0, revenue: 0 },
+      { skuGroupId: '4160950', searchQuery: 'полотенце детское', impressions: 500, clicks: 7, sold: 0, atc: 0, revenue: 0 },
       { skuGroupId: '4160950', searchQuery: 'полотенце для сауны', impressions: 900, clicks: 25, sold: 3, atc: 2, revenue: 500_000 },
     ];
     const fresh = planAdBot(input({ feed }));
     expect(fresh.actions.some((row) => row.kind === 'STOPWORDS')).toBe(true);
     const cooled = planAdBot(input({ feed, lastChange: new Map([['1', new Date(now.getTime() - 86_400_000)]]) }));
     expect(cooled.actions.some((row) => row.kind === 'STOPWORDS')).toBe(false);
+  });
+  it('слово с заметными кликами — не автоминус, а «на ручную проверку» в заметках', () => {
+    // «adyol»-кейс: 657 показов и 10 кликов без продаж — покупатели считают
+    // запрос релевантным; автоблок отрезал бы целевой узбекоязычный трафик.
+    const risky = [...feed, { skuGroupId: g, searchQuery: 'adyol katta', impressions: 657, clicks: 12, atc: 0, sold: 0, revenue: 0 }];
+    const plan = planAdBot(input({ keywords: [kw({ stopWords: [] })], feed: risky }, { impressions: 5_000 }, { impressions: 1_000 }));
+    expect(plan.actions.flatMap((row) => row.addedStopWords || [])).not.toContain('adyol');
+    expect(plan.notes.join(' ')).toContain('только вручную');
+    expect(plan.notes.join(' ')).toContain('adyol');
+  });
+  it('форма слова самого товара («пледы» при ключе «плед») не предлагается в минус', () => {
+    const pledFeed = [
+      { skuGroupId: g, searchQuery: 'плед тёплый', impressions: 900, clicks: 20, atc: 1, sold: 2, revenue: 400_000 },
+      { skuGroupId: g, searchQuery: 'пледы недорого', impressions: 400, clicks: 5, atc: 0, sold: 0, revenue: 0 },
+    ];
+    const rows = stopWordCandidates(g, [kw({ query: 'плед', stopWords: [] })], pledFeed).map((row) => row.word);
+    expect(rows).not.toContain('пледы');
   });
   it('лимит Uzum 58 минус-слов: добавляем только сколько влезает', () => {
     const full = Array.from({ length: 57 }, (_, index) => `слово${index}`);

@@ -40,6 +40,9 @@ export const AD_BOT_DEFAULTS = {
   zeroSaleSpendRatio: 0.5,
   suspendSpendRatio: 1,
   lowImpressions7: 150,
+  // Повышать «ради охвата» только если слово вообще показывается: при 0–7
+  // показах непонятно, ставка ли причина, и рост вслепую лишь жёг бы бюджет.
+  reachRaiseMinImpressions14: 10,
   goodDrrRatio: 0.5,
   topPosition: 5,
   lowStockUnits: 3,
@@ -164,7 +167,7 @@ export function decideKeyword(keyword: AdBotKeyword, input: AdBotInput, cfg: AdB
   // росло бы на каждый прогон до максимума. Тот же принцип, что в автоценах:
   // «маржа не рассчитана — не трогаем».
   const cheap = drr !== null ? drr <= cfg.maxDrrPercent : price !== null && s14.spend < cfg.zeroSaleSpendRatio * price;
-  if (s7.impressions < cfg.lowImpressions7 && cheap) return raise(`мало показов: ${s7.impressions} за 7 дн. — поднимаем ради охвата (${period})`);
+  if (s7.impressions < cfg.lowImpressions7 && cheap && s14.impressions >= cfg.reachRaiseMinImpressions14) return raise(`мало показов: ${s7.impressions} за 7 дн. — поднимаем ради охвата (${period})`);
   return null;
 }
 
@@ -217,6 +220,9 @@ export function stopWordCandidates(skuGroupId: string, keywords: AdBotKeyword[],
     if (row.sold > 0 || (row.atc ?? 0) > 0) continue;
     for (const word of new Set(words(row.searchQuery))) {
       if (word.length < cfg.minStopWordLength || /^\d+$/.test(word) || protectedWords.has(word) || existing.has(word)) continue;
+      // Формы слова самого товара («пледы» при ключе «плед») — не мусор, а
+      // целевой запрос с проблемой конверсии; общий корень от 4 букв защищает.
+      if ([...protectedWords].some((safe) => safe.length >= 4 && word.length >= 4 && (safe.startsWith(word) || word.startsWith(safe)))) continue;
       const item = stats.get(word) ?? { word, impressions: 0, clicks: 0, queries: [] };
       item.impressions += row.impressions;
       item.clicks += row.clicks;
@@ -240,7 +246,10 @@ export function planAdBot(input: AdBotInput, cfg: AdBotConfig = AD_BOT_DEFAULTS)
   const byGroup = new Map<string, AdBotKeyword[]>();
   for (const keyword of input.keywords) byGroup.set(keyword.skuGroupId, [...(byGroup.get(keyword.skuGroupId) ?? []), keyword]);
   for (const [skuGroupId, keywords] of byGroup) {
-    const candidates = stopWordCandidates(skuGroupId, keywords, input.feed, cfg);
+    const allCandidates = stopWordCandidates(skuGroupId, keywords, input.feed, cfg);
+    const manual = allCandidates.filter((row) => row.clicks >= cfg.stopMinClicks);
+    if (manual.length) notes.push(`${input.groups.get(skuGroupId)?.title ?? skuGroupId}: минус-слова с заметными кликами — только вручную: ${manual.map((row) => `«${row.word}» (${row.clicks} кликов, ${row.impressions} показов)`).join(', ')} — покупатели считают запрос релевантным, автоблок отрезал бы целевой трафик`);
+    const candidates = allCandidates.filter((row) => row.clicks < cfg.stopMinClicks);
     if (!candidates.length) continue;
     const room = Math.max(0, cfg.maxStopWords - Math.max(...keywords.map((keyword) => keyword.stopWords.length)));
     const picked = candidates.slice(0, Math.min(room, cfg.newStopWordsPerGroup));

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { Prisma } from '@prisma/client';
 import { applyAiPriceReview, buildAiPriceReviewPrompt, parseAiPriceReview } from '../../common/ai-price-review';
 import { ADVERTISING_EXPENSE_CODES, advertisingRateTimeline, baseAdvertisingCode, ORDER_BOOST_CODE, TOP_PROMOTION_CODE } from '../../common/advertising';
 import {
@@ -105,6 +106,10 @@ export class AutoPricingService {
       const rulesPlan = planAutoPricingRun(inputs.map((input) => evaluateSku(input, today, cfg)), cfg);
       const { plan, aiNote } = await this.aiReview(rulesPlan, inputs, today, options.apply);
       const outcomes = options.apply ? await this.applyChanges(plan.changes, inputs) : [];
+      // В режиме рекомендаций решения раньше жили только в Telegram — задним
+      // числом качество агента было непроверяемо. Пишем их в журнал (PLANNED,
+      // dryRun) — как делает рекламный бот. Сбой журнала не валит прогон.
+      if (!options.apply) await this.journalRecommendations(plan.changes, inputs).catch((error: any) => this.logger.warn(`Автоцены: не записан журнал рекомендаций — ${error?.message || error}`));
 
       const label = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Asia/Tashkent', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(now);
       const messages = formatAutoPricingReport(plan, {
@@ -283,6 +288,51 @@ export class AutoPricingService {
       };
     });
     return { inputs, notes };
+  }
+
+  /**
+   * Журнал рекомендаций (без применения). PLANNED/dryRun-строки безопасны для
+   * правил: кулдауны и «одна смена в день» читают только SENT с dryRun=false.
+   * Дедупликация: одна и та же рекомендация (SKU + цена) не пишется чаще раза
+   * в сутки, чтобы ручные перезапуски не плодили дубли.
+   */
+  private async journalRecommendations(changes: AutoDecision[], inputs: AutoPricingSkuInput[]) {
+    const rows = changes.filter((row) => row.newPrice !== null && row.rule !== null);
+    if (!rows.length) return;
+    const shop = await this.prisma.shop.findFirst({ where: { isActive: true } });
+    if (!shop) return;
+    const bySku = new Map(inputs.map((input) => [input.skuId, input]));
+    const skus = await this.prisma.sku.findMany({
+      where: { id: { in: rows.map((row) => row.skuId) } },
+      select: { id: true, externalId: true, product: { select: { externalId: true } } },
+    });
+    const skuById = new Map(skus.map((sku) => [sku.id, sku]));
+    const recent = await this.prisma.priceChange.findMany({
+      where: { shopExternalId: shop.externalId, status: 'PLANNED', source: 'auto', createdAt: { gte: new Date(Date.now() - 20 * 3_600_000) } },
+      select: { skuExternalId: true, newPrice: true },
+    });
+    const seen = new Set(recent.map((row) => `${row.skuExternalId}:${row.newPrice}`));
+    for (const row of rows) {
+      const sku = skuById.get(row.skuId);
+      if (!sku || seen.has(`${sku.externalId}:${row.newPrice}`)) continue;
+      const input = bySku.get(row.skuId);
+      await this.prisma.priceChange.create({
+        data: {
+          shopExternalId: shop.externalId,
+          productExternalId: sku.product?.externalId ?? null,
+          skuExternalId: sku.externalId,
+          oldPrice: row.currentPrice ?? 0,
+          newPrice: row.newPrice as number,
+          kind: row.kind ?? 'BASE',
+          status: 'PLANNED',
+          dryRun: true,
+          source: 'auto',
+          rule: row.rule,
+          reason: row.reason,
+          context: { role: row.role, stock: input?.stock ?? null, ...row.metrics } as Prisma.InputJsonValue,
+        },
+      });
+    }
   }
 
   /** Отправка изменений по одному, со всеми защитами PricingService / PromoPricingService. */
