@@ -1,4 +1,4 @@
-import { forwardRef, Inject, Injectable, Optional } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   ADVERTISING_EXPENSE_CODES,
@@ -259,7 +259,9 @@ export class DashboardService {
    * текущего времени, а не только от данных.
    */
   private readonly overviewCache = new Map<string, { computedAt: number; stamp: string; data: unknown }>();
+  private readonly overviewRecomputing = new Set<string>();
   private static readonly OVERVIEW_CACHE_TTL_MS = 5 * 60_000;
+  private static readonly OVERVIEW_CACHE_MAX_KEYS = 50;
 
   async overview(query: PeriodQuery = {}) {
     const key = JSON.stringify(query ?? {});
@@ -268,9 +270,35 @@ export class DashboardService {
     if (cached && cached.stamp === stamp && Date.now() - cached.computedAt < DashboardService.OVERVIEW_CACHE_TTL_MS) {
       return cached.data;
     }
+    if (cached) {
+      // Протухший кэш (новый FULL-синк или вышел TTL): отдаём прошлый расчёт
+      // МГНОВЕННО, свежий считаем в фоне (single-flight по ключу). Страница
+      // никогда не ждёт 6 секунд; устаревание ограничено тем же окном, что и
+      // TTL/интервал синка, а клиент всё равно перечитывает обзор при каждом
+      // переходе между экранами и заберёт пересчитанное.
+      if (!this.overviewRecomputing.has(key)) {
+        this.overviewRecomputing.add(key);
+        void this.computeOverview(query)
+          .then((data) => this.storeOverview(key, stamp, data))
+          .catch((error: any) => this.cacheLogger.error(`Фоновый пересчёт обзора не удался (${key}): ${error?.message || error}`))
+          .finally(() => this.overviewRecomputing.delete(key));
+      }
+      return cached.data;
+    }
     const data = await this.computeOverview(query);
-    this.overviewCache.set(key, { computedAt: Date.now(), stamp, data });
+    this.storeOverview(key, stamp, data);
     return data;
+  }
+
+  private readonly cacheLogger = new Logger('DashboardCache');
+
+  private storeOverview(key: string, stamp: string, data: unknown) {
+    // Ключи с явными датами меняются каждый день — не копим их бесконечно.
+    if (this.overviewCache.size >= DashboardService.OVERVIEW_CACHE_MAX_KEYS && !this.overviewCache.has(key)) {
+      const oldest = [...this.overviewCache.entries()].sort((a, b) => a[1].computedAt - b[1].computedAt)[0];
+      if (oldest) this.overviewCache.delete(oldest[0]);
+    }
+    this.overviewCache.set(key, { computedAt: Date.now(), stamp, data });
   }
 
   /**
