@@ -14,7 +14,9 @@ export const compact=(value:number)=>new Intl.NumberFormat('ru-RU',{notation:'co
 
 export async function syncAndWait() {
   const requestedAt = Date.now() - 2_000;
-  await api('/sync/run', { method: 'POST' });
+  // Если полный прогон уже идёт, бэкенд возвращает его runId — ждём именно его.
+  const started: any = await api('/sync/run', { method: 'POST' });
+  const targetId: string | null = started?.runId || null;
   // Полная синхронизация обычно укладывается в 3-4 минуты, но при 429 от Uzum
   // растягивается за 4:30 — раньше здесь стояло 180 попыток по 1 с (3 минуты),
   // и это чаще срабатывало как ложный таймаут, чем как реальная защита: прогон
@@ -23,12 +25,14 @@ export async function syncAndWait() {
   // подстраиваемся под то же число, чтобы не разъезжаться с ним.
   for (let attempt = 0; attempt < 300; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 2_000));
-    const runs = await api<any[]>('/sync/runs');
-    // Свой прогон — только начавшийся после нашего запроса; уже идущий RUNNING
-    // тоже ждём (start() вернул alreadyRunning). Брать runs[0] без проверки
-    // нельзя: предыдущий SUCCESS выглядел бы как мгновенный «успех».
-    const run = runs.find((item) => new Date(item.startedAt).getTime() >= requestedAt)
-      || (runs[0]?.status === 'RUNNING' ? runs[0] : undefined);
+    // Только FULL: прогоны отзывов и поставок идут каждые 10 минут, и любой из
+    // них раньше мог быть принят за «наш» — кнопка рапортовала успех, ничего
+    // не дождавшись. Свой прогон — по runId, иначе первый FULL после запроса.
+    const runs = (await api<any[]>('/sync/runs')).filter((item) => item.type === 'FULL');
+    const run = targetId
+      ? runs.find((item) => item.id === targetId)
+      : runs.find((item) => new Date(item.startedAt).getTime() >= requestedAt)
+        || (runs[0]?.status === 'RUNNING' ? runs[0] : undefined);
     if (!run || run.status === 'RUNNING') continue;
     if (run.status === 'SUCCESS') return run;
     throw new Error(run.message || 'Синхронизация завершилась с ошибкой');

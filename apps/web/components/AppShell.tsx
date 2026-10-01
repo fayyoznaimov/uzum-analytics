@@ -49,7 +49,7 @@ export default function AppShell({ children, title, subtitle, actions, periodEna
 
   async function refreshData() {
     setSyncing(true);
-    setSyncMessage('');
+    setSyncMessage('Синхронизация с Uzum запущена — обычно 3–4 минуты…');
     try {
       const result: any = await syncAndWait();
       setSyncMessage(result.message || 'Данные обновлены');
