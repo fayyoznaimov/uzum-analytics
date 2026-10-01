@@ -17,9 +17,42 @@ import { PrismaService } from '../../common/prisma.service';
 import { buildProfitDays } from '../../common/profit-days';
 import { GoalsService } from '../goals/goals.service';
 
-type OrderWithItems = Prisma.OrderGetPayload<{
-  include: { items: { include: { sku: { include: { product: true; costs: true } } } } };
-}>;
+// Узкая выборка вместо include: полный include тянул raw-JSON заказа, позиции и
+// карточки товара (~7 КБ на товар в каждой позиции) — это и были 15–20 секунд
+// холодного расчёта обзора. Здесь перечислено всё, что расчёт реально читает;
+// costs сознательно без take и без фильтра validTo — costPartsAtDate использует
+// fallback на последнюю закрытую версию.
+const orderItemsSelect = {
+  select: {
+    id: true, title: true, quantity: true, amount: true, returns: true,
+    skuId: true, externalId: true, marketplaceProductId: true,
+    sku: {
+      select: {
+        sellerSku: true,
+        product: { select: { externalId: true } },
+        costs: {
+          orderBy: { validFrom: 'desc' as const },
+          select: { amount: true, packagingCost: true, warehouseLogisticsCost: true, additionalCost: true, validTo: true },
+        },
+      },
+    },
+  },
+} as const;
+
+const orderSelect = {
+  id: true, externalId: true, marketplaceOrderId: true, status: true, state: true,
+  paidAt: true, orderedAt: true, issuedAt: true, dateIssued: true,
+  grossRevenue: true, payout: true, commission: true, logistics: true,
+  payoutReported: true, commissionReported: true, logisticsReported: true,
+  adCost: true, adCostReported: true, returnedUnits: true, returnAmount: true,
+  statementImportedAt: true, withdrawnAmount: true, apiWithdrawnAmount: true,
+  items: orderItemsSelect,
+} as const;
+
+// Кошельку дополнительно нужен raw (fallback withdrawnProfit в remainingPayout).
+const walletOrderSelect = { ...orderSelect, raw: true } as const;
+
+type OrderWithItems = Prisma.OrderGetPayload<{ select: typeof orderSelect }> & { raw?: unknown };
 
 type FinancialRow = ReturnType<typeof calculateOrderFinancials> & { order: OrderWithItems };
 
@@ -47,21 +80,15 @@ export class DashboardService {
     });
   }
 
-  private async loadOrders(shopId: string, from: Date, to: Date) {
+  private async loadOrders(shopId: string, from: Date, to: Date): Promise<OrderWithItems[]> {
     return this.prisma.order.findMany({
       where: { shopId, issuedAt: { gte: from, lte: to } },
-      include: {
-        items: {
-          include: {
-            sku: { include: { product: true, costs: { orderBy: { validFrom: 'desc' } } } },
-          },
-        },
-      },
+      select: orderSelect,
       orderBy: { dateIssued: 'asc' },
     });
   }
 
-  private async loadWalletOrders(shopId: string, from: Date, to: Date) {
+  private async loadWalletOrders(shopId: string, from: Date, to: Date): Promise<OrderWithItems[]> {
     return this.prisma.order.findMany({
       where: {
         shopId,
@@ -70,21 +97,15 @@ export class DashboardService {
           { issuedAt: { gte: from, lte: to } },
         ],
       },
-      include: {
-        items: {
-          include: {
-            sku: { include: { product: true, costs: { orderBy: { validFrom: 'desc' } } } },
-          },
-        },
-      },
+      select: walletOrderSelect,
       orderBy: { dateIssued: 'asc' },
     });
   }
 
-  private async loadOrderedOrders(shopId: string, from: Date, to: Date) {
+  private async loadOrderedOrders(shopId: string, from: Date, to: Date): Promise<OrderWithItems[]> {
     return this.prisma.order.findMany({
       where: { shopId, orderedAt: { gte: from, lte: to } },
-      include: { items: { include: { sku: { include: { product: true, costs: { orderBy: { validFrom: 'desc' } } } } } } },
+      select: orderSelect,
       orderBy: { orderedAt: 'asc' },
     });
   }
@@ -252,10 +273,15 @@ export class DashboardService {
     return data;
   }
 
-  /** Отпечаток состояния данных: последняя успешная синхронизация. */
+  /**
+   * Отпечаток состояния данных: последняя успешная ПОЛНАЯ синхронизация.
+   * Только FULL: раны отзывов и поставок завершаются каждые ~10 минут, но на
+   * цифры обзора не влияют — без фильтра они сбрасывали кэш, и почти каждое
+   * открытие страницы шло в холодный пересчёт на 15–20 секунд.
+   */
   private async dataStamp() {
     const last = await this.prisma.syncRun.findFirst({
-      where: { status: 'SUCCESS' },
+      where: { status: 'SUCCESS', type: 'FULL' },
       orderBy: { finishedAt: 'desc' },
       select: { id: true, finishedAt: true },
     });
@@ -907,12 +933,13 @@ export class DashboardService {
     const profitDaysFrom = from;
     const profitAdsFrom = profitDaysFrom;
     const profitAdsTo = profitDaysTo;
-    const [profitDayIssuedOrders, profitDayAdExpenses] = await Promise.all([
-      this.loadOrders(shop.id, profitDaysFrom, profitDaysTo),
-      this.prisma.marketplaceExpense.findMany({
-        where: { shopId: shop.id, code: { in: [...ADVERTISING_EXPENSE_CODES] }, serviceAt: { gte: profitAdsFrom, lte: profitAdsTo } },
-      }),
-    ]);
+    // Диапазон профита по дням совпадает с периодом экрана, поэтому заказы уже
+    // загружены выше (loadOrders с тем же from/to) — повторный тяжёлый запрос
+    // здесь добавлял ~2 секунды к каждому холодному расчёту.
+    const profitDayIssuedOrders = orders;
+    const profitDayAdExpenses = await this.prisma.marketplaceExpense.findMany({
+      where: { shopId: shop.id, code: { in: [...ADVERTISING_EXPENSE_CODES] }, serviceAt: { gte: profitAdsFrom, lte: profitAdsTo } },
+    });
     const profitDayPaidOrders = profitDayIssuedOrders.filter((order) => this.state(order) === 'PAID');
     const dayOrders = profitDayPaidOrders.map((order) => {
       const row = this.financials(order, taxPercent, 0, fallbackCommissionPercent);
