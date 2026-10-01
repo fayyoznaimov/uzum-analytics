@@ -182,4 +182,92 @@ describe('Uzum financial statement parser', () => {
     delete (matrices as Partial<FinancialStatementMatrices>)[FINANCIAL_STATEMENT_SHEETS.balance];
     expect(() => parseFinancialStatementMatrices(matrices)).toThrow(/Баланс - Balans/);
   });
+
+  it('учитывает возвратную строку доходов с отрицательной суммой (зафиксировано текущее поведение)', () => {
+    const matrices = fixture();
+    matrices[FINANCIAL_STATEMENT_SHEETS.income].push(
+      ['5', 'shop', 'p5', 'Товар 5', 'возврат / qaytarish', '2026-07-02 10:00:00', null, 1, 1, '−900', 450, 0, 150, 50, '-700,00', 0, 'VAT0', 'WRONG_SIZE', null],
+    );
+    const report = parseFinancialStatementMatrices(matrices);
+    const row = report.incomeRows[4];
+    expect(row.payout).toBe(-700); // запятая как десятичный разделитель
+    expect(row.salePrice).toBe(-900); // юникод-минус U+2212
+    expect(report.summary.totalPayout).toBe(2450); // 3150 + (-700)
+    expect(report.summary.returnPayout).toBe(0); // 700 + (-700)
+    // Зафиксировано текущее поведение: отрицательный возврат уменьшает totalPayout и returnPayout
+    // на одну и ту же величину, поэтому incomeExcludingReturns не меняется.
+    expect(report.summary.incomeExcludingReturns).toBe(2450);
+    expect(report.summary.returnRowCount).toBe(2);
+    expect(report.summary.returnReasons).toEqual({ CANCELED: 1, WRONG_SIZE: 1 });
+    expect(report.summary.statusTotals.return).toMatchObject({ rows: 2, payout: 0, returnedQuantity: 2 });
+  });
+
+  it('разбирает все статусы выводов средств и причину отказа', () => {
+    const matrices = fixture();
+    matrices[FINANCIAL_STATEMENT_SHEETS.withdrawals].push(
+      ['w3', 'плановый / rejali', 200, '1,00', 198, '02.08.2026 09:00:00', '2026-07', 'APPROVED (одобрена)', null],
+      ['w4', 'срочный / shoshilinch', 300, null, null, '03-08-2026 09:00:00', null, 'REJECTED (отклонена)', 'Неверные реквизиты счёта'],
+      ['w5', 'срочный / shoshilinch', 50, null, null, null, null, 'В ПУТИ', null],
+    );
+    const report = parseFinancialStatementMatrices(matrices);
+    expect(report.withdrawalRows.map((row) => row.status)).toEqual(['completed', 'created', 'approved', 'rejected', 'unknown']);
+    expect(report.withdrawalRows[2].feePercent).toBe(1);
+    expect(report.withdrawalRows[3]).toMatchObject({ rejectionReason: 'Неверные реквизиты счёта', netAmount: null });
+    // Зафиксировано текущее поведение: отклонённые и неизвестные выводы входят в общий withdrawalAmount;
+    // отдельно от них считаются только completed-итоги.
+    expect(report.summary.withdrawalAmount).toBe(1550);
+    expect(report.summary.completedWithdrawalAmount).toBe(900);
+    expect(report.summary.completedWithdrawalNetAmount).toBe(900);
+  });
+
+  it('показывает расхождение сверки: пересчитанный баланс против баланса из отчёта', () => {
+    const matrices = fixture();
+    matrices[FINANCIAL_STATEMENT_SHEETS.monthly][1][6] = 9999; // Uzum прислал другой итог месяца
+    const report = parseFinancialStatementMatrices(matrices);
+    // Модуль не бросает ошибку при расхождении: он всегда пересчитывает overallBalance по детальным
+    // строкам (2450 − 900 − 80) и отдельно отдаёт reportedEndingBalance из листа «Помесячно» — само
+    // расхождение видно по разнице полей (сверку строк с БД делает FinancialStatementsService, не этот модуль).
+    expect(report.summary.overallBalance).toBe(1470);
+    expect(report.summary.reportedEndingBalance).toBe(9999);
+    expect(report.summary.overallBalance).not.toBe(report.summary.reportedEndingBalance);
+  });
+
+  it('разбирает форматы чисел и дат: неразрывные пробелы, Excel-серийные даты, richText и формулы', () => {
+    const matrices = fixture();
+    const serial = (Date.UTC(2026, 6, 15, 10) - Date.UTC(1899, 11, 30)) / 86_400_000;
+    matrices[FINANCIAL_STATEMENT_SHEETS.income].push(
+      ['6', 'shop', 'p6', 'Товар 6', { richText: [{ text: 'доступен к выводу' }, { text: ' / yechishga tayyor' }] }, serial, '2026.07.20 15:30', '2', 0, '1 234,56', 0, 0, 0, 0, { formula: 'A1*2', result: 750 }, 0, null, null, null],
+    );
+    const report = parseFinancialStatementMatrices(matrices);
+    const row = report.incomeRows[4];
+    expect(row.status).toBe('available'); // richText склеен и распознан
+    expect(row.quantity).toBe(2); // число строкой
+    expect(row.salePrice).toBeCloseTo(1234.56); // неразрывный пробел и запятая
+    expect(row.payout).toBe(750); // ячейка-формула читается по result
+    // Зафиксировано текущее поведение: Excel-серийная дата трактуется как UTC без сдвига −5 ч,
+    // а строковая дата — как ташкентское время (сдвигается на −5 ч к UTC).
+    expect(row.purchasedAt?.toISOString()).toBe('2026-07-15T10:00:00.000Z');
+    expect(row.issuedAt?.toISOString()).toBe('2026-07-20T10:30:00.000Z');
+  });
+
+  it('пропускает строки без ID заказа и даёт 0 для нечислового текста в числовой колонке', () => {
+    const matrices = fixture();
+    matrices[FINANCIAL_STATEMENT_SHEETS.income].push(
+      ['', null, null, 'Итого', null, null, null, 99, 0, 0, 0, 0, 0, 0, 999_999, 0, null, null, null],
+    );
+    matrices[FINANCIAL_STATEMENT_SHEETS.withdrawals].push(
+      ['w6', null, 10, 'нет данных', null, null, null, 'CREATED (создана)', null],
+    );
+    const report = parseFinancialStatementMatrices(matrices);
+    expect(report.incomeRows).toHaveLength(4); // итоговая строка без ID заказа не попала в данные
+    expect(report.summary.totalPayout).toBe(3150);
+    // Зафиксировано текущее поведение: нечисловой текст в nullable-числовой колонке даёт 0, а не null.
+    expect(report.withdrawalRows.at(-1)?.feePercent).toBe(0);
+  });
+
+  it('падает с понятной ошибкой, если на листе нет строки заголовков', () => {
+    const matrices = fixture();
+    matrices[FINANCIAL_STATEMENT_SHEETS.income] = [['Конфиденциальный отчёт'], ['не заголовки']];
+    expect(() => parseFinancialStatementMatrices(matrices)).toThrow(/не найдена строка заголовков/);
+  });
 });

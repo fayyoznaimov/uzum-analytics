@@ -194,21 +194,15 @@ export default function WalletClient() {
 
   return <AppShell title="Кошелёк" subtitle="Главный экран денег: по дням, когда сумма попадает в корзину вывода, и отдельно когда Uzum отправит выплату по графику">
     {loading ? <div className="loading">Загружаем кошелёк…</div> : error ? <div className="error-box settings-notice"><span>{error}</span><button className="ghost" onClick={() => void reload()}>Повторить</button></div> : !pf ? <div className="loading">Нет данных кошелька за период.</div> : <>
-      <section className="wallet-hero" style={{ display: 'none' }}>
-        <div className="wallet-hero-main">
-          <span>ГЛАВНАЯ ЛОГИКА</span>
-          <h1>Сначала деньги попадают в корзину вывода, потом уходят по графику выплат</h1>
-          <p>Основа расчёта — <b>dateIssued</b>, то есть фактическая выдача товара покупателю. После {pf.holdDays} полных дней удержания сумма появляется в корзине. Возвраты уменьшают прогноз сразу.</p>
+      <section className="wallet-hero2">
+        <div className="wallet-hero2-main">
+          <span>МОЖНО ВЫВЕСТИ СЕЙЧАС</span>
+          <b>{money(Number(pf.summary?.availableToWithdraw || 0))}</b>
+          <small>уже в корзине вывода Uzum{Number(pf.serviceFeePercent) > 0 ? ` · плата за вывод ${pf.serviceFeePercent}%` : ''}</small>
         </div>
-        <div className="wallet-formula">
-          <div><small>1</small><b>Выдано покупателю</b><span>dateIssued</span></div>
-          <ArrowRight />
-          <div><small>2</small><b>{pf.holdDays} дней удержания</b><span>риск возврата</span></div>
-          <ArrowRight />
-          <div><small>3</small><b>Корзина вывода</b><span>можно ждать / выводить</span></div>
-          <ArrowRight />
-          <div><small>4</small><b>График Uzum</b><span>{pf.schedule}</span></div>
-        </div>
+        <div className="wallet-hero2-cell"><span>В УДЕРЖАНИИ {pf.holdDays} ДН.</span><b>{money(Number(pf.summary?.inReturnHold || 0))}</b><small>ждут окончания холда</small></div>
+        <div className="wallet-hero2-cell"><span>БЛИЖАЙШИЕ 7 ДНЕЙ</span><b>{money(Number(pf.summary?.next7Days || 0))}</b><small>попадёт в корзину по графику</small></div>
+        <div className="wallet-hero2-steps"><i>1</i><em>Фактическая выдача покупателю</em><ArrowRight size={14}/><i>2</i><em>{pf.holdDays} календарных дней удержания</em><ArrowRight size={14}/><i>3</i><em>Корзина вывода — деньги доступны</em></div>
       </section>
 
       <section className="panel wallet-section statement-panel">

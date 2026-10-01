@@ -45,5 +45,17 @@ export function useOverview() {
   }, [query]);
 
   useEffect(() => { void reload(); return () => controllerRef.current?.abort(); }, [reload]);
+  // Мягкое обновление после «Обновить данные» в шапке: вместо location.reload,
+  // который терял черновики и раскрытые строки.
+  useEffect(() => {
+    const handler = () => { void reload(); };
+    window.addEventListener('ua:overview-refresh', handler);
+    return () => window.removeEventListener('ua:overview-refresh', handler);
+  }, [reload]);
   return { data, loading, refreshing, error, reload, query, days, label };
+}
+
+export function refreshOverviewEverywhere() {
+  invalidateOverview();
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('ua:overview-refresh'));
 }

@@ -107,3 +107,26 @@ html,body{font-family:'Golos Text',ui-sans-serif,system-ui,-apple-system,"Segoe 
 .subtabs a:hover{color:var(--ink);background:#F4F5F8}
 .subtabs a.active,.subtabs a.active:hover{background:#F1EDFF;border-color:#E3DAFB;color:#5536D1}
 @media(max-width:720px){.subtabs{margin:0 16px 10px}}
+/* Этап 3 редизайна: тёмная карточка прибыли и герой кошелька */
+.metric.dark{background:#17191F;border-color:#17191F;color:#fff}
+.metric.dark .metric-top span{color:#B8BCC7}
+.metric.dark strong{color:#fff}
+.metric.dark small{color:#B8BCC7}
+.metric.dark small.up{color:#7CE8AC}
+.wallet-hero2{margin:0 22px 12px;display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:12px}
+.wallet-hero2-main{background:#17191F;border-radius:16px;padding:20px 22px;display:flex;flex-direction:column;gap:6px;color:#fff}
+.wallet-hero2-main span{font-size:11.5px;font-weight:700;letter-spacing:.06em;color:#B8BCC7}
+.wallet-hero2-main b{font-size:30px;font-weight:800;letter-spacing:-.02em;color:#7CE8AC}
+.wallet-hero2-main small{font-size:12.5px;color:#B8BCC7}
+.wallet-hero2-cell{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px 22px;display:flex;flex-direction:column;gap:6px}
+.wallet-hero2-cell span{font-size:11.5px;font-weight:700;letter-spacing:.06em;color:var(--muted)}
+.wallet-hero2-cell b{font-size:24px;font-weight:800;letter-spacing:-.01em}
+.wallet-hero2-cell small{font-size:12.5px;color:var(--muted)}
+.wallet-hero2-steps{grid-column:1/-1;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 18px;display:flex;align-items:center;gap:10px;font-size:13px;color:#4A4F5C;flex-wrap:wrap}
+.wallet-hero2-steps i{font-style:normal;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:12px;flex-shrink:0}
+.wallet-hero2-steps i:nth-of-type(1){background:#EFEAFD;color:#5536D1}
+.wallet-hero2-steps i:nth-of-type(2){background:#FFF4E0;color:#9A6700}
+.wallet-hero2-steps i:nth-of-type(3){background:#E8F7EF;color:#0E7A4E}
+.wallet-hero2-steps em{font-style:normal;font-weight:600}
+.wallet-hero2-steps svg{color:#C6CAD4}
+@media(max-width:900px){.wallet-hero2{grid-template-columns:1fr 1fr}.wallet-hero2-main{grid-column:1/-1}}

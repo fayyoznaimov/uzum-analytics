@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { BarChart3, Boxes, CalendarRange, ChartNoAxesCombined, CircleDollarSign, ClipboardList, Clock3, Goal, LayoutDashboard, LogOut, Megaphone, MessageSquareText, PackageSearch, RefreshCw, Settings, ShieldCheck, WalletCards } from 'lucide-react';
 import { api, getToken, logout, syncAndWait } from '@/lib/api';
+import { refreshOverviewEverywhere } from '@/lib/overview';
 import PeriodPicker from './PeriodPicker';
 import { useAnalyticsPeriod } from '@/lib/period';
 
@@ -54,7 +55,7 @@ export default function AppShell({ children, title, subtitle, actions, periodEna
     try {
       const result: any = await syncAndWait();
       setSyncMessage(result.message || 'Данные обновлены');
-      setTimeout(() => location.reload(), 700);
+      refreshOverviewEverywhere();
     } catch (error: any) {
       setSyncMessage(`Ошибка обновления: ${error.message}`);
     } finally {

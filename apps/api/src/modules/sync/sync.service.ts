@@ -1001,11 +1001,13 @@ export class SyncService {
       });
       return parentRows.length === 1 ? parentRows[0] : null;
     };
+    // Настройки магазина одни на весь прогон — нечего перечитывать их на каждый заказ.
+    const holdDaysSetting = Number((await this.prisma.financialSettings.findUnique({ where: { shopId } }))?.payoutDelayDays ?? 10);
     for (const [transitionKey, { orderExternalId, childExternalId, issuedAt }] of fulfilledByOrder) {
       if (returnedByOrder.has(transitionKey)) continue;
       const order = await resolveTransitionOrder(orderExternalId, childExternalId);
       if (!order || order.state === 'CANCELED' || order.state === 'RETURNED') continue;
-      const eligibleKey = basketEligibleDate(issuedAt, Number((await this.prisma.financialSettings.findUnique({ where: { shopId } }))?.payoutDelayDays ?? 10));
+      const eligibleKey = basketEligibleDate(issuedAt, holdDaysSetting);
       await this.prisma.order.update({ where: { id: order.id }, data: { state: 'PAID', issuedAt: order.issuedAt || issuedAt, dateIssued: order.issuedAt || issuedAt, paidAt: order.paidAt || issuedAt, basketEligibleAt: this.dateFromTashkentKey(eligibleKey), financialState: 'RETURN_HOLD' } });
     }
     for (const { orderExternalId, childExternalId, returnedAt, sourceStatus } of returnedByOrder.values()) {

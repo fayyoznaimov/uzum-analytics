@@ -85,44 +85,6 @@ model Shop {
   financialStatementImports FinancialStatementImport[]
   withdrawals         Withdrawal[]
   reviews            Review[]
-  adCampaignAudits   AdCampaignAudit[]
-}
-
-model AdExtensionClient {
-  id          String   @id @default(cuid())
-  tokenHash   String   @unique
-  label       String   @default("Chrome extension")
-  lastSeenAt  DateTime?
-  revokedAt   DateTime?
-  createdAt   DateTime @default(now())
-}
-
-model AdPairingCode {
-  id        String   @id @default(cuid())
-  codeHash  String   @unique
-  expiresAt DateTime
-  usedAt    DateTime?
-  createdAt DateTime @default(now())
-}
-
-model AdCampaignAudit {
-  id                 String   @id @default(cuid())
-  shopId             String
-  campaignExternalId String
-  campaignName       String
-  productExternalId  String?
-  productTitle       String?
-  periodFrom         DateTime?
-  periodTo           DateTime?
-  status              String   @default("COMPLETE")
-  summary             Json
-  terms               Json
-  recommendations     Json
-  capturedAt          DateTime @default(now())
-  shop                 Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
-
-  @@index([shopId, capturedAt])
-  @@index([shopId, campaignExternalId, capturedAt])
 }
 
 model IntegrationCredential {
