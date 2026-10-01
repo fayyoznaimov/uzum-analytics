@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { IntegrationType, Prisma, SupplyType } from '@prisma/client';
 import { PrismaService } from '../../common/prisma.service';
+import { uzumRequest } from '../../common/uzum-http';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { buildFboSupplySummary } from '../../common/fbo-supply-summary';
 
@@ -41,47 +42,21 @@ export class SuppliesService {
     return this.arrayPayload(data, keys).rows;
   }
 
-  private async request(path: string, token: string, params?: Record<string, QueryValue>, init?: RequestInit, attempt = 0): Promise<any> {
-    const url = new URL(this.base + path);
-    for (const [key, value] of Object.entries(params || {})) {
-      if (value === undefined || value === null || value === '') continue;
-      if (Array.isArray(value)) value.forEach((item) => url.searchParams.append(key, String(item)));
-      else url.searchParams.append(key, String(value));
-    }
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25_000);
-    try {
-      const response = await fetch(url, {
-        ...init,
-        signal: controller.signal,
-        headers: {
-          Authorization: token,
-          Accept: 'application/json',
-          ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-          ...(init?.headers || {}),
-        },
-      });
-      const raw = await response.text();
-      let body: any = {};
-      try { body = raw ? JSON.parse(raw) : {}; } catch { body = { message: raw }; }
-      const transient = response.status === 429 || response.status >= 500;
-      if (!response.ok && transient && attempt < 2) {
-        await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
-        return this.request(path, token, params, init, attempt + 1);
-      }
-      const apiMessage = body?.message
-        || body?.error
-        || (Array.isArray(body?.errors)
-          ? body.errors.map((item: any) => [item?.code, item?.message].filter(Boolean).join(': ')).filter(Boolean).join('; ')
-          : '');
-      if (!response.ok) throw new Error(`${path}: HTTP ${response.status}${apiMessage ? ` — ${apiMessage}` : ''}`);
-      return body;
-    } catch (error: any) {
-      if (error?.name === 'AbortError') throw new Error(`${path}: превышено время ожидания 25 секунд`);
-      throw error;
-    } finally {
-      clearTimeout(timeout);
-    }
+  private request(path: string, token: string, params?: Record<string, QueryValue>): Promise<any> {
+    return uzumRequest(path, {
+      token, params, timeoutMs: 25_000,
+      // Два быстрых молчаливых повтора на 429/5xx — ответы Uzum по поставкам флапают.
+      retry: { attempts: 2, shouldRetry: (status) => status === 429 || status >= 500, backoffMs: (_s, attempt) => 800 * (attempt + 1), warn: null },
+      buildError: (status, body, rawText, requestPath) => {
+        const apiMessage = body?.message
+          || body?.error
+          || (Array.isArray(body?.errors)
+            ? body.errors.map((item: any) => [item?.code, item?.message].filter(Boolean).join(': ')).filter(Boolean).join('; ')
+            : '')
+          || (body?.raw ? String(rawText).slice(0, 500) : '');
+        return new Error(`${requestPath}: HTTP ${status}${apiMessage ? ` — ${apiMessage}` : ''}`);
+      },
+    });
   }
 
   private pickStatus(item: any) {

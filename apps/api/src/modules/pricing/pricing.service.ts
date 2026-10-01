@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { IntegrationType, Prisma } from '@prisma/client';
 import { DEFAULT_MAX_STEP_PERCENT, planPriceChange } from '../../common/pricing';
 import { PrismaService } from '../../common/prisma.service';
+import { uzumErrorDetail, uzumRequest } from '../../common/uzum-http';
 import { IntegrationsService } from '../integrations/integrations.service';
 
 export type SendPriceOptions = {
@@ -41,49 +42,31 @@ export class PricingService {
   private readonly base = 'https://api-seller.uzum.uz/api/seller-openapi';
   constructor(private readonly prisma: PrismaService, private readonly integrations: IntegrationsService) {}
 
-  private async request(method: 'GET' | 'POST', path: string, token: string, params?: Record<string, string | number>, body?: unknown, attempt = 0): Promise<any> {
-    const url = new URL(this.base + path);
-    Object.entries(params || {}).forEach(([key, value]) => url.searchParams.append(key, String(value)));
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-    try {
-      const response = await fetch(url, {
-        method,
-        headers: { Authorization: token, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
-        body: body ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
-      });
-      const text = await response.text();
-      let parsed: any = {};
-      try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = { raw: text.slice(0, 500) }; }
-      if (!response.ok) {
-        // Повторяем только 429: запрос не дошёл до обработки. На 5xx после POST
-        // цена могла уже примениться — повтор решает человек, а не цикл.
-        if (response.status === 429 && attempt < 3) {
-          const backoffMs = 5_000 * (attempt + 1);
-          this.logger.warn(`${path}: HTTP 429, повтор через ${Math.round(backoffMs / 1000)} с (попытка ${attempt + 1} из 3)`);
-          await new Promise((resolve) => setTimeout(resolve, backoffMs));
-          return this.request(method, path, token, params, body, attempt + 1);
-        }
-        const detail = parsed?.message || parsed?.error || parsed?.errors?.[0]?.message || parsed?.payload?.[0]?.msg;
-        const readOnly = response.status === 403 && /read.?only/i.test(String(detail || text));
+  private request(method: 'GET' | 'POST', path: string, token: string, params?: Record<string, string | number>, body?: unknown): Promise<any> {
+    return uzumRequest(path, {
+      method, token, params, body, timeoutMs: 30_000,
+      // Повторяем только 429: запрос не дошёл до обработки. На 5xx после POST
+      // цена могла уже примениться — повтор решает человек, а не цикл.
+      retry: {
+        attempts: 3,
+        shouldRetry: (status) => status === 429,
+        backoffMs: (_status, attempt) => 5_000 * (attempt + 1),
+        warn: (message) => this.logger.warn(message),
+      },
+      buildError: (status, parsed, rawText, requestPath) => {
+        const detail = uzumErrorDetail(parsed);
+        const readOnly = status === 403 && /read.?only/i.test(String(detail || rawText));
         // sku-price-001 «Ску нельзя редактировать» пришёл 25.09.2026 на SKU в акции, хотя в кабинете
         // цену в акции менять можно — причина пока не установлена.
         const locked = parsed?.errors?.some((row: any) => row?.code === 'sku-price-001');
         const hint = readOnly
           ? ' (токен Uzum выдан только на чтение — для изменения цен нужен токен с правом записи)'
           : locked ? ' (Uzum запретил менять цену этого SKU — sku-price-001)' : '';
-        const error: any = new Error(`${path}: HTTP ${response.status}${detail ? ` — ${detail}` : ''}${hint}`);
+        const error: any = new Error(`${requestPath}: HTTP ${status}${detail ? ` — ${detail}` : ''}${hint}`);
         error.responseBody = parsed;
-        throw error;
-      }
-      return parsed;
-    } catch (error: any) {
-      if (error?.name === 'AbortError') throw new Error(`${path}: превышено время ожидания 30 секунд`);
-      throw error;
-    } finally {
-      clearTimeout(timeout);
-    }
+        return error;
+      },
+    });
   }
 
   private int(value: any): number | null {

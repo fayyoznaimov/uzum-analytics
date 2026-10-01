@@ -5,6 +5,7 @@ import { advertisingRateAt, advertisingRateTimeline, latestAdvertisingRates } fr
 import { classifyOrderState, resolveOrderReportDate } from '../../common/order-state';
 import { basketEligibleDate, scheduledPayoutDate } from '../../common/payout-basket';
 import { PrismaService } from '../../common/prisma.service';
+import { uzumRequest } from '../../common/uzum-http';
 import { IntegrationsService } from '../integrations/integrations.service';
 
 type MoneyPick = { found: boolean; value: number };
@@ -122,37 +123,18 @@ export class SyncService {
     );
   }
 
-  private async request(path: string, token: string, params?: Record<string, string | number>, attempt = 0): Promise<any> {
-    const url = new URL(this.base + path);
-    Object.entries(params || {}).forEach(([key, value]) => url.searchParams.append(key, String(value)));
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-    try {
-      const response = await fetch(url, { headers: { Authorization: token, Accept: 'application/json' }, signal: controller.signal });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const transient = [429, 502, 503, 504].includes(response.status)
-          || ([403, 404].includes(response.status) && TRANSIENT_ERROR_PATHS.some((prefix) => path.startsWith(prefix)));
-        if (attempt < 3 && transient) {
-          // После 429 секунды не хватает — лимит Uzum держится дольше.
-          const backoffMs = response.status === 429 ? 5_000 * (attempt + 1) : 1_500 * (attempt + 1);
-          this.logger.warn(`${path}: HTTP ${response.status}, повтор через ${Math.round(backoffMs / 1000)} с (попытка ${attempt + 1} из 3)`);
-          await new Promise((resolve) => setTimeout(resolve, backoffMs));
-          return this.request(path, token, params, attempt + 1);
-        }
-        const detail = body?.message
-          || body?.error
-          || body?.errors?.[0]?.message
-          || body?.payload?.[0]?.msg;
-        throw new Error(`${path}: HTTP ${response.status}${detail ? ` — ${detail}` : ''}`);
-      }
-      return body;
-    } catch (error: any) {
-      if (error?.name === 'AbortError') throw new Error(`${path}: превышено время ожидания 30 секунд`);
-      throw error;
-    } finally {
-      clearTimeout(timeout);
-    }
+  private request(path: string, token: string, params?: Record<string, string | number>): Promise<any> {
+    return uzumRequest(path, {
+      token, params, timeoutMs: 30_000,
+      retry: {
+        attempts: 3,
+        shouldRetry: (status, requestPath) => [429, 502, 503, 504].includes(status)
+          || ([403, 404].includes(status) && TRANSIENT_ERROR_PATHS.some((prefix) => requestPath.startsWith(prefix))),
+        // После 429 секунды не хватает — лимит Uzum держится дольше.
+        backoffMs: (status, attempt) => (status === 429 ? 5_000 * (attempt + 1) : 1_500 * (attempt + 1)),
+        warn: (message) => this.logger.warn(message),
+      },
+    });
   }
 
   private arr(data: any, keys: string[]) {

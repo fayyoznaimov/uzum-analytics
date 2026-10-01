@@ -6,6 +6,7 @@ import { advertisingEstimateAt, advertisingRateTimeline, ORDER_BOOST_CODE } from
 import { CryptoService } from '../../common/crypto.service';
 import { DEFAULT_OPENCLAW_MODEL, OpenclawClient } from '../../common/openclaw.client';
 import { PrismaService } from '../../common/prisma.service';
+import { uzumRequest } from '../../common/uzum-http';
 import { TelegramClient } from '../../common/telegram.client';
 import { DashboardService } from '../dashboard/dashboard.service';
 import { CostsService } from '../costs/costs.service';
@@ -339,21 +340,15 @@ export class IntegrationsService {
   }
 
   private async uzumRequest(path: string, token: string) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20_000);
     try {
-      const response = await fetch(`https://api-seller.uzum.uz/api/seller-openapi${path}`, {
-        headers: { Authorization: token, Accept: 'application/json' },
-        signal: controller.signal,
+      return await uzumRequest(path, {
+        token, timeoutMs: 20_000,
+        buildError: (status, body) => new Error(`Uzum API: HTTP ${status}${body?.message ? ` — ${body.message}` : ''}`),
       });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(`Uzum API: HTTP ${response.status}${body?.message ? ` — ${body.message}` : ''}`);
-      return body;
     } catch (error: any) {
-      if (error?.name === 'AbortError') throw new Error('Uzum API: превышено время ожидания 20 секунд');
+      // Сообщение таймаута без пути — его видит пользователь в Настройках.
+      if (/превышено время ожидания/.test(String(error?.message))) throw new Error('Uzum API: превышено время ожидания 20 секунд');
       throw error;
-    } finally {
-      clearTimeout(timeout);
     }
   }
 

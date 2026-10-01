@@ -15,6 +15,7 @@ import {
 } from '../../common/promo-pricing';
 import { cabinetProductsPageSize, parseCabinetProducts, StockForecast } from '../../common/auto-pricing';
 import { PrismaService } from '../../common/prisma.service';
+import { uzumRequest } from '../../common/uzum-http';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { PricingService } from './pricing.service';
 
@@ -63,48 +64,31 @@ export class PromoPricingService {
     return { token: cfg.token.replace(/^Bearer\s+/i, '').trim(), shopExternalId, shopId: shop?.id ?? null };
   }
 
-  private async request(method: 'GET' | 'POST' | 'PUT', path: string, token: string, params?: Record<string, string | number>, body?: unknown, attempt = 0): Promise<any> {
-    // Абсолютный URL — другие разделы API кабинета (api-seller.uzum.uz) с тем же токеном.
-    const url = new URL(/^https:\/\//.test(path) ? path : UZUM_PROMO_API_BASE + path);
-    Object.entries(params || {}).forEach(([key, value]) => url.searchParams.append(key, String(value)));
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-    try {
-      const response = await fetch(url, {
-        method,
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Accept-Language': 'ru-RU', ...(body ? { 'Content-Type': 'application/json' } : {}) },
-        body: body ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
-      });
-      const text = await response.text();
-      let parsed: any = {};
-      try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = { raw: text.slice(0, 500) }; }
-      if (!response.ok) {
-        // Как и в PricingService: повторяем только 429, после POST с 5xx решает человек.
-        if (response.status === 429 && attempt < 3) {
-          const backoffMs = 5_000 * (attempt + 1);
-          this.logger.warn(`${path}: HTTP 429, повтор через ${Math.round(backoffMs / 1000)} с (попытка ${attempt + 1} из 3)`);
-          await new Promise((resolve) => setTimeout(resolve, backoffMs));
-          return this.request(method, path, token, params, body, attempt + 1);
-        }
-        if (response.status === 401) {
+  private request(method: 'GET' | 'POST' | 'PUT', path: string, token: string, params?: Record<string, string | number>, body?: unknown): Promise<any> {
+    // Абсолютный URL в path — другие разделы API кабинета (api-seller.uzum.uz) с тем же токеном.
+    return uzumRequest(path, {
+      method, base: UZUM_PROMO_API_BASE, token, bearer: true, params, body,
+      headers: { 'Accept-Language': 'ru-RU' }, timeoutMs: 30_000,
+      // Как и в PricingService: повторяем только 429, после POST с 5xx решает человек.
+      retry: {
+        attempts: 3,
+        shouldRetry: (status) => status === 429,
+        backoffMs: (_status, attempt) => 5_000 * (attempt + 1),
+        warn: (message) => this.logger.warn(message),
+      },
+      buildError: async (status, parsed, _rawText, requestPath) => {
+        if (status === 401) {
           await this.prisma.integrationCredential.update({
             where: { type: IntegrationType.UZUM_INTERNAL },
             data: { status: IntegrationStatus.ERROR, lastError: PROMO_TOKEN_EXPIRED_MESSAGE },
           }).catch(() => undefined);
-          throw new BadRequestException(PROMO_TOKEN_EXPIRED_MESSAGE);
+          return new BadRequestException(PROMO_TOKEN_EXPIRED_MESSAGE);
         }
-        const error: any = new Error(promoApiErrorMessage(path, response.status, parsed));
+        const error: any = new Error(promoApiErrorMessage(requestPath, status, parsed));
         error.responseBody = parsed;
-        throw error;
-      }
-      return parsed;
-    } catch (error: any) {
-      if (error?.name === 'AbortError') throw new Error(`${path}: превышено время ожидания 30 секунд`);
-      throw error;
-    } finally {
-      clearTimeout(timeout);
-    }
+        return error;
+      },
+    });
   }
 
   private async sales(shopExternalId: string, token: string): Promise<PromoSale[]> {
