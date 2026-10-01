@@ -24,7 +24,11 @@ export async function syncAndWait() {
   for (let attempt = 0; attempt < 300; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 2_000));
     const runs = await api<any[]>('/sync/runs');
-    const run = runs.find((item) => new Date(item.startedAt).getTime() >= requestedAt) || runs[0];
+    // Свой прогон — только начавшийся после нашего запроса; уже идущий RUNNING
+    // тоже ждём (start() вернул alreadyRunning). Брать runs[0] без проверки
+    // нельзя: предыдущий SUCCESS выглядел бы как мгновенный «успех».
+    const run = runs.find((item) => new Date(item.startedAt).getTime() >= requestedAt)
+      || (runs[0]?.status === 'RUNNING' ? runs[0] : undefined);
     if (!run || run.status === 'RUNNING') continue;
     if (run.status === 'SUCCESS') return run;
     throw new Error(run.message || 'Синхронизация завершилась с ошибкой');
