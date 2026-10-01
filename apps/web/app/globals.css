@@ -101,3 +101,9 @@ html,body{font-family:'Golos Text',ui-sans-serif,system-ui,-apple-system,"Segoe 
 .metric{border-top:0;border-radius:14px;box-shadow:var(--shadow);padding:16px 18px}
 .metric strong{font-weight:800;letter-spacing:-.01em}
 @media(max-width:720px){.sidebar{background:#fff;border-top:1px solid var(--line)}.sidebar nav .nav-group{display:none}}
+.page-head h1{font-family:'Golos Text',ui-sans-serif,system-ui,sans-serif;font-weight:800;font-size:26px;letter-spacing:-.01em}
+.subtabs{display:flex;gap:8px;margin:0 26px 12px}
+.subtabs a{text-decoration:none;font-size:13px;font-weight:600;color:#4A4F5C;background:#fff;border:1px solid var(--line);border-radius:9px;padding:7px 14px}
+.subtabs a:hover{color:var(--ink);background:#F4F5F8}
+.subtabs a.active,.subtabs a.active:hover{background:#F1EDFF;border-color:#E3DAFB;color:#5536D1}
+@media(max-width:720px){.subtabs{margin:0 16px 10px}}
