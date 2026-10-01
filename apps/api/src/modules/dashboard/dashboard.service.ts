@@ -604,7 +604,10 @@ export class DashboardService {
     // disappear; PROCESSING due today remains excluded until Uzum confirms it.
     const forecastTodayKey = tashkentKey(forecastNow);
     const forecastEligible = forecastOrders.filter((order) => {
-      const issued = order.dateIssued || order.issuedAt;
+      // Строго фактическая выдача (issuedAt). dateIssued — производное поле с
+      // fallback на дату заказа: по нему заказ без данных о выдаче попадал бы в
+      // корзину раньше, чем деньги реально начинают удержание.
+      const issued = order.issuedAt;
       if (!issued || Number(order.payout) <= 0) return false;
       if (order.status === 'TO_WITHDRAW') return true;
       return this.state(order) === 'PAID'
@@ -619,7 +622,7 @@ export class DashboardService {
       externalId: row.order.externalId,
       marketplaceOrderId: row.order.marketplaceOrderId,
       orderedAt: row.order.orderedAt,
-      issuedAt: row.order.dateIssued || (row.order as any).issuedAt || row.order.paidAt,
+      issuedAt: row.order.issuedAt || row.order.dateIssued,
       dateIssued: row.order.dateIssued,
       gross: row.gross,
       payout: row.payout,
@@ -635,7 +638,7 @@ export class DashboardService {
       externalId: row.order.externalId,
       marketplaceOrderId: row.order.marketplaceOrderId,
       orderedAt: row.order.orderedAt,
-      issuedAt: row.order.dateIssued || (row.order as any).issuedAt || row.order.paidAt,
+      issuedAt: row.order.issuedAt || row.order.dateIssued,
       dateIssued: row.order.dateIssued,
       gross: row.gross,
       payout: this.remainingPayout(row.order, row.payout),
@@ -649,7 +652,7 @@ export class DashboardService {
       externalId: row.order.externalId,
       marketplaceOrderId: row.order.marketplaceOrderId,
       orderedAt: row.order.orderedAt,
-      issuedAt: row.order.dateIssued || (row.order as any).issuedAt || row.order.paidAt,
+      issuedAt: row.order.issuedAt || row.order.dateIssued,
       dateIssued: row.order.dateIssued,
       gross: row.gross,
       payout: row.payout,

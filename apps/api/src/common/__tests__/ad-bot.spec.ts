@@ -65,6 +65,14 @@ describe('решения по слову', () => {
     const groups = new Map([['4160950', { skuGroupId: '4160950', title: 'СЕРЫЙ', stock: 2, price: 200_000 }]]);
     expect(decide({ groups }, { impressions: 100 }, { impressions: 40 })).toMatchObject({ kind: 'LOWER', newCpm: 9_500 });
   });
+  it('цвет не сматчился (нет ни цены, ни ДРР) — не судим и НЕ поднимаем', () => {
+    // Раньше слово без данных о товаре считалось «дёшевым» и росло на каждый
+    // прогон до максимума. «Нет данных» ≠ «всё хорошо».
+    const noGroup = decide({ groups: new Map() }, { impressions: 9_000, clicks: 200, spend: 300_000, sold: 0 }, { impressions: 40 });
+    expect(noGroup).toBeNull();
+    const noPrice = decideKeyword(kw(), input({ groups: new Map([['4160950', { skuGroupId: '4160950', title: 'HAVANASAUNA-БЕЛЫЙ', stock: 10, price: null }]]) }, { impressions: 100, clicks: 2, spend: 3_000 }, { impressions: 40 }));
+    expect(noPrice).toBeNull();
+  });
   it('слово меняли меньше 3 дней назад — не трогаем', () => {
     const lastChange = new Map([['1', new Date('2026-09-27T11:00:00+05:00')]]);
     expect(decide({ lastChange }, { spend: 120_000, clicks: 40 })).toBeNull();
@@ -146,6 +154,16 @@ describe('минус-слова', () => {
     const text = formatAdBotReport({ label: 'x', apply: false, plan, outcomes: [], notes: [], keywordsCount: 2 }).join('\n');
     expect(text).toContain('🚫 минус-слова «katta sochiq» — HAVANASAUNA-БЕЛЫЙ: + халат, коврик');
     expect(text).toContain('только предложения');
+  });
+  it('кулдаун действует и на чистую правку минус-слов', () => {
+    const feed = [
+      { skuGroupId: '4160950', searchQuery: 'полотенце детское', impressions: 500, clicks: 15, sold: 0, atc: 0, revenue: 0 },
+      { skuGroupId: '4160950', searchQuery: 'полотенце для сауны', impressions: 900, clicks: 25, sold: 3, atc: 2, revenue: 500_000 },
+    ];
+    const fresh = planAdBot(input({ feed }));
+    expect(fresh.actions.some((row) => row.kind === 'STOPWORDS')).toBe(true);
+    const cooled = planAdBot(input({ feed, lastChange: new Map([['1', new Date(now.getTime() - 86_400_000)]]) }));
+    expect(cooled.actions.some((row) => row.kind === 'STOPWORDS')).toBe(false);
   });
   it('лимит Uzum 58 минус-слов: добавляем только сколько влезает', () => {
     const full = Array.from({ length: 57 }, (_, index) => `слово${index}`);

@@ -159,7 +159,11 @@ export function decideKeyword(keyword: AdBotKeyword, input: AdBotInput, cfg: AdB
   if (drr !== null && drr <= cfg.maxDrrPercent * cfg.goodDrrRatio && s14.sold >= 2 && (s14.position === null || s14.position > cfg.topPosition)) {
     return raise(`выгодное слово: ДРР ${drr.toFixed(1)}%, позиция ${s14.position?.toFixed(1) ?? '—'} — поднимаем выше (${period})`);
   }
-  const cheap = drr !== null ? drr <= cfg.maxDrrPercent : price === null || s14.spend < cfg.zeroSaleSpendRatio * price;
+  // «Нет данных» ≠ «всё хорошо»: если цвет не сматчился (нет ни ДРР, ни цены),
+  // слово нельзя судить — и поднимать его тоже нельзя, иначе убыточное слово
+  // росло бы на каждый прогон до максимума. Тот же принцип, что в автоценах:
+  // «маржа не рассчитана — не трогаем».
+  const cheap = drr !== null ? drr <= cfg.maxDrrPercent : price !== null && s14.spend < cfg.zeroSaleSpendRatio * price;
   if (s7.impressions < cfg.lowImpressions7 && cheap) return raise(`мало показов: ${s7.impressions} за 7 дн. — поднимаем ради охвата (${period})`);
   return null;
 }
@@ -249,6 +253,11 @@ export function planAdBot(input: AdBotInput, cfg: AdBotConfig = AD_BOT_DEFAULTS)
       const stopWords = [...keyword.stopWords, ...words.filter((word) => !keyword.stopWords.map(normalizeQuery).includes(word))];
       const planned = actions.find((row) => row.adId === keyword.adId);
       if (planned) { planned.stopWords = stopWords; planned.addedStopWords = words; planned.reason += `; ${why}`; continue; }
+      // Кулдаун распространяется и на чистые правки минус-слов: без него слово
+      // редактировалось бы каждый день, и лимит изменений за прогон оставался
+      // бы единственным тормозом.
+      const last = input.lastChange.get(keyword.adId);
+      if (last && input.now.getTime() - last.getTime() < cfg.cooldownDays * DAY_MS) continue;
       actions.push({
         kind: 'STOPWORDS', campaignId: keyword.campaignId, campaignName: keyword.campaignName, skuGroupId,
         groupTitle: input.groups.get(skuGroupId)?.title ?? skuGroupId, adId: keyword.adId, query: keyword.query,

@@ -21,10 +21,16 @@ export class SyncService {
   private readonly logger = new Logger(SyncService.name);
   private readonly base = 'https://api-seller.uzum.uz/api/seller-openapi';
   private orderSyncRunning = false;
+  // Защита от наложения полного прогона на самого себя: если прогон идёт дольше
+  // интервала крона, следующий тик молча пропускается, а не запускает второй
+  // runAll параллельно (гонка на транзакции пересборки adCost, двойные
+  // Telegram-уведомления о новых заказах).
+  private fullSyncRunning = false;
   constructor(private readonly prisma: PrismaService, private readonly integrations: IntegrationsService) {}
 
   @Cron(process.env.SYNC_CRON || '*/15 * * * *')
   async scheduled() {
+    if (this.fullSyncRunning) { this.logger.warn('Scheduled sync skipped: previous full sync is still running'); return; }
     try { await this.runAll(); }
     catch (error: any) { this.logger.error(`Scheduled sync failed: ${error?.message || error}`); }
   }
@@ -217,6 +223,16 @@ export class SyncService {
   }
 
   async runAll() {
+    if (this.fullSyncRunning) throw new BadRequestException('Полная синхронизация уже выполняется');
+    this.fullSyncRunning = true;
+    try {
+      return await this.runAllInner();
+    } finally {
+      this.fullSyncRunning = false;
+    }
+  }
+
+  private async runAllInner() {
     const cfg = await this.integrations.getPlain(IntegrationType.UZUM);
     if (!cfg?.token) throw new BadRequestException('Uzum API token не настроен');
     const run = await this.prisma.syncRun.create({ data: { type: 'FULL', status: 'RUNNING' } });
@@ -255,7 +271,8 @@ export class SyncService {
           status: 'SUCCESS',
           records: productResult.skus + orderResult.rows + expenseResult.rows,
           finishedAt: new Date(),
-          message: `Товары: ${productResult.products}, SKU: ${productResult.skus}, заказы: ${orderResult.rows}, расходы: ${expenseResult.rows}`,
+          message: `Товары: ${productResult.products}, SKU: ${productResult.skus}, заказы: ${orderResult.rows}, расходы: ${expenseResult.rows}`
+            + (orderResult.financialEventErrors ? ` ⚠️ не записано финансовых событий: ${orderResult.financialEventErrors} (см. лог API)` : ''),
         },
       });
       return { ok: true, shop: shop.name, ...productResult, orders: orderResult.rows, expenses: expenseResult.rows, newOrders: orderResult.newOrders };
@@ -376,6 +393,7 @@ export class SyncService {
   private async syncOrders(shopId: string, externalShopId: string, token: string) {
     let rows = 0;
     let newOrders = 0;
+    let financialEventErrors = 0;
     const advertisingRateNow = new Date();
     const [existingOrderCount, settings, recentAdvertisingExpenses] = await Promise.all([
       this.prisma.order.count({ where: { shopId } }),
@@ -565,7 +583,13 @@ export class SyncService {
               note: `Фактическая выдача товара покупателю; начало удержания на ${holdDays} дн. до корзины вывода.`,
               raw: item as Prisma.InputJsonValue,
             },
-          }).catch(() => undefined);
+          }).catch((error: any) => {
+            // Потерянное событие = тихо заниженная корзина вывода. Не роняем
+            // прогон (upsert идемпотентен и добьёт на следующем цикле), но
+            // ошибка обязана быть видимой: лог + счётчик в итоге прогона.
+            financialEventErrors += 1;
+            this.logger.error(`SALE_ISSUED не записан для заказа ${order.externalId}: ${error?.message || error}`);
+          });
         }
         const previousReturns = Math.max(0, existing?.returnedUnits || 0);
         if (canonicalState !== 'CANCELED' && returnedUnits > previousReturns && Boolean(issuedAt || existing?.issuedAt)) {
@@ -596,7 +620,10 @@ export class SyncService {
               note: 'Возврат после ранее зафиксированной выдачи. Прогноз корзины и прибыли уменьшается автоматически.',
               raw: item as Prisma.InputJsonValue,
             },
-          }).catch(() => undefined);
+          }).catch((error: any) => {
+            financialEventErrors += 1;
+            this.logger.error(`RETURN_REVERSAL не записан для заказа ${order.externalId}: ${error?.message || error}`);
+          });
         }
 
         const skuExternal = this.text(item.skuId ?? item.sku?.id ?? item.sku);
@@ -754,7 +781,7 @@ export class SyncService {
       if ((totalPages && page >= totalPages - 1) || orders.length < 100) { paginationComplete = true; break; }
     }
     if (!paginationComplete) throw new Error(`finance/orders pagination exceeded ${pageLimit} pages`);
-    return { rows, newOrders };
+    return { rows, newOrders, financialEventErrors };
   }
 
   private async syncExpenses(shopId: string, externalShopId: string, token: string) {

@@ -198,7 +198,21 @@ export class SuppliesService {
     try { await this.sync(); } catch (error: any) { this.logger.error(`Scheduled supply sync failed: ${error?.message || error}`); }
   }
 
+  // Защита от наложения прогона на самого себя: крон каждые 10 минут, а прогон
+  // с ретраями Uzum может идти дольше интервала.
+  private supplySyncRunning = false;
+
   async sync() {
+    if (this.supplySyncRunning) throw new BadRequestException('Синхронизация поставок уже выполняется');
+    this.supplySyncRunning = true;
+    try {
+      return await this.syncInner();
+    } finally {
+      this.supplySyncRunning = false;
+    }
+  }
+
+  private async syncInner() {
     const cfg = await this.integrations.getPlain(IntegrationType.UZUM);
     if (!cfg?.token) throw new BadRequestException('Uzum API token не настроен');
     const shop = await this.prisma.shop.findFirst({ where: { isActive: true } });
