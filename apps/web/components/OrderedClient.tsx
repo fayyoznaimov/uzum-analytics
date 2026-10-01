@@ -9,7 +9,7 @@ import { useOverview } from '@/lib/overview';
 const pct=(value:number,base:number)=>base?value/base*100:0;
 const signed=(value:number)=>`${value<0?'− ':''}${money(Math.abs(value))}`;
 const expenseValue=(value:number)=>value===0?'—':value<0?`+ ${money(Math.abs(value))}`:`− ${money(value)}`;
-const stateLabel=(state:string)=>state==='PAID'?'выдан':state==='WAITING'?'ждёт выкупа':'в обработке';
+const stateLabel=(state:string,orderedAt?:string)=>{if(state==='PAID')return 'выдан';const days=orderedAt?Math.floor((Date.now()-new Date(orderedAt).getTime())/86_400_000):null;const wait=days!==null&&days>0?` ${days} дн.`:'';return state==='WAITING'?`ждёт выкупа${wait}`:'в обработке';};
 
 export default function OrderedClient(){
  const {data,loading,error,reload:load}=useOverview();
@@ -49,7 +49,7 @@ export default function OrderedClient(){
    <section className="panel"><div className="panel-head"><div><h2>Каждый заказ периода</h2><p>По дате оформления заказа (orderedAt), включая ещё не выкупленные. Отменённые заказы сюда не входят.</p></div><Status tone="green">{orders.length} заказов</Status></div>
     <div className="profit-table"><div className="profit-table-row head"><span>Заказ</span><span>Товар</span><span>Продажа</span><span>Выплата</span><span>Расходы после выплаты</span><span>Потенц. прибыль</span></div>
      {orders.map((o:any)=><div className="profit-table-row" key={o.id}>
-      <span>№{o.marketplaceOrderId||o.externalId}<small>{new Date(o.orderedAt).toLocaleDateString('ru-RU',{timeZone:'Asia/Tashkent',day:'2-digit',month:'2-digit'})} • {stateLabel(o.state)}</small></span>
+      <span>№{o.marketplaceOrderId||o.externalId}<small>{new Date(o.orderedAt).toLocaleDateString('ru-RU',{timeZone:'Asia/Tashkent',day:'2-digit',month:'2-digit'})} • {stateLabel(o.state,o.orderedAt)}</small></span>
       <b>{o.items.map((it:any)=>it.title).join(', ')}</b>
       <strong>{money(o.gross)}</strong>
       <strong className="positive">{o.payoutReported?money(o.payout):`≈ ${money(o.payout)}`}</strong>
