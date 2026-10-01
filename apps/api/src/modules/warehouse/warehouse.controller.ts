@@ -13,6 +13,9 @@ export class WarehouseController {
     return this.service.overview(search, status);
   }
 
+  @Get('lost-revenue')
+  lostRevenue(@Query('days') days?: string) { return this.service.lostRevenue(days); }
+
   @Get('imports')
   imports() { return this.service.imports(); }
 

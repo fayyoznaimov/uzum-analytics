@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Монитор конкурентов</title>
+  <style>
+    :root { --bg: #F4F5F8; --accent: #6C47FF; --text: #1C1C28; --muted: #6E6E7A; }
+    * { box-sizing: border-box; }
+    body { width: 320px; margin: 0; padding: 14px; background: var(--bg); color: var(--text); font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    h1 { margin: 0 0 10px; font-size: 15px; }
+    label { display: block; margin: 8px 0 3px; color: var(--muted); font-size: 12px; }
+    input { width: 100%; padding: 7px 9px; border: 1px solid #D6D7DF; border-radius: 8px; background: #fff; font: inherit; }
+    input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+    button { width: 100%; margin-top: 10px; padding: 8px 10px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: default; }
+    button.secondary { background: #fff; color: var(--accent); border: 1px solid var(--accent); }
+    .status { margin-top: 12px; padding: 9px 10px; border-radius: 8px; background: #fff; border: 1px solid #E2E3EA; }
+    .status .line { margin: 2px 0; }
+    .ok { color: #1C8A4D; font-weight: 600; }
+    .bad { color: #C23A3A; font-weight: 600; }
+    .muted { color: var(--muted); }
+    #message { margin-top: 8px; min-height: 16px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Монитор конкурентов Uzum</h1>
+
+  <label for="serverBase">Адрес сервера</label>
+  <input id="serverBase" type="text" placeholder="http://172.0.30.4:3200/api">
+
+  <label for="pairCode">Код подключения</label>
+  <input id="pairCode" type="text" inputmode="numeric" maxlength="6" placeholder="6 цифр с экрана «Конкуренты»">
+
+  <button id="pairBtn">Подключить</button>
+  <button id="runBtn" class="secondary">Собрать сейчас</button>
+
+  <div id="message"></div>
+
+  <div class="status">
+    <div class="line">Статус: <span id="connState" class="bad">не подключено</span></div>
+    <div class="line muted" id="lastRun">Прогонов ещё не было</div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

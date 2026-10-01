@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Uzum Analytics — монитор конкурентов",
+  "version": "1.0.0",
+  "description": "Снимает публичные данные карточек конкурентов uzum.uz и позиции товаров в поиске и отправляет их на сервер Uzum Analytics владельца.",
+  "permissions": ["alarms", "storage"],
+  "host_permissions": [
+    "https://uzum.uz/*",
+    "https://api.uzum.uz/*",
+    "http://172.0.30.4/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Uzum Analytics — монитор конкурентов"
+  }
+}

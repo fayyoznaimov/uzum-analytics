@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { latestAdvertisingRates } from '../../common/advertising';
 import { calculateInventoryAnalytics, median } from '../../common/inventory-analytics';
 import { parseInventoryWorkbook } from '../../common/inventory-report';
+import { lostRevenueForSku, SkuSale, StockPoint } from '../../common/lost-revenue';
 import { PrismaService } from '../../common/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
 
@@ -271,6 +272,54 @@ SKU: ${parsed.rows.length}
         recommendedSupplyRoi: total('targetStockInvestment', knownProfitRows) > 0 ? total('recommendedPotentialProfit', knownProfitRows) / total('targetStockInvestment', knownProfitRows) * 100 : 0,
       },
       rows,
+    };
+  }
+
+  /** Упущенная выручка за окно: оценка по скорости продаж в дни наличия × дни без остатка. */
+  async lostRevenue(daysRaw?: string) {
+    const days = Math.min(90, Math.max(7, Number(daysRaw) || 30));
+    const shop = await this.activeShop();
+    const to = new Date();
+    const from = new Date(to.getTime() - days * 86_400_000);
+    const lookbackFrom = new Date(from.getTime() - 60 * 86_400_000);
+    const [skus, snapshots, items] = await Promise.all([
+      this.prisma.sku.findMany({ where: { product: { shopId: shop.id } }, select: { id: true, sellerSku: true, stock: true, product: { select: { title: true } } } }),
+      this.prisma.stockSnapshot.findMany({
+        where: { sku: { product: { shopId: shop.id } }, capturedAt: { gte: lookbackFrom } },
+        orderBy: { capturedAt: 'asc' },
+        select: { skuId: true, amount: true, capturedAt: true },
+      }),
+      this.prisma.orderItem.findMany({
+        where: { skuId: { not: null }, order: { shopId: shop.id, issuedAt: { gte: from, lte: to } } },
+        select: { skuId: true, quantity: true, returns: true, amount: true, order: { select: { issuedAt: true } } },
+      }),
+    ]);
+    const pointsBySku = new Map<string, StockPoint[]>();
+    for (const snap of snapshots) pointsBySku.set(snap.skuId, [...(pointsBySku.get(snap.skuId) ?? []), { at: snap.capturedAt, amount: snap.amount }]);
+    const salesBySku = new Map<string, SkuSale[]>();
+    for (const item of items) {
+      const units = Math.max(0, item.quantity - Math.max(0, item.returns));
+      if (!item.skuId || !item.order.issuedAt) continue;
+      const ratio = item.quantity > 0 ? units / item.quantity : 0;
+      salesBySku.set(item.skuId, [...(salesBySku.get(item.skuId) ?? []), { at: item.order.issuedAt, units, revenue: Number(item.amount) * ratio }]);
+    }
+    const rows = skus.map((sku) => ({
+      skuId: sku.id,
+      sellerSku: sku.sellerSku,
+      title: sku.product.title,
+      stock: sku.stock,
+      ...lostRevenueForSku(pointsBySku.get(sku.id) ?? [], salesBySku.get(sku.id) ?? [], from, to),
+    })).filter((row) => row.outOfStockDays > 0)
+      .sort((a, b) => b.lostRevenueEstimate - a.lostRevenueEstimate);
+    return {
+      days,
+      rows,
+      totals: {
+        lostRevenueEstimate: rows.reduce((sum, row) => sum + row.lostRevenueEstimate, 0),
+        lostUnitsEstimate: rows.reduce((sum, row) => sum + row.lostUnitsEstimate, 0),
+        skusAffected: rows.length,
+      },
+      note: 'Оценка: скорость продаж в дни наличия × дни без остатка. Продажи, которых не было, нельзя измерить точно — используйте как порядок величины для решений о поставках.',
     };
   }
 }
