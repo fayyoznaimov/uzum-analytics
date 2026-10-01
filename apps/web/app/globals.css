@@ -197,3 +197,4 @@ button{font-family:inherit}
 .stale-row span{display:block;font-size:12px;color:var(--muted)}
 .stale-row em{font-style:normal;color:var(--muted);flex-shrink:0}
 .stale-row>b:last-child{flex-shrink:0;font-weight:700}
+.stale-list{max-height:420px;overflow:auto}

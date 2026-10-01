@@ -85,6 +85,75 @@ model Shop {
   financialStatementImports FinancialStatementImport[]
   withdrawals         Withdrawal[]
   reviews            Review[]
+  competitorProducts CompetitorProduct[]
+  searchPositions    SearchPositionSnapshot[]
+}
+
+// Мониторинг конкурентов: чужие карточки uzum.uz, снимаемые Chrome-расширением
+// (с серверных IP публичный каталог закрыт антиботом — проверено 01.10.2026).
+model CompetitorProduct {
+  id         String   @id @default(cuid())
+  shopId     String
+  /// ID карточки на uzum.uz (из URL товара).
+  externalId String
+  title      String   @default("")
+  url        String   @default("")
+  note       String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  shop       Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  snapshots  CompetitorSnapshot[]
+
+  @@unique([shopId, externalId])
+}
+
+model CompetitorSnapshot {
+  id           String   @id @default(cuid())
+  competitorId String
+  price        Int
+  fullPrice    Int?
+  available    Int?
+  ordersAmount Int?
+  rating       Decimal? @db.Decimal(4, 2)
+  reviewsCount Int?
+  capturedAt   DateTime @default(now())
+  raw          Json?
+  competitor   CompetitorProduct @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+
+  @@index([competitorId, capturedAt])
+}
+
+/// Позиция СВОЕЙ карточки в поисковой выдаче uzum.uz по запросу.
+model SearchPositionSnapshot {
+  id                String   @id @default(cuid())
+  shopId            String
+  query             String
+  productExternalId String
+  /// null — не найдена в просмотренных страницах выдачи.
+  position          Int?
+  page              Int?
+  totalResults      Int?
+  capturedAt        DateTime @default(now())
+  shop              Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, query, capturedAt])
+}
+
+model WatchClient {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  label      String    @default("Chrome extension")
+  lastSeenAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+model WatchPairingCode {
+  id        String    @id @default(cuid())
+  codeHash  String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
 }
 
 model IntegrationCredential {

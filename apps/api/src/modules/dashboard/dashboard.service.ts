@@ -489,7 +489,7 @@ export class DashboardService {
       count: staleWaitingRows.length,
       units: staleWaitingRows.reduce((sum, row) => sum + row.units, 0),
       amount: staleWaitingRows.reduce((sum, row) => sum + row.amount, 0),
-      orders: staleWaitingRows.slice(0, 20),
+      orders: staleWaitingRows.slice(0, 100),
       note: `Заказан(ы), но не выданы покупателю дольше ${staleWaitingCutoffDays} дней. По опыту Uzum на 8-й день такие заказы обычно снимаются с брони — это не факт возврата, а список для проверки.`,
     };
     const yesterdayKey = tashkentKey(new Date(todayPeriod.from.getTime() - 86_400_000));

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { BarChart3, Boxes, CalendarRange, ChartNoAxesCombined, CircleDollarSign, ClipboardList, Clock3, Goal, LayoutDashboard, LogOut, Megaphone, MessageSquareText, PackageSearch, RefreshCw, Settings, WalletCards } from 'lucide-react';
+import { BarChart3, Boxes, Crosshair, CalendarRange, ChartNoAxesCombined, CircleDollarSign, ClipboardList, Clock3, Goal, LayoutDashboard, LogOut, Megaphone, MessageSquareText, PackageSearch, RefreshCw, Settings, WalletCards } from 'lucide-react';
 import { api, getToken, logout, syncAndWait } from '@/lib/api';
 import { refreshOverviewEverywhere } from '@/lib/overview';
 import PeriodPicker from './PeriodPicker';
@@ -19,7 +19,7 @@ const nav: Array<[string] | [string, string, any, string[]?]> = [
   ['РЕКЛАМА'],
   ['/ads', 'Кампании', Megaphone],
   ['ТОВАРЫ'],
-  ['/products', 'Товары и цены', PackageSearch], ['/warehouse', 'Склад и поставки', Boxes, ['/supplies']],
+  ['/products', 'Товары и цены', PackageSearch], ['/competitors', 'Конкуренты', Crosshair], ['/warehouse', 'Склад и поставки', Boxes, ['/supplies']],
   ['/costs', 'Себестоимость', CircleDollarSign], ['/reviews', 'Отзывы и качество', MessageSquareText, ['/quality']],
   ['СЕРВИС'],
   ['/settings', 'Настройки', Settings],
