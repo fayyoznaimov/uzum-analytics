@@ -302,7 +302,8 @@ export class AutoPricingService {
     const shop = await this.prisma.shop.findFirst({ where: { isActive: true } });
     if (!shop) return;
     const bySku = new Map(inputs.map((input) => [input.skuId, input]));
-    const skus = await this.prisma.sku.findMany({
+    // Явный тип — ради tsconfig.audit (заглушка Prisma не выводит payload select).
+    const skus: Array<{ id: string; externalId: string; product: { externalId: string } | null }> = await this.prisma.sku.findMany({
       where: { id: { in: rows.map((row) => row.skuId) } },
       select: { id: true, externalId: true, product: { select: { externalId: true } } },
     });
@@ -319,15 +320,16 @@ export class AutoPricingService {
       await this.prisma.priceChange.create({
         data: {
           shopExternalId: shop.externalId,
-          productExternalId: sku.product?.externalId ?? null,
+          productExternalId: sku.product?.externalId ?? '',
           skuExternalId: sku.externalId,
-          oldPrice: row.currentPrice ?? 0,
+          oldPrice: row.currentPrice,
           newPrice: row.newPrice as number,
           kind: row.kind ?? 'BASE',
           status: 'PLANNED',
           dryRun: true,
           source: 'auto',
-          rule: row.rule,
+          rule: row.rule as string,
+          request: { planned: true, note: 'рекомендация автоцен без отправки' } as Prisma.InputJsonValue,
           reason: row.reason,
           context: { role: row.role, stock: input?.stock ?? null, ...row.metrics } as Prisma.InputJsonValue,
         },
