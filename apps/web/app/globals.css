@@ -151,3 +151,39 @@ html,body{font-family:'Golos Text',ui-sans-serif,system-ui,-apple-system,"Segoe 
 .page-head{padding-top:26px}
 .head-actions{flex-wrap:wrap;justify-content:flex-end}
 .head-actions .top-sync-ok,.head-actions .top-sync-error{font-size:12.5px;max-width:420px}
+/* Настройки: нормальные формы (раньше у label не было ни блочности, ни отступов) */
+.settings-grid{align-items:start}
+.integration-card{padding:20px 22px;border-radius:14px}
+.integration-card label{display:block;font-size:12.5px;font-weight:600;color:#4A4F5C;margin-top:14px}
+.integration-card label:first-of-type{margin-top:0}
+.integration-card .form-row label,.integration-card .notify-grid label{margin-top:0}
+.integration-card small{display:block;margin-top:6px;font-size:11.5px;font-weight:400;color:var(--muted);line-height:1.45}
+.integration-card input,.integration-card select{font:inherit;font-size:13.5px}
+.integration-card select{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:9px;background:#fff;outline:none;margin-top:6px}
+.integration-card input:focus,.integration-card select:focus,.secret-input:focus-within{border-color:var(--violet)}
+.secret-input input{border:0!important;margin-top:0!important}
+.secret-input{color:#9AA0AE}
+.secret-input button{background:none;border:0;color:#9AA0AE;padding:8px 10px;cursor:pointer;display:grid;place-items:center}
+.secret-input button svg{width:17px;height:17px}
+.integration-head{margin-bottom:14px}
+.integration-head h2{margin:0;font-size:15.5px}
+.integration-head p{margin:2px 0 0;font-size:12.5px;color:var(--muted);line-height:1.4}
+.form-row{margin-top:14px}
+.notify-grid{margin-top:14px;gap:9px 14px}
+.notify-grid label{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--ink);cursor:pointer}
+.notify-grid input[type=checkbox]{width:16px;height:16px;accent-color:var(--violet);margin:0;flex-shrink:0}
+.card-actions{border-top:1px solid #F0F2F6;padding-top:14px;margin-top:18px}
+.integration-card .error-box{margin-top:12px}
+.security-panel{border-radius:14px}
+.security-panel>div{display:flex;gap:12px;align-items:center}
+.security-panel h2{margin:0;font-size:14px}
+.security-panel p{margin:2px 0 0;font-size:12.5px;color:#2E6B52}
+@media(max-width:1100px){.settings-grid{grid-template-columns:1fr}}
+/* Общая полировка форм и таблиц по всем экранам */
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+table th{text-align:left;font-size:11.5px;font-weight:700;letter-spacing:.05em;color:#9AA0AE;padding:10px 14px;border-bottom:1px solid var(--line)}
+table td{padding:11px 14px;border-bottom:1px solid #F3F4F8}
+table tr:last-child td{border-bottom:0}
+input,select,textarea{font-family:inherit}
+button{font-family:inherit}
+.ghost:hover{background:#F4F5F8}
