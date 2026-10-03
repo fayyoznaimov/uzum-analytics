@@ -301,27 +301,23 @@ export class AutoPricingService {
     if (!rows.length) return;
     const shop = await this.prisma.shop.findFirst({ where: { isActive: true } });
     if (!shop) return;
+    // AutoDecision.skuId/productId — это ВНЕШНИЕ id Uzum (см. collect):
+    // журнал пишем ими же, без lookup по внутренним id (прошлая версия искала
+    // по внутреннему id, находила ноль и молча не писала ни одной строки).
     const bySku = new Map(inputs.map((input) => [input.skuId, input]));
-    // Явный тип — ради tsconfig.audit (заглушка Prisma не выводит payload select).
-    const skus: Array<{ id: string; externalId: string; product: { externalId: string } | null }> = await this.prisma.sku.findMany({
-      where: { id: { in: rows.map((row) => row.skuId) } },
-      select: { id: true, externalId: true, product: { select: { externalId: true } } },
-    });
-    const skuById = new Map(skus.map((sku) => [sku.id, sku]));
     const recent = await this.prisma.priceChange.findMany({
       where: { shopExternalId: shop.externalId, status: 'PLANNED', source: 'auto', createdAt: { gte: new Date(Date.now() - 20 * 3_600_000) } },
       select: { skuExternalId: true, newPrice: true },
     });
     const seen = new Set(recent.map((row) => `${row.skuExternalId}:${row.newPrice}`));
     for (const row of rows) {
-      const sku = skuById.get(row.skuId);
-      if (!sku || seen.has(`${sku.externalId}:${row.newPrice}`)) continue;
+      if (seen.has(`${row.skuId}:${row.newPrice}`)) continue;
       const input = bySku.get(row.skuId);
       await this.prisma.priceChange.create({
         data: {
           shopExternalId: shop.externalId,
-          productExternalId: sku.product?.externalId ?? '',
-          skuExternalId: sku.externalId,
+          productExternalId: row.productId,
+          skuExternalId: row.skuId,
           oldPrice: row.currentPrice,
           newPrice: row.newPrice as number,
           kind: row.kind ?? 'BASE',
