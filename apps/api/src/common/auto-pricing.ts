@@ -47,6 +47,10 @@ export const AUTO_PRICING_DEFAULTS = {
   slowMaxUnits28: 1,
   slowLowerPercent: 2,
   minMarginPercent: 15,
+  /** При остатке меньше стольких штук цену НЕ снижаем: распродавать 2–4 шт.
+   * со скидкой бессмысленно — они уйдут и так или вместе с пополнением,
+   * скидка лишь съедает маржу (находка анализа 03.10.2026). */
+  minStockUnitsToLower: 5,
   /** Одно и то же правило для SKU — не чаще раза в столько дней. */
   ruleCooldownDays: 7,
   maxStepPercent: 5,
@@ -439,6 +443,10 @@ export function evaluateSku(input: AutoPricingSkuInput, today: string, cfg: Auto
   if (!promo && planned.length) return ruled('RECOMMEND', `${target.reason}; SKU в запланированной акции «${planned[0].saleTitle}» — базовую цену меняйте вручную`);
   if (!promo && input.inOffer) return ruled('RECOMMEND', `${target.reason}; Uzum показывает SKU в акции, но в кабинете акция не найдена — менять вручную`);
   if (currentPrice === null) return ruled('HOLD', `${target.reason}; текущая цена неизвестна`);
+
+  if (!target.revertOf && (target.percent as number) < 0 && input.stock > 0 && input.stock < cfg.minStockUnitsToLower) {
+    return ruled('HOLD', `${target.reason}; остаток всего ${input.stock} шт. (< ${cfg.minStockUnitsToLower}) — распродавать со скидкой бессмысленно, не снижаем`);
+  }
 
   let newPrice: number;
   if (target.revertOf) {

@@ -278,6 +278,15 @@ describe('evaluateSku: маржинальные', () => {
     expect(evaluate({ buyouts: slow, history: [event({ at: at('2026-09-22'), rule: 'SLOW', oldPrice: 30_600, newPrice: 30_000 })] }).status).toBe('HOLD');
   });
 
+  it('остаток меньше 5 шт. — не снижаем: распродавать 2–4 штуки со скидкой бессмысленно', () => {
+    const slow = buyouts(-10, -10, 1);
+    const held = evaluate({ buyouts: slow, stock: 3 });
+    expect(held.status).toBe('HOLD');
+    expect(held.reason).toContain('остаток всего 3 шт.');
+    // 5 штук — порог включительно, снижение разрешено.
+    expect(evaluate({ buyouts: slow, stock: 5 }).status).toBe('CHANGE');
+  });
+
   it('не опускаем ниже минимальной цены', () => {
     expect(evaluate({ buyouts: {}, minPrice: 29_900 })).toMatchObject({ status: 'HOLD', rule: 'SLOW' });
   });
