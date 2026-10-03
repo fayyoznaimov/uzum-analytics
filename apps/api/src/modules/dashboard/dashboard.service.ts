@@ -459,7 +459,9 @@ export class DashboardService {
     // под риском возврата, независимо от выбранного периода на экране.
     const staleWaitingCutoffDays = 7;
     const staleWaitingCutoff = new Date(Date.now() - staleWaitingCutoffDays * DAY_MS);
-    const staleWaitingWindowStart = new Date(Date.now() - 60 * DAY_MS);
+    // 150 дней, а не 60: окно в 60 дней прятало самые старые зависшие заказы
+    // (03.10.2026 нашлись четыре от мая–июля, которых панель не показывала).
+    const staleWaitingWindowStart = new Date(Date.now() - 150 * DAY_MS);
     const staleWaitingCandidates = await this.prisma.order.findMany({
       where: {
         shopId: shop.id,
