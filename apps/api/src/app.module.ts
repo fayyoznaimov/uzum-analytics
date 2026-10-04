@@ -43,6 +43,7 @@ import { PromoPricingService } from './modules/pricing/promo-pricing.service';
 import { AutoPricingService } from './modules/pricing/auto-pricing.service';
 import { AdAgentService } from './modules/ads/ad-agent.service';
 import { AdBotService } from './modules/ads/ad-bot.service';
+import { PriceExperimentService } from './modules/pricing/price-experiment.service';
 
 @Module({
   imports: [
@@ -69,7 +70,7 @@ import { AdBotService } from './modules/ads/ad-bot.service';
     CompetitorsService,
     PrismaService, CryptoService, TelegramClient, OpenclawClient, AuthService, AuthGuard, IntegrationsService, CabinetAuthService,
     CostsService, GoalsService, DashboardService, ProductsService, SyncService, SuppliesService,
-    WarehouseService, DigestService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService, AdAgentService, AdBotService,
+    WarehouseService, DigestService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService, AdAgentService, AdBotService, PriceExperimentService,
   ],
 })
 export class AppModule {}

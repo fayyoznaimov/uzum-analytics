@@ -14,7 +14,7 @@ export type AiReviewItem = { skuId: string; verdict: AiVerdict; price: number | 
 const round1 = (value: number | null) => (value === null ? null : Math.round(value * 10) / 10);
 
 /** Текст задания для Claude: правила, ограничения, кандидаты и формат ответа. */
-export function buildAiPriceReviewPrompt(candidates: AutoDecision[], inputs: Map<string, AutoPricingSkuInput>, today: string): string {
+export function buildAiPriceReviewPrompt(candidates: AutoDecision[], inputs: Map<string, AutoPricingSkuInput>, today: string, experience: string | null = null): string {
   const rows = candidates.map((row) => {
     const input = inputs.get(row.skuId);
     return {
@@ -51,6 +51,12 @@ export function buildAiPriceReviewPrompt(candidates: AutoDecision[], inputs: Map
     '- МИНИМАЛЬНЫЙ ШАГ 5 000 сум (решение владельца): процент правила доводится до сдвига не меньше 5 000 сум, поэтому фактическое изменение может быть −3…−8% вместо −2% — это НЕ нарушение правила. Изменения меньше 5 000 сум покупатель не замечает, поэтому смягчать (ADJUST) до сдвига меньше 5 000 бессмысленно: либо одобряй шаг, либо отклоняй;',
     '- акция — не причина откладывать вечно: если SKU не продаётся 28 дней при стабильной цене, скидка в акции — нормальный инструмент; отклоняй только при реальном риске (маржа, дефицит, явный рост спроса).',
     '',
+    ...(experience ? [
+      'Опыт ЭТОГО магазина (итоги прошлых изменений цены через 7 дней по воронке Uzum против контроля из других цветов того же товара):',
+      `- ${experience}`,
+      '- «перетянуло с других цветов» значит: SKU вырос, но ровно настолько упали соседние цвета, по товару прироста нет — такое снижение денег не приносит. Учитывай этот опыт сильнее общих правил.',
+      '',
+    ] : []),
     'Ограничения, которые нельзя нарушать:',
     '- ты не можешь предлагать изменения для других SKU и не можешь менять направление изменения;',
     '- ADJUST — только более мягкое изменение: цена строго между currentPrice и proposedPrice (proposedPrice тоже можно), целое число, лучше кратное 100;',

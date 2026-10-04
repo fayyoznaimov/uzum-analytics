@@ -661,6 +661,9 @@ model PriceChange {
   rule              String?
   /// Данные, на которых автоцены приняли решение: остаток, дни запаса, выкупы, маржа.
   context           Json?
+  /// Итог ценового эксперимента через 7 дней: воронка «до/после» против контроля (common/price-experiment.ts).
+  evaluation        Json?
+  evaluatedAt       DateTime?
   error             String?
   createdAt         DateTime @default(now())
 

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { applyAiPriceReview, buildAiPriceReviewPrompt, parseAiPriceReview } from '../../common/ai-price-review';
@@ -30,6 +30,7 @@ import { classifyStoredOrder } from '../../common/order-state';
 import { PrismaService } from '../../common/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { LiveSku, PricingService } from './pricing.service';
+import { PriceExperimentService } from './price-experiment.service';
 import { PromoPosition, PromoPricingService } from './promo-pricing.service';
 
 export type AutoPricingRunOptions = {
@@ -70,6 +71,7 @@ export class AutoPricingService {
     private readonly pricing: PricingService,
     private readonly promo: PromoPricingService,
     private readonly openclaw: OpenclawClient,
+    @Optional() private readonly experiments?: PriceExperimentService,
   ) {}
 
   @Cron(process.env.AUTO_PRICING_CRON || '30 9,19 * * *', { name: 'auto-pricing', timeZone: 'Asia/Tashkent' })
@@ -140,7 +142,8 @@ export class AutoPricingService {
     if (!plan.changes.length) return { plan, aiNote: null };
     const model = process.env.AUTO_PRICING_AI_MODEL || DEFAULT_OPENCLAW_MODEL;
     try {
-      const prompt = buildAiPriceReviewPrompt(plan.changes, new Map(inputs.map((input) => [input.skuId, input])), today);
+      const experience = await this.experiments?.learnings().catch(() => null) ?? null;
+      const prompt = buildAiPriceReviewPrompt(plan.changes, new Map(inputs.map((input) => [input.skuId, input])), today, experience);
       // Opus с высоким размышлением по решению владельца 04.10.2026 («сонет
       // тупит»); модель и уровень переопределяются через .env.
       const thinking = (process.env.AUTO_PRICING_AI_THINKING as 'low' | 'medium' | 'high') || 'high';
