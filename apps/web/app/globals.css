@@ -198,3 +198,8 @@ button{font-family:inherit}
 .stale-row em{font-style:normal;color:var(--muted);flex-shrink:0}
 .stale-row>b:last-child{flex-shrink:0;font-weight:700}
 .stale-list{max-height:420px;overflow:auto}
+/* Внешний трафик: форма записи кампании */
+.mk-form{display:flex;gap:8px;flex-wrap:wrap;padding:4px 22px 14px}
+.mk-form select,.mk-form input{font:inherit;font-size:13.5px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:#fff;outline:none}
+.mk-form input[placeholder^="Заметка"]{flex-grow:1;min-width:200px}
+.mk-form select:focus,.mk-form input:focus{border-color:var(--violet)}

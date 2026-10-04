@@ -1,9 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { cubeUrl, isCubeContinueWait } from '../../common/ad-agent';
 import {
   evaluateExperiment,
+  evaluateMarketing,
   ExperimentResult,
   ExperimentVerdict,
   FunnelTotals,
@@ -57,7 +58,6 @@ export class PriceExperimentService {
         },
         orderBy: { createdAt: 'asc' },
       });
-      if (!due.length) return { evaluated: 0, messages: [] as string[] };
 
       // Эксперимент = товар + день + направление: все SKU, сдвинутые в этот день одинаково.
       const groups = new Map<string, typeof due>();
@@ -112,6 +112,8 @@ export class PriceExperimentService {
         evaluated += rows.length;
         lines.push(`${VERDICT_LABELS[result.verdict]} — товар ${productId}, ${day}: ${rows.length} SKU, цена ${result.priceChangePercent > 0 ? '+' : ''}${result.priceChangePercent.toFixed(1)}%. ${result.note}`);
       }
+
+      lines.push(...await this.evaluateMarketing(today, now));
 
       const messages: string[] = [];
       if (lines.length) {
@@ -178,6 +180,110 @@ export class PriceExperimentService {
       totals.orders += num(row[F + 'generated_amount']);
       bySku.set(window, totals);
       result.set(sku, bySku);
+    }
+    return result;
+  }
+
+  // ---------- внешние кампании ----------
+
+  private static readonly CHANNELS = ['INSTAGRAM', 'TELEGRAM', 'BLOGGER', 'OTHER'];
+
+  async listMarketing() {
+    const shop = await this.prisma.shop.findFirst({ where: { isActive: true } });
+    if (!shop) return [];
+    return this.prisma.marketingExperiment.findMany({ where: { shopId: shop.id }, orderBy: { startDate: 'desc' }, take: 100 });
+  }
+
+  async addMarketing(body: { channel?: string; productExternalId?: string; startDate?: string; budget?: number | string | null; note?: string | null }) {
+    const shop = await this.prisma.shop.findFirst({ where: { isActive: true } });
+    if (!shop) throw new BadRequestException('Активный магазин не найден');
+    const channel = String(body?.channel || '').toUpperCase();
+    if (!PriceExperimentService.CHANNELS.includes(channel)) throw new BadRequestException('Канал: INSTAGRAM, TELEGRAM, BLOGGER или OTHER');
+    const productExternalId = String(body?.productExternalId || '').trim();
+    const product = await this.prisma.product.findFirst({ where: { shopId: shop.id, externalId: productExternalId } });
+    if (!product) throw new BadRequestException('Товар не найден в магазине');
+    const startDate = String(body?.startDate || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) throw new BadRequestException('Дата старта в формате ГГГГ-ММ-ДД');
+    const budgetRaw = body?.budget === null || body?.budget === undefined || body?.budget === '' ? null : Number(body.budget);
+    if (budgetRaw !== null && (!Number.isFinite(budgetRaw) || budgetRaw < 0)) throw new BadRequestException('Бюджет — число в сумах');
+    return this.prisma.marketingExperiment.create({
+      data: { shopId: shop.id, channel, productExternalId, startDate, budget: budgetRaw === null ? null : Math.round(budgetRaw), note: body?.note ? String(body.note).slice(0, 500) : null },
+    });
+  }
+
+  async removeMarketing(id: string) {
+    const shop = await this.prisma.shop.findFirst({ where: { isActive: true } });
+    if (!shop) return { ok: false };
+    await this.prisma.marketingExperiment.deleteMany({ where: { id, shopId: shop.id } });
+    return { ok: true };
+  }
+
+  /** Кампании, которым исполнилось 7 полных дней: товар против остального магазина. */
+  private async evaluateMarketing(today: string, now: Date): Promise<string[]> {
+    const pending = await this.prisma.marketingExperiment.findMany({ where: { evaluatedAt: null } });
+    const lines: string[] = [];
+    for (const row of pending) {
+      const lastAfterDay = shiftDay(row.startDate, WINDOW_DAYS - 1);
+      if (lastAfterDay >= today) continue;
+      let funnel: Map<string, Map<string, FunnelTotals>>;
+      try {
+        funnel = await this.funnelByProduct(shiftDay(row.startDate, -WINDOW_DAYS), lastAfterDay, row.startDate);
+      } catch (error: any) {
+        this.logger.warn(`Внешняя кампания ${row.id}: воронка не получена — ${error?.message || error}`);
+        continue;
+      }
+      const pick = (filter: (id: string) => boolean, window: 'before' | 'after') => {
+        const result = empty();
+        for (const [id, byWindow] of funnel) {
+          if (!filter(id)) continue;
+          const part = byWindow.get(window);
+          if (part) { result.impressions += part.impressions; result.views += part.views; result.carts += part.carts; result.orders += part.orders; }
+        }
+        return result;
+      };
+      const promoted = (id: string) => id === row.productExternalId;
+      const others = (id: string) => id !== row.productExternalId;
+      const result = evaluateMarketing({
+        promoted: { before: pick(promoted, 'before'), after: pick(promoted, 'after') },
+        control: [...funnel.keys()].some(others) ? { before: pick(others, 'before'), after: pick(others, 'after') } : null,
+        budget: row.budget,
+      });
+      await this.prisma.marketingExperiment.update({ where: { id: row.id }, data: { evaluation: result as unknown as Prisma.InputJsonValue, evaluatedAt: now } });
+      const label = result.verdict === 'HELPED' ? '✅ помогло' : result.verdict === 'NO_EFFECT' ? '➖ без эффекта' : '❔ мало данных';
+      lines.push(`${label} — ${row.channel} с ${row.startDate}, товар ${row.productExternalId}${row.budget ? `, бюджет ${row.budget.toLocaleString('ru-RU')} сум` : ''}. ${result.note}`);
+    }
+    return lines;
+  }
+
+  /** Воронка всех товаров: 7 дней до старта и 7 дней со дня старта. */
+  private async funnelByProduct(from: string, to: string, startDate: string): Promise<Map<string, Map<string, FunnelTotals>>> {
+    const query = {
+      measures: ['sum_imps', 'sum_views', 'sum_atc', 'generated_amount'].map((m) => F + m),
+      dimensions: [F + 'product_id'],
+      timezone: 'Asia/Tashkent',
+      timeDimensions: [{ dimension: F + 'date', dateRange: [from, to], granularity: 'day' }],
+      limit: 10_000,
+    };
+    let body: any = null;
+    for (let attempt = 0; attempt < 15; attempt++) {
+      body = (await this.cabinet.cabinet('GET', cubeUrl(query as any))).body;
+      if (!isCubeContinueWait(body)) break;
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+    const rows: any[] = body?.data ?? body?.results?.[0]?.data ?? [];
+    const num = (value: unknown) => { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : 0; };
+    const result = new Map<string, Map<string, FunnelTotals>>();
+    for (const row of rows) {
+      const date = String(row[F + 'date.day'] ?? row[F + 'date'] ?? '').slice(0, 10);
+      const id = String(row[F + 'product_id'] ?? '');
+      if (!date || !id || date > to) continue;
+      const window = date < startDate ? 'before' : 'after';
+      const byWindow = result.get(id) ?? new Map<string, FunnelTotals>();
+      const totals = byWindow.get(window) ?? empty();
+      totals.impressions += num(row[F + 'sum_imps']); totals.views += num(row[F + 'sum_views']);
+      totals.carts += num(row[F + 'sum_atc']); totals.orders += num(row[F + 'generated_amount']);
+      byWindow.set(window, totals);
+      result.set(id, byWindow);
     }
     return result;
   }

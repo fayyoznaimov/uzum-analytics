@@ -43,6 +43,7 @@ import { PromoPricingService } from './modules/pricing/promo-pricing.service';
 import { AutoPricingService } from './modules/pricing/auto-pricing.service';
 import { AdAgentService } from './modules/ads/ad-agent.service';
 import { AdBotService } from './modules/ads/ad-bot.service';
+import { MarketingController } from './modules/pricing/marketing.controller';
 import { PriceExperimentService } from './modules/pricing/price-experiment.service';
 
 @Module({
@@ -62,7 +63,7 @@ import { PriceExperimentService } from './modules/pricing/price-experiment.servi
   controllers: [
     HealthController, AuthController, IntegrationsController, CostsController, GoalsController,
     DashboardController, ProductsController, SyncController, SuppliesController, WarehouseController, ReviewsController,
-    FinancialStatementsController, PricingController, CompetitorsController, CompetitorWatchController,
+    FinancialStatementsController, PricingController, CompetitorsController, CompetitorWatchController, MarketingController,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

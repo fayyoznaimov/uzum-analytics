@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, ArrowRight, BarChart3, CircleDollarSign, MousePointerClick, PiggyBank, Search, Target, TrendingUp } from 'lucide-react';
 import AppShell from './AppShell';
+import MarketingPanel from './MarketingPanel';
 import { MetricCard, Status } from './UI';
 import { api, money } from '@/lib/api';
 import { useOverview } from '@/lib/overview';
@@ -37,5 +38,6 @@ export default function AdsClient(){
   <section className="panel"><div className="panel-head"><div><h2>Кампании буста в ТОП</h2><p>{ads.campaignsFallback?`За выбранный период списаний ещё нет. Показан последний доступный состав кампаний за ${ads.campaignDataDate||'предыдущий день'}; его расход не добавлен в выбранный период.`:ads.note}</p></div><Status tone="blue">{ads.campaigns?.length||0} кампаний</Status></div><div className="modern-table"><div className="modern-row head"><span>ID кампании</span><span>Расход</span><span>Списаний</span></div>{(ads.campaigns||[]).map((r:any)=><div className="modern-row" key={r.id}><b>{r.id}</b><span>{money(r.spend)}</span><span>{r.entries}</span></div>)}</div></section>
   <section className="panel"><div className="panel-head"><div><h2>Что появится после рекламного отчёта</h2><p>Для этих выводов нужны показы, клики и продажи, атрибутированные Uzum конкретной кампании.</p></div><Status tone="blue">ожидает данные</Status></div><div className="insight-grid"><div><AlertTriangle/><b>Расход без продаж</b><span>Запросы и кампании, где деньги ушли, а заказов нет.</span></div><div><CircleDollarSign/><b>Убыточная реклама</b><span>Чистая прибыль кампании после себестоимости, без подмены магазинной прибылью.</span></div><div><Search/><b>Поисковые запросы</b><span>Какие запросы продают, а какие только расходуют бюджет.</span></div><div><TrendingUp/><b>Рост бюджета</b><span>Где можно увеличить рекламу без потери маржи.</span></div></div></section>
  </>}
+ <MarketingPanel/>
  </AppShell>
 }

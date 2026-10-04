@@ -96,3 +96,45 @@ export function summarizeExperiments(rows: Array<{ priceChangePercent: number; v
     .filter(Boolean)
     .join('; ');
 }
+
+// ---------- внешний трафик (Instagram, Telegram, блогеры) ----------
+
+export type MarketingResult = {
+  verdict: 'HELPED' | 'NO_EFFECT' | 'INSUFFICIENT';
+  /** % изменения заказов в день у продвигаемого товара. */
+  ordersChangePercent: number | null;
+  /** % изменения у остальных товаров магазина за те же дни (общий тренд). */
+  controlOrdersChangePercent: number | null;
+  /** Чистый эффект кампании: разница двух изменений, п.п. */
+  liftPercent: number | null;
+  /** Открытия карточки: изменение, % — внешний трафик виден здесь раньше заказов. */
+  viewsChangePercent: number | null;
+  note: string;
+};
+
+/**
+ * Кампания вне Uzum: продвигаемый товар против остальных товаров магазина.
+ * Сравнение с контролем отсекает общий тренд (праздники, сезон, поставки):
+ * засчитываем только рост сверх того, что было у всего магазина.
+ */
+export function evaluateMarketing(
+  input: { promoted: { before: FunnelTotals; after: FunnelTotals }; control: { before: FunnelTotals; after: FunnelTotals } | null; budget: number | null },
+  cfg = EXPERIMENT_DEFAULTS,
+): MarketingResult {
+  const { promoted, control } = input;
+  const ordersChangePercent = change(perDay(promoted.before, 'orders'), perDay(promoted.after, 'orders'));
+  const viewsChangePercent = change(perDay(promoted.before, 'views'), perDay(promoted.after, 'views'));
+  const controlOrdersChangePercent = control ? change(perDay(control.before, 'orders'), perDay(control.after, 'orders')) : null;
+  const liftPercent = ordersChangePercent === null ? null : ordersChangePercent - (controlOrdersChangePercent ?? 0);
+  const base = { ordersChangePercent, controlOrdersChangePercent, liftPercent, viewsChangePercent };
+  if (promoted.before.orders + promoted.after.orders < cfg.minOrders || liftPercent === null) {
+    return { ...base, verdict: 'INSUFFICIENT', note: `мало заказов для вывода (${promoted.before.orders + promoted.after.orders} за оба окна)` };
+  }
+  const extraOrders = Math.max(0, perDay(promoted.after, 'orders') - perDay(promoted.before, 'orders') * (1 + (controlOrdersChangePercent ?? 0) / 100)) * promoted.after.days;
+  const cost = input.budget && extraOrders > 0 ? `, ≈ ${Math.round(input.budget / extraOrders).toLocaleString('ru-RU')} сум за дополнительный заказ` : '';
+  const details = `заказы товара ${pct(ordersChangePercent)}, остальной магазин ${pct(controlOrdersChangePercent)}, открытия карточки ${pct(viewsChangePercent)}`;
+  if (liftPercent > cfg.noEffectPercent) {
+    return { ...base, verdict: 'HELPED', note: `кампания дала рост сверх общего тренда на ${Math.round(liftPercent)} п.п. (${details}; ≈ ${Math.round(extraOrders)} доп. заказов${cost})` };
+  }
+  return { ...base, verdict: 'NO_EFFECT', note: `роста сверх общего тренда нет (${details})` };
+}

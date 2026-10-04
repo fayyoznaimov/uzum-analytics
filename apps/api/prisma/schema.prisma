@@ -86,6 +86,7 @@ model Shop {
   withdrawals         Withdrawal[]
   reviews            Review[]
   competitorProducts CompetitorProduct[]
+  marketingExperiments MarketingExperiment[]
   searchPositions    SearchPositionSnapshot[]
 }
 
@@ -154,6 +155,26 @@ model WatchPairingCode {
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
+}
+
+/// Внешняя рекламная кампания (Instagram, Telegram, блогер): через 7 дней после
+/// старта воронка товара сравнивается с остальными товарами магазина.
+model MarketingExperiment {
+  id                String    @id @default(cuid())
+  shopId            String
+  /// INSTAGRAM, TELEGRAM, BLOGGER, OTHER.
+  channel           String
+  productExternalId String
+  /// День старта по Asia/Tashkent, YYYY-MM-DD.
+  startDate         String
+  budget            Int?
+  note              String?
+  evaluation        Json?
+  evaluatedAt       DateTime?
+  createdAt         DateTime  @default(now())
+  shop              Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, startDate])
 }
 
 model IntegrationCredential {

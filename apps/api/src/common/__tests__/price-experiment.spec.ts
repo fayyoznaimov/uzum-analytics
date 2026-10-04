@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateExperiment, summarizeExperiments } from '../price-experiment';
+import { evaluateExperiment, evaluateMarketing, summarizeExperiments } from '../price-experiment';
 
 const t = (orders: number, days = 7, views = orders * 80) => ({ impressions: views * 9, views, carts: orders * 3, orders, days });
 
@@ -35,5 +35,21 @@ describe('оценка ценового эксперимента', () => {
     expect(text).toContain('перетянуло с других цветов 1');
     expect(text).toContain('повышения цены (1): помогло 1');
     expect(summarizeExperiments([{ priceChangePercent: -1, verdict: 'INSUFFICIENT' }])).toBeNull();
+  });
+});
+
+describe('оценка внешней кампании', () => {
+  it('рост товара сверх тренда магазина → помогло, со стоимостью доп. заказа', () => {
+    const result = evaluateMarketing({ promoted: { before: t(14), after: t(28) }, control: { before: t(70), after: t(77) }, budget: 1_400_000 });
+    expect(result.verdict).toBe('HELPED');
+    expect(result.liftPercent).toBeCloseTo(90);
+    expect(result.note).toContain('сум за дополнительный заказ');
+  });
+  it('товар вырос вместе со всем магазином (праздники) → без эффекта', () => {
+    const result = evaluateMarketing({ promoted: { before: t(14), after: t(17) }, control: { before: t(70), after: t(84) }, budget: null });
+    expect(result.verdict).toBe('NO_EFFECT');
+  });
+  it('мало заказов → мало данных', () => {
+    expect(evaluateMarketing({ promoted: { before: t(3), after: t(4) }, control: null, budget: null }).verdict).toBe('INSUFFICIENT');
   });
 });
