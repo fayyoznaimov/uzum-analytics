@@ -140,7 +140,10 @@ export class AutoPricingService {
     const model = process.env.AUTO_PRICING_AI_MODEL || DEFAULT_OPENCLAW_MODEL;
     try {
       const prompt = buildAiPriceReviewPrompt(plan.changes, new Map(inputs.map((input) => [input.skuId, input])), today);
-      const result = await this.openclaw.run(prompt, { model, thinking: 'low', timeoutSec: 300 });
+      // Opus с высоким размышлением по решению владельца 04.10.2026 («сонет
+      // тупит»); модель и уровень переопределяются через .env.
+      const thinking = (process.env.AUTO_PRICING_AI_THINKING as 'low' | 'medium' | 'high') || 'high';
+      const result = await this.openclaw.run(prompt, { model, thinking, timeoutSec: 600 });
       const review = parseAiPriceReview(result.text, plan.changes);
       const approved = review.filter((row) => row.verdict !== 'REJECT').length;
       return { plan: applyAiPriceReview(plan, review), aiNote: `Проверено ИИ (${result.model || model}): одобрено ${approved} из ${review.length}` };
