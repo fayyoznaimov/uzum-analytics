@@ -248,10 +248,39 @@ export class AdBotService {
       where: { status: 'SENT', dryRun: false, createdAt: { gte: new Date(now.getTime() - 30 * 86_400_000) } },
       orderBy: { createdAt: 'desc' },
     });
+    // id ключа меняется при каждой правке, поэтому и кулдаун, и статистика
+    // привязаны к паре «цвет|запрос». Старые id связываются с ключом через
+    // журнал бота (adId — id до правки, response.newAdId — после).
+    const keyOf = (skuGroupId: string, query: string) => `${skuGroupId}|${normalizeQuery(query)}`;
     const lastChange = new Map<string, Date>();
+    const idsByKey = new Map<string, Set<string>>();
+    const addId = (key: string, id: unknown) => { if (id) idsByKey.set(key, (idsByKey.get(key) ?? new Set()).add(String(id))); };
     for (const row of history as any[]) {
-      if (row.adId && !lastChange.has(row.adId)) lastChange.set(row.adId, row.createdAt);
-      if (row.action === 'ADD') lastChange.set(`${row.skuGroupId}|${normalizeQuery(row.query)}`, row.createdAt);
+      const key = keyOf(row.skuGroupId, row.query);
+      if (!lastChange.has(key)) lastChange.set(key, row.createdAt);
+      addId(key, row.adId);
+      addId(key, row.response?.newAdId);
+    }
+    for (const keyword of keywords) {
+      const key = keyOf(keyword.skuGroupId, keyword.query);
+      addId(key, keyword.adId);
+      // Решения в common/ad-bot смотрят lastChange и статистику по adId
+      // текущего объявления — переносим на него данные всего ключа.
+      const last = lastChange.get(key);
+      if (last) lastChange.set(keyword.adId, last);
+      const merge = (stats: Map<string, AdBotStats>) => {
+        const ids = [...(idsByKey.get(key) ?? [])];
+        const parts = ids.map((id) => stats.get(id)).filter((row): row is AdBotStats => Boolean(row));
+        if (parts.length <= 1) return;
+        const sum = (field: 'impressions' | 'clicks' | 'sold' | 'revenue' | 'spend') => parts.reduce((total, row) => total + row[field], 0);
+        const withPosition = parts.filter((row) => row.position !== null && row.impressions > 0);
+        const position = withPosition.length
+          ? withPosition.reduce((total, row) => total + (row.position as number) * row.impressions, 0) / withPosition.reduce((total, row) => total + row.impressions, 0)
+          : null;
+        stats.set(keyword.adId, { impressions: sum('impressions'), clicks: sum('clicks'), sold: sum('sold'), revenue: sum('revenue'), spend: sum('spend'), position });
+      };
+      merge(stats14);
+      merge(stats7);
     }
 
     return { campaigns, notes, input: { keywords, stats14, stats7, groups, feed, lastChange, now } };
@@ -269,9 +298,10 @@ export class AdBotService {
       try {
         await this.cabinet.cabinet('PUT', `${CABINET}/advertising/management/ad-campaign/${campaignId}`, undefined, body);
         const isApplied = (check: Array<{ id: string; skuGroupId: string; query: string; cpm: number }>, row: AdBotAction) => {
-          const found = row.kind === 'ADD'
-            ? check.find((ad) => ad.skuGroupId === row.skuGroupId && normalizeQuery(ad.query) === normalizeQuery(row.query))
-            : check.find((ad) => ad.id === row.adId);
+          // Uzum при любой правке удаляет объявление и создаёт новое с НОВЫМ id
+          // (04.10.2026: 39 из 39 правок). Поэтому ищем по «цвет + запрос»,
+          // а не по старому id, которого после сохранения уже нет.
+          const found = check.find((ad) => ad.skuGroupId === row.skuGroupId && normalizeQuery(ad.query) === normalizeQuery(row.query));
           return { found, ok: row.kind === 'SUSPEND' ? !found : Boolean(found) && found!.cpm === row.newCpm };
         };
         // Кабинет применяет PUT с задержкой: первый боевой прогон 04.10.2026
@@ -286,7 +316,7 @@ export class AdBotService {
         for (const row of rows) {
           const { found, ok } = isApplied(check, row);
           outcomes.push({ action: row, ok, message: ok ? 'готово' : 'кабинет принял запрос, но изменение не видно' });
-          await this.journal([row], input, { dryRun: false, status: ok ? 'SENT' : 'FAILED', request: body, adId: found?.id, error: ok ? undefined : 'изменение не видно после сохранения' });
+          await this.journal([row], input, { dryRun: false, status: ok ? 'SENT' : 'FAILED', request: body, response: found ? { newAdId: found.id } : undefined, error: ok ? undefined : 'изменение не видно после сохранения' });
         }
       } catch (error: any) {
         const message = String(error?.response?.message || error?.message || error).slice(0, 300);
