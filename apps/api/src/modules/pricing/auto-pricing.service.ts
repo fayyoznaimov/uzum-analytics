@@ -91,6 +91,7 @@ export class AutoPricingService {
       ...AUTO_PRICING_DEFAULTS,
       maxStepPercent: Math.min(AUTO_PRICING_DEFAULTS.maxStepPercent, maxStepPercent),
       minMarginPercent: envNumber('AUTO_PRICING_MIN_MARGIN_PERCENT') ?? AUTO_PRICING_DEFAULTS.minMarginPercent,
+      minPriceStepSum: Math.max(0, envNumber('AUTO_PRICING_MIN_STEP_SUM') ?? AUTO_PRICING_DEFAULTS.minPriceStepSum),
       maxChangesPerRun: Math.max(0, Math.trunc(envNumber('AUTO_PRICING_MAX_CHANGES') ?? AUTO_PRICING_DEFAULTS.maxChangesPerRun)),
     };
   }

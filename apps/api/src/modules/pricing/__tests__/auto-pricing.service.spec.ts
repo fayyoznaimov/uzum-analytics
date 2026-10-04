@@ -1,3 +1,6 @@
+// Оркестрация проверяется на цене 30 000 в процентном режиме: минимальный шаг
+// 5 000 сум покрыт юнит-тестами common/auto-pricing.
+process.env.AUTO_PRICING_MIN_STEP_SUM = '0';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@prisma/client', () => ({
