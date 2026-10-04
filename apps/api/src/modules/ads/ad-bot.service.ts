@@ -268,12 +268,23 @@ export class AdBotService {
       const body = buildCampaignUpdate(campaign, rows);
       try {
         await this.cabinet.cabinet('PUT', `${CABINET}/advertising/management/ad-campaign/${campaignId}`, undefined, body);
-        const check = await this.verify(campaignId);
-        for (const row of rows) {
+        const isApplied = (check: Array<{ id: string; skuGroupId: string; query: string; cpm: number }>, row: AdBotAction) => {
           const found = row.kind === 'ADD'
             ? check.find((ad) => ad.skuGroupId === row.skuGroupId && normalizeQuery(ad.query) === normalizeQuery(row.query))
             : check.find((ad) => ad.id === row.adId);
-          const ok = row.kind === 'SUSPEND' ? !found : Boolean(found) && found!.cpm === row.newCpm;
+          return { found, ok: row.kind === 'SUSPEND' ? !found : Boolean(found) && found!.cpm === row.newCpm };
+        };
+        // Кабинет применяет PUT с задержкой: первый боевой прогон 04.10.2026
+        // перечитал ставки сразу и пометил все 39 правок FAILED, хотя через
+        // минуту все они стояли. FAILED не ставит кулдаун — на следующий день
+        // бот поднял бы те же ставки повторно. Поэтому перечитываем до 4 раз.
+        let check = await this.verify(campaignId);
+        for (let attempt = 0; attempt < 3 && rows.some((row) => !isApplied(check, row).ok); attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 5_000 * (attempt + 1)));
+          check = await this.verify(campaignId);
+        }
+        for (const row of rows) {
+          const { found, ok } = isApplied(check, row);
           outcomes.push({ action: row, ok, message: ok ? 'готово' : 'кабинет принял запрос, но изменение не видно' });
           await this.journal([row], input, { dryRun: false, status: ok ? 'SENT' : 'FAILED', request: body, adId: found?.id, error: ok ? undefined : 'изменение не видно после сохранения' });
         }

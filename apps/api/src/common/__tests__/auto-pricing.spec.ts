@@ -61,7 +61,11 @@ function sku(patch: Partial<AutoPricingSkuInput> = {}): AutoPricingSkuInput {
   };
 }
 const event = (patch: Partial<AutoPriceEvent>): AutoPriceEvent => ({ at: at('2026-09-20'), kind: 'BASE', oldPrice: 30_000, newPrice: 30_600, rule: 'FLOW', stock: 50, ...patch });
-const evaluate = (patch: Partial<AutoPricingSkuInput> = {}) => evaluateSku(sku(patch), today);
+// Процентная логика правил проверяется на цене 30 000 в прежнем режиме
+// (коридор 5%, без минимального шага в сумах); шаг 5 000 — отдельные тесты ниже.
+const PERCENT_CFG = { ...AUTO_PRICING_DEFAULTS, minPriceStepSum: 0, maxStepPercent: 5 };
+const evaluate = (patch: Partial<AutoPricingSkuInput> = {}) => evaluateSku(sku(patch), today, PERCENT_CFG);
+const evaluateReal = (patch: Partial<AutoPricingSkuInput> = {}) => evaluateSku(sku(patch), today);
 
 describe('роли и пометки', () => {
   it('лицевые (в т.ч. HAVANA 50×90) — локомотивы, остальные — маржинальные', () => {
@@ -160,10 +164,10 @@ describe('реклама за неделю', () => {
 
 describe('цена и маржа', () => {
   it('округляет до 100 сум в сторону изменения, не выходя за шаг', () => {
-    expect(adjustPrice(29_700, 3)).toBe(30_600);
-    expect(adjustPrice(29_700, -2)).toBe(29_100);
-    expect(adjustPrice(30_000, 2)).toBe(30_600);
-    expect(adjustPrice(1_000, 3)).toBe(1_030);
+    expect(adjustPrice(29_700, 3, PERCENT_CFG)).toBe(30_600);
+    expect(adjustPrice(29_700, -2, PERCENT_CFG)).toBe(29_100);
+    expect(adjustPrice(30_000, 2, PERCENT_CFG)).toBe(30_600);
+    expect(adjustPrice(1_000, 3, PERCENT_CFG)).toBe(1_030);
   });
 
   it('маржа не считается, если чего-то не знаем', () => {
@@ -278,6 +282,20 @@ describe('evaluateSku: маржинальные', () => {
     expect(evaluate({ buyouts: slow, history: [event({ at: at('2026-09-22'), rule: 'SLOW', oldPrice: 30_600, newPrice: 30_000 })] }).status).toBe('HOLD');
   });
 
+  it('минимальный шаг 5 000 сум: −2% от 150 000 (−3 000) доводится до −5 000; маржа проверяется по итоговой цене', () => {
+    const slow = buyouts(-10, -10, 1);
+    const row = evaluateReal({ basePrice: 150_000, unitCost: 60_000, buyouts: slow });
+    expect(row).toMatchObject({ status: 'CHANGE', rule: 'SLOW', newPrice: 145_000 });
+    // с большим шагом маржа падает ниже 15% — снижения нет
+    expect(evaluateReal({ basePrice: 150_000, unitCost: 92_000, buyouts: slow }).status).toBe('HOLD');
+  });
+  it('шаг меньше 5 000 из-за лимита акции — цену не дёргаем', () => {
+    const row = evaluateReal({
+      basePrice: 130_000, buyouts: buyouts(-6, 0, 2),
+      promos: [{ saleId: 1, saleTitle: 'Акция', status: 'ACTIVE', salePrice: 127_900, maxPrice: 128_700, startDate: '2026-09-28', finishDate: '2026-10-06' }] as any,
+    });
+    expect(row.status).not.toBe('CHANGE');
+  });
   it('остаток меньше 5 шт. — не снижаем: распродавать 2–4 штуки со скидкой бессмысленно', () => {
     const slow = buyouts(-10, -10, 1);
     const held = evaluate({ buyouts: slow, stock: 3 });

@@ -53,7 +53,12 @@ export const AUTO_PRICING_DEFAULTS = {
   minStockUnitsToLower: 5,
   /** Одно и то же правило для SKU — не чаще раза в столько дней. */
   ruleCooldownDays: 7,
-  maxStepPercent: 5,
+  /** Защитный коридор одного изменения. 10% — чтобы шаг 5 000 сум проходил и на дешёвых SKU (60–70 тыс.). */
+  maxStepPercent: 10,
+  /** Минимальный шаг изменения цены в сумах: правки на 1–3 тыс. покупатель не
+   * замечает, они «погоду не меняют» (решение владельца 04.10.2026). Меньшее
+   * изменение доводится до этого шага, а если лимит акции/защита не дают — не делается. */
+  minPriceStepSum: 5_000,
   maxChangesPerRun: 20,
   unusedCostMin: 2,
   unusedCostMax: 5,
@@ -458,6 +463,12 @@ export function evaluateSku(input: AutoPricingSkuInput, today: string, cfg: Auto
     newPrice = target.price as number;
   } else {
     newPrice = adjustPrice(currentPrice, target.percent as number, cfg);
+    const minStep = cfg.minPriceStepSum;
+    if (minStep > 0 && Math.abs(newPrice - currentPrice) < minStep) {
+      newPrice = (target.percent as number) > 0
+        ? Math.ceil((currentPrice + minStep) / cfg.priceRounding) * cfg.priceRounding
+        : Math.floor((currentPrice - minStep) / cfg.priceRounding) * cfg.priceRounding;
+    }
   }
 
   let reason = target.reason;
@@ -472,10 +483,19 @@ export function evaluateSku(input: AutoPricingSkuInput, today: string, cfg: Auto
     }
   }
 
+  if (!target.revertOf && cfg.minPriceStepSum > 0 && Math.abs(newPrice - currentPrice) < cfg.minPriceStepSum) {
+    return ruled('HOLD', `${reason}; изменение всего ${fmt(Math.abs(newPrice - currentPrice))} сум — меньше минимального шага ${fmt(cfg.minPriceStepSum)}, покупатель не заметит — не трогаем`, { newPrice });
+  }
+
   const guards = checkPriceGuards({ currentPrice, newPrice, minPrice: input.minPrice, unitCost: input.unitCost, maxStepPercent: cfg.maxStepPercent });
   const deltaPercent = guards.deltaPercent === null ? null : Math.round(guards.deltaPercent * 100) / 100;
   if (guards.violations.length) return ruled('HOLD', `${reason}; защита: ${guards.violations.map((row) => row.message).join('; ')}`, { newPrice, deltaPercent });
-  if (target.rule === 'SLOW') metrics.marginAfterPercent = marginPercent(newPrice, input);
+  if (target.rule === 'SLOW') {
+    metrics.marginAfterPercent = marginPercent(newPrice, input);
+    if (metrics.marginAfterPercent !== null && metrics.marginAfterPercent < cfg.minMarginPercent) {
+      return ruled('HOLD', `${reason}; при шаге ${fmt(currentPrice - newPrice)} сум маржа после снижения ${Math.round(metrics.marginAfterPercent * 10) / 10}% < ${cfg.minMarginPercent}% — не снижаем`, { newPrice, deltaPercent });
+    }
+  }
   return ruled('CHANGE', reason, { newPrice, deltaPercent });
 }
 
