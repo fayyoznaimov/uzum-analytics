@@ -103,13 +103,17 @@ describe('советы', () => {
       campaign({ id: '286528', name: 'Микс', week: { impressions: 3_000, clicks: 150, sold: 30, spend: 140_000, revenue: 3_000_000 } }),
       campaign({ id: '305326', name: 'YD', status: 'PAUSED', month: { impressions: 1_000, clicks: 50, sold: 5, spend: 20_000, revenue: 500_000 } }),
       campaign({ id: '1', name: 'Новая', startedOn: '2026-09-26', week: { impressions: 0, clicks: 0, sold: 0, spend: 0, revenue: 0 } }),
+      // Бюджет выбран на 27% при хорошем ДРР — нечего купить на своих фразах: фразы, а не лимит.
+      campaign({ id: '305324', name: 'J403', week: { impressions: 1_400, clicks: 60, sold: 8, spend: 40_000, revenue: 900_000 } }),
     ], today);
     expect(advice.map((row) => [row.target, row.action])).toEqual([
       ['ТОП «Сауна»', 'снизить ставку или поставить на паузу'],
       ['ТОП «Банное 100×150»', 'поднять ставку (CPM)'],
       ['ТОП «Микс»', `увеличить недельный бюджет на 30% (до ${(195_000).toLocaleString('ru-RU')} сум)`],
+      ['ТОП «J403»', 'добавить ключевые фразы (узбекские), бюджет не повышать'],
       ['ТОП «YD»', 'можно снова включить'],
     ]);
+    expect(advice.find((row) => row.target === 'ТОП «J403»')?.reason).toContain('выбран только на 27%');
   });
 
   it('отчёт: режим советов, ДРР, ИИ-план или пометка, воронка товаров', () => {

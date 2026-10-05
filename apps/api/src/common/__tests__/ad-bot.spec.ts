@@ -91,6 +91,18 @@ describe('новые слова и план', () => {
     expect(rows.map((row) => row.query)).toEqual(['полотенце для бани большое']);
     expect(rows[0]).toMatchObject({ kind: 'ADD', newCpm: 20_000, skuGroupId: '4160950', stopWords: ['вафельное'] });
   });
+  it('узбекский запрос (латиница) берём и без продажи, если по нему был клик — по ставке 15 000; русский без продажи — нет', () => {
+    const uz = [
+      ...feed,
+      { skuGroupId: '4160950', searchQuery: 'sochiqlar', impressions: 900, clicks: 4, sold: 0, revenue: 0 },
+      { skuGroupId: '4160950', searchQuery: 'sochiq to\'plami', impressions: 300, clicks: 0, sold: 0, revenue: 0 },
+      { skuGroupId: '4160950', searchQuery: 'полотенце махровое', impressions: 900, clicks: 9, sold: 0, revenue: 0 },
+    ];
+    const rows = newKeywords(input({ feed: uz }));
+    expect(rows.map((row) => row.query)).toEqual(['полотенце для бани большое', 'sochiqlar']);
+    expect(rows[1]).toMatchObject({ newCpm: 15_000 });
+    expect(rows[1].reason).toContain('узбекский запрос без продажи');
+  });
   it('план: сначала снижения, потом новые слова, потом повышения; лимит за запуск', () => {
     const keywords = [kw(), kw({ adId: '2', query: 'katta sochiq' })];
     const data = input({ keywords, feed, stats14: new Map([['1', st({ spend: 120_000, clicks: 40 })], ['2', st({ impressions: 50 })]]), stats7: new Map([['2', st({ impressions: 10 })]]) });

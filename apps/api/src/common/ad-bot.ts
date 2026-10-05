@@ -48,6 +48,10 @@ export const AD_BOT_DEFAULTS = {
   lowStockUnits: 3,
   newKeywordMinSold: 1,
   newKeywordsPerGroup: 3,
+  /** Узбекские (латиница) запросы берём и без продажи — от стольких кликов: узбекских фраз в кампаниях
+   * нет, продаж по ним нет, и по правилу «нужна продажа» бот их не нашёл бы никогда. */
+  uzbekKeywordMinClicks: 1,
+  uzbekKeywordBid: 15_000,
   maxQueryLength: 60,
   cooldownDays: 3,
   maxChangesPerRun: 30,
@@ -109,6 +113,11 @@ const DAY_MS = 86_400_000;
 export const normalizeQuery = (value: string) => value.toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
 /** Ставка в пределах minBid…maxBid, округление до bidRounding в сторону изменения. */
+/** Запрос на латинице (узбекский: «sochiq», «yuz va hammom») — без кириллицы, с буквами. */
+export function isLatinQuery(query: string): boolean {
+  return /[a-z]/.test(query) && !/[а-яё]/i.test(query);
+}
+
 export function clampBid(value: number, direction: 'up' | 'down', cfg: Pick<AdBotConfig, 'minBid' | 'maxBid' | 'bidRounding'> = AD_BOT_DEFAULTS): number {
   const step = Math.max(1, cfg.bidRounding);
   const rounded = direction === 'up' ? Math.ceil(value / step) * step : Math.floor(value / step) * step;
@@ -185,8 +194,10 @@ export function newKeywords(input: AdBotInput, cfg: AdBotConfig = AD_BOT_DEFAULT
     const bid = clampBid(median(keywords.map((row) => row.cpm)) ?? cfg.minBid, 'down', cfg);
     const candidates = new Map<string, AdBotFeedQuery>();
     for (const row of input.feed) {
-      if (row.skuGroupId !== skuGroupId || row.sold < cfg.newKeywordMinSold) continue;
+      if (row.skuGroupId !== skuGroupId) continue;
       const query = normalizeQuery(row.searchQuery);
+      const uzbek = isLatinQuery(query) && row.clicks >= cfg.uzbekKeywordMinClicks;
+      if (row.sold < cfg.newKeywordMinSold && !uzbek) continue;
       if (!query || query.length > cfg.maxQueryLength || existing.has(query)) continue;
       if (stop.some((word) => query.split(' ').includes(word))) continue;
       if (input.lastChange.has(`${skuGroupId}|${query}`)) continue;
@@ -195,10 +206,14 @@ export function newKeywords(input: AdBotInput, cfg: AdBotConfig = AD_BOT_DEFAULT
     }
     const top = [...candidates.values()].sort((a, b) => b.sold - a.sold || b.clicks - a.clicks).slice(0, cfg.newKeywordsPerGroup);
     for (const row of top) {
+      const withoutSale = row.sold < cfg.newKeywordMinSold;
       actions.push({
         kind: 'ADD', campaignId: keywords[0].campaignId, campaignName: keywords[0].campaignName, skuGroupId,
-        groupTitle: group?.title ?? skuGroupId, adId: null, query: row.searchQuery, oldCpm: null, newCpm: bid, stopWords,
-        reason: `покупатели находили цвет по этому запросу: продаж ${row.sold}, кликов ${row.clicks} за 28 дн.`,
+        groupTitle: group?.title ?? skuGroupId, adId: null, query: row.searchQuery, oldCpm: null,
+        newCpm: withoutSale ? clampBid(cfg.uzbekKeywordBid, 'down', cfg) : bid, stopWords,
+        reason: withoutSale
+          ? `узбекский запрос без продажи, но с кликами (${row.clicks} за 28 дн.) — пробуем по минимальной ставке`
+          : `покупатели находили цвет по этому запросу: продаж ${row.sold}, кликов ${row.clicks} за 28 дн.`,
       });
     }
   }

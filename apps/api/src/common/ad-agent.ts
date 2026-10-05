@@ -30,6 +30,8 @@ export const AD_AGENT_DEFAULTS = {
   slowSellerRatio: 0.5,
   /** Не разгоняем трафик, если запаса меньше стольких дней. */
   minStockDays: 7,
+  /** Бюджет выбран меньше этой доли — кампании нечего купить на своих фразах: советуем фразы, а не лимит. */
+  lowBudgetUseRatio: 0.6,
 };
 export type AdAgentConfig = typeof AD_AGENT_DEFAULTS;
 
@@ -189,6 +191,9 @@ export function adAdvice(products: AdProduct[], campaigns: AdCampaign[], today: 
         advice.push({ priority: 2, target, action: 'поднять ставку (CPM)', reason: `идёт ${runningDays} дн., показов нет — ставка проигрывает аукцион` });
       } else if (weekDrr !== null && weekDrr <= maxDrr * 0.6 && campaign.weeklyBudget && campaign.week.spend >= campaign.weeklyBudget * 0.8) {
         advice.push({ priority: 3, target, action: `увеличить недельный бюджет на 30% (до ${fmt(campaign.weeklyBudget * 1.3)} сум)`, reason: `бюджет выбран на ${Math.round((campaign.week.spend / campaign.weeklyBudget) * 100)}%, ДРР ${p1(weekDrr)} — есть запас до ${maxDrr}%` });
+      } else if (campaign.weeklyBudget && campaign.week.impressions > 0 && campaign.week.spend < campaign.weeklyBudget * cfg.lowBudgetUseRatio) {
+        // Бюджет не выбирается — кампании нечего купить на своих фразах; поднимать лимит бессмысленно.
+        advice.push({ priority: 3, target, action: 'добавить ключевые фразы (узбекские), бюджет не повышать', reason: `бюджет выбран только на ${Math.round((campaign.week.spend / campaign.weeklyBudget) * 100)}% — показов на текущих фразах не хватает, лишний лимит не поможет` });
       }
     } else if (campaign.status === 'PAUSED' && campaign.month.sold > 0) {
       const monthDrr = drr(campaign.month.spend, campaign.month.revenue);

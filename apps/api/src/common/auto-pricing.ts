@@ -9,7 +9,9 @@
  *     поток (выкупы за 7 дней ≥ 1,2× среднего за 28 дней и ≥ 3 шт.) → +2%, если в эту неделю не менялись
  *       ставка или бюджет рекламы;
  *     после повышения за поток выкупы за 3 дня упали на 35% → возвращаем цену и 14 дней не поднимаем;
- *     ≤ 1 выкупа за 28 дней → −2%, если маржа после снижения не ниже минимальной.
+ *     ≤ 1 выкупа за 28 дней → −2%, но только если запаса ≥ 60 дней, маржа по текущей цене ≥ 35%
+ *       (на −5% цены нужно +17% штук при марже 25% — текстиль столько не даёт) и маржа после снижения
+ *       не ниже минимальной; товары из списка noLowerProducts (сауны) не снижаем никогда.
  *
  * Общие ограничения: шаг ≤ 5% (checkPriceGuards), одно изменение цены SKU в сутки (любое — ручное тоже),
  * одно и то же правило не чаще раза в 7 дней, не больше 20 изменений за запуск. SKU с себестоимостью
@@ -46,6 +48,13 @@ export const AUTO_PRICING_DEFAULTS = {
   raiseBanDays: 14,
   slowMaxUnits28: 1,
   slowLowerPercent: 2,
+  /** Снижать за отсутствие продаж только при запасе от стольких дней: меньший запас уйдёт и без скидки. */
+  slowMinStockDays: 60,
+  /** …и только если маржа по текущей цене не ниже: при −5% нужно +0,037/(маржа−0,037) штук —
+   * +17% при 25%, +12% при 35%; эластичность текстиля 1–2,5 окупает скидку только выше 35%. */
+  slowMinMarginPercent: 35,
+  /** Товары (productId), цену которых бот не снижает никогда — например сауны 2263224 с маржой 16–23%. */
+  noLowerProducts: [] as string[],
   minMarginPercent: 15,
   /** При остатке меньше стольких штук цену НЕ снижаем: распродавать 2–4 шт.
    * со скидкой бессмысленно — они уйдут и так или вместе с пополнением,
@@ -568,6 +577,12 @@ function marginalTarget(
   // 4. Нет продаж.
   if (units28 <= cfg.slowMaxUnits28) {
     const slow = `${units28} выкуп. за 28 дн.`;
+    if (cfg.noLowerProducts.includes(input.productId)) return { hold: notes.concat(`${slow}, но товар ${input.productId} в списке «не снижать» — цену не трогаем`).join('; ') };
+    if (days !== null && days < cfg.slowMinStockDays) return { hold: notes.concat(`${slow}, но запаса ${days1(days)} дн. < ${cfg.slowMinStockDays} — уйдёт и без скидки, не снижаем`).join('; ') };
+    if (metrics.marginPercent !== null && metrics.marginPercent < cfg.slowMinMarginPercent) {
+      const needed = Math.round((0.037 / Math.max(metrics.marginPercent / 100 - 0.037, 0.001)) * 100);
+      return { hold: notes.concat(`${slow}, но маржа ${days1(metrics.marginPercent)}% < ${cfg.slowMinMarginPercent}% — скидка −5% окупится только при +${needed}% штук, не снижаем`).join('; ') };
+    }
     if (recent('SLOW', cfg.ruleCooldownDays)) return { hold: notes.concat(`${slow}, цена уже снижалась в последние ${cfg.ruleCooldownDays} дн.`).join('; ') };
     if (currentPrice === null) return { hold: notes.concat(`${slow}, текущая цена неизвестна`).join('; ') };
     const after = marginPercent(adjustPrice(currentPrice, -cfg.slowLowerPercent, cfg), input);

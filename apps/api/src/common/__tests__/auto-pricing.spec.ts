@@ -272,22 +272,47 @@ describe('evaluateSku: маржинальные', () => {
     expect(evaluate({ basePrice: 31_000, buyouts: byDay, history: [raised] })).toMatchObject({ status: 'HOLD', rule: 'FLOW_REVERT' });
   });
 
+  // Снижение за отсутствие продаж требует запаса ≥ 60 дней — в этих тестах запас 90.
+  const long = forecast({ turnoverDays: 90 });
+
   it('≤ 1 выкупа за 28 дней → −2%, если маржа после снижения не ниже минимума', () => {
     const slow = buyouts(-10, -10, 1);
-    const decision = evaluate({ buyouts: slow });
+    const decision = evaluate({ buyouts: slow, forecast: long });
     expect(decision).toMatchObject({ status: 'CHANGE', rule: 'SLOW', newPrice: 29_400, deltaPercent: -2 });
     expect(decision.metrics.marginAfterPercent).toBeCloseTo(34.99, 1);
-    expect(evaluate({ buyouts: slow, unitCost: 18_000 }).reason).toContain('маржа после снижения');
-    expect(evaluate({ buyouts: slow, payoutRatio: null }).reason).toContain('маржа не рассчитана');
-    expect(evaluate({ buyouts: slow, history: [event({ at: at('2026-09-22'), rule: 'SLOW', oldPrice: 30_600, newPrice: 30_000 })] }).status).toBe('HOLD');
+    expect(evaluate({ buyouts: slow, forecast: long, payoutRatio: null }).reason).toContain('маржа не рассчитана');
+    expect(evaluate({ buyouts: slow, forecast: long, history: [event({ at: at('2026-09-22'), rule: 'SLOW', oldPrice: 30_600, newPrice: 30_000 })] }).status).toBe('HOLD');
+  });
+
+  it('нет продаж, но запаса меньше 60 дней — не снижаем: уйдёт и без скидки', () => {
+    const held = evaluate({ buyouts: buyouts(-10, -10, 1) });
+    expect(held.status).toBe('HOLD');
+    expect(held.reason).toContain('запаса 30 дн. < 60');
+  });
+
+  it('нет продаж, но маржа по текущей цене ниже 35% — скидка не окупится, не снижаем', () => {
+    // маржа 75 − 5 − 1 − 18 000/30 000 = 9% → на −5% цены нужно +70% штук
+    const held = evaluate({ buyouts: buyouts(-10, -10, 1), forecast: long, unitCost: 18_000 });
+    expect(held.status).toBe('HOLD');
+    expect(held.reason).toContain('маржа 9% < 35%');
+    expect(held.reason).toContain('окупится только при +70% штук');
+  });
+
+  it('товар из списка «не снижать» (сауны) — цену не трогаем никогда', () => {
+    const cfg = { ...PERCENT_CFG, noLowerProducts: ['2880108'] };
+    const held = evaluateSku(sku({ buyouts: buyouts(-10, -10, 1), forecast: long }), today, cfg);
+    expect(held.status).toBe('HOLD');
+    expect(held.reason).toContain('в списке «не снижать»');
+    expect(evaluateSku(sku({ buyouts: buyouts(-10, -10, 1), forecast: long }), today, { ...cfg, noLowerProducts: ['2263224'] }).status).toBe('CHANGE');
   });
 
   it('минимальный шаг 5 000 сум: −2% от 150 000 (−3 000) доводится до −5 000; маржа проверяется по итоговой цене', () => {
     const slow = buyouts(-10, -10, 1);
-    const row = evaluateReal({ basePrice: 150_000, unitCost: 60_000, buyouts: slow });
+    // маржа 75 − 5 − 1 − 30 = 39% — снижать можно
+    const row = evaluateReal({ basePrice: 150_000, unitCost: 45_000, buyouts: slow, forecast: long });
     expect(row).toMatchObject({ status: 'CHANGE', rule: 'SLOW', newPrice: 145_000 });
-    // с большим шагом маржа падает ниже 15% — снижения нет
-    expect(evaluateReal({ basePrice: 150_000, unitCost: 92_000, buyouts: slow }).status).toBe('HOLD');
+    // маржа 29% — ниже порога 35%, снижения нет
+    expect(evaluateReal({ basePrice: 150_000, unitCost: 60_000, buyouts: slow, forecast: long }).status).toBe('HOLD');
   });
   it('шаг меньше 5 000 из-за лимита акции — цену не дёргаем', () => {
     const row = evaluateReal({
@@ -298,15 +323,15 @@ describe('evaluateSku: маржинальные', () => {
   });
   it('остаток меньше 5 шт. — не снижаем: распродавать 2–4 штуки со скидкой бессмысленно', () => {
     const slow = buyouts(-10, -10, 1);
-    const held = evaluate({ buyouts: slow, stock: 3 });
+    const held = evaluate({ buyouts: slow, stock: 3, forecast: long });
     expect(held.status).toBe('HOLD');
     expect(held.reason).toContain('остаток всего 3 шт.');
     // 5 штук — порог включительно, снижение разрешено.
-    expect(evaluate({ buyouts: slow, stock: 5 }).status).toBe('CHANGE');
+    expect(evaluate({ buyouts: slow, stock: 5, forecast: long }).status).toBe('CHANGE');
   });
 
   it('не опускаем ниже минимальной цены', () => {
-    expect(evaluate({ buyouts: {}, minPrice: 29_900 })).toMatchObject({ status: 'HOLD', rule: 'SLOW' });
+    expect(evaluate({ buyouts: {}, minPrice: 29_900, forecast: long })).toMatchObject({ status: 'HOLD', rule: 'SLOW' });
   });
 });
 
@@ -326,7 +351,7 @@ describe('evaluateSku: акции', () => {
   });
 
   it('снижение в акции — меняем цену акции', () => {
-    expect(evaluate({ inOffer: true, promos: [promo()], buyouts: {} })).toMatchObject({ status: 'CHANGE', rule: 'SLOW', kind: 'PROMO', newPrice: 29_100 });
+    expect(evaluate({ inOffer: true, promos: [promo()], buyouts: {}, forecast: forecast({ turnoverDays: 90 }) })).toMatchObject({ status: 'CHANGE', rule: 'SLOW', kind: 'PROMO', newPrice: 29_100 });
   });
 
   it('запланированная акция, несколько акций, «в акции» без акции в кабинете — только рекомендация', () => {
