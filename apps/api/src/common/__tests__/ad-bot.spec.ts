@@ -170,6 +170,27 @@ describe('ручной посев фраз', () => {
     // чужая кампания не тронута; совпадающая ставка — без действия
     expect(seedKeywordActions(keywords, [{ campaignId: '286528', phrases: [{ query: 'полотенце', cpm: 40_000 }] }])).toEqual([]);
   });
+  it('правка минус-слов: убрать, добавить, при полном списке выбросить бесполезные; только узбекские фразы', () => {
+    const full = Array.from({ length: 56 }, (_, index) => `слово${index}`).concat(['soch', 'майнкрафт']);
+    const keywords = [
+      kw({ adId: '1', query: 'sauna sochiq', cpm: 15_000, stopWords: full }),
+      kw({ adId: '2', query: 'полотенце для сауны', cpm: 20_000, stopWords: ['soch'] }),
+      kw({ adId: '3', query: 'katta sochiq', cpm: 15_000, stopWords: ['oshxona', 'salfetka'] }),
+    ];
+    const rows = seedKeywordActions(keywords, [{ campaignId: '332097', stopWords: { remove: ['soch'], add: ['soch uchun', 'sochlar uchun', 'oshxona', 'salfetka'], dropIfFull: ['майнкрафт', 'волка'], onlyLatin: true } }]);
+    // русская фраза (adId 2) не тронута; у adId 3 просто добавились две минус-фразы
+    expect(rows.map((row) => [row.adId, row.kind, row.newCpm])).toEqual([['1', 'STOPWORDS', 15_000], ['3', 'STOPWORDS', 15_000]]);
+    expect(rows[1].stopWords).toEqual(['oshxona', 'salfetka', 'soch uchun', 'sochlar uchun', 'detskiy', 'qogoz', 'moshina', 'tabletka'].filter((word) => ['oshxona', 'salfetka', 'soch uchun', 'sochlar uchun'].includes(word)));
+    const words = rows[0].stopWords;
+    expect(words).toHaveLength(58);
+    expect(words).not.toContain('soch');
+    expect(words).not.toContain('майнкрафт');
+    expect(words).toContain('soch uchun');
+    expect(words).toContain('sochlar uchun');
+    // 56 + 2 новых = 58: место под oshxona/salfetka не нашлось — они не добавлены, лимит не нарушен
+    expect(words).not.toContain('oshxona');
+    expect(rows[0].reason).toContain('58 → 58');
+  });
 });
 
 describe('минус-слова', () => {

@@ -58,9 +58,20 @@ async function main() {
     console.log(`${apply ? 'ПРИМЕНЕНО' : 'ПЛАН'}: слов в активных кампаниях ${keywords.length}, действий ${actions.length}\n`);
     for (const spec of specs) {
       const own = actions.filter((row) => row.campaignId === spec.campaignId);
-      const name = own[0]?.campaignName ?? keywords.find((row) => row.campaignId === spec.campaignId)?.campaignName ?? '(кампания не активна или не найдена)';
+      const all = keywords.filter((row) => row.campaignId === spec.campaignId);
+      const name = own[0]?.campaignName ?? all[0]?.campaignName ?? '(кампания не активна или не найдена)';
       const groups = new Set(own.map((row) => row.skuGroupId)).size;
-      console.log(`Кампания ${spec.campaignId} «${name}»: цветов ${groups}, действий ${own.length}`);
+      console.log(`Кампания ${spec.campaignId} «${name}»: слов ${all.length}, цветов ${groups}, действий ${own.length}`);
+      if (flag('list')) {
+        const latin = all.filter((row) => /[a-z]/i.test(row.query) && !/[а-яё]/i.test(row.query));
+        const over = all.filter((row) => row.stopWords.length > 58).length;
+        const seen = new Map<string, number>();
+        for (const row of all) { const key = `${row.skuGroupId}|${row.query.toLowerCase().replace(/[^a-zа-яё0-9 ]/gi, '').replace(/\s+/g, ' ').trim()}`; seen.set(key, (seen.get(key) ?? 0) + 1); }
+        const dupes = [...seen.values()].filter((count) => count > 1).length;
+        const withSoch = latin.filter((row) => row.stopWords.some((word) => word.trim().toLowerCase() === 'soch')).length;
+        console.log(`  узбекских фраз ${latin.length}; минус-слов на фразу: ${Math.min(...all.map((row) => row.stopWords.length))}–${Math.max(...all.map((row) => row.stopWords.length))}; списков > 58: ${over}; дублей «цвет+фраза»: ${dupes}; узбекских с «soch»: ${withSoch}`);
+        for (const row of latin) console.log(`    ${row.skuGroupId}  «${row.query}»  ${fmt(row.cpm)}  минус-слов ${row.stopWords.length}${row.stopWords.some((word) => word.trim().toLowerCase() === 'soch') ? '  [soch]' : ''}`);
+      }
       const byQuery = new Map<string, typeof own>();
       for (const row of own) byQuery.set(row.query, [...(byQuery.get(row.query) ?? []), row]);
       for (const [query, rows] of byQuery) {

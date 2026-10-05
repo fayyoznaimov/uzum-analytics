@@ -342,7 +342,29 @@ export function buildCampaignUpdate(campaign: { name: string; budgetConfig: any;
 }
 
 export type SeedPhrase = { query: string; cpm: number };
-export type SeedSpec = { campaignId: string; phrases: SeedPhrase[] };
+/** Правка минус-слов существующих фраз кампании: убрать remove, добавить add; если список упёрся в 58 —
+ * сначала выбросить dropIfFull (бесполезные слова), что не влезло — не добавлять. onlyLatin — только узбекские фразы. */
+export type SeedStopWords = { add?: string[]; remove?: string[]; dropIfFull?: string[]; onlyLatin?: boolean };
+export type SeedSpec = { campaignId: string; phrases?: SeedPhrase[]; stopWords?: SeedStopWords };
+
+function mergeStopWords(current: string[], rule: SeedStopWords, limit: number): string[] | null {
+  const norm = (word: string) => normalizeQuery(word);
+  const removeSet = new Set((rule.remove ?? []).map(norm));
+  let next = current.filter((word) => !removeSet.has(norm(word)));
+  const have = new Set(next.map(norm));
+  const toAdd = (rule.add ?? []).filter((word) => norm(word) && !have.has(norm(word)));
+  const drop = [...(rule.dropIfFull ?? [])].map(norm);
+  for (const word of toAdd) {
+    while (next.length >= limit && drop.length) {
+      const victim = drop.shift() as string;
+      next = next.filter((row) => norm(row) !== victim);
+    }
+    if (next.length >= limit) break;
+    next.push(word);
+  }
+  const same = next.length === current.length && next.every((word, index) => word === current[index]);
+  return same ? null : next;
+}
 
 /**
  * Ручной посев фраз (scripts/seed-keywords.ts): в каждый цвет кампании добавить фразы, которых там нет,
@@ -354,11 +376,20 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
   const actions: AdBotAction[] = [];
   for (const spec of specs) {
     const own = keywords.filter((row) => row.campaignId === spec.campaignId);
+    if (spec.stopWords) {
+      for (const row of own) {
+        if (spec.stopWords.onlyLatin && !isLatinQuery(normalizeQuery(row.query))) continue;
+        const merged = mergeStopWords(row.stopWords, spec.stopWords, cfg.maxStopWords);
+        if (!merged) continue;
+        const delta = `${merged.length - row.stopWords.length >= 0 ? '+' : ''}${merged.length - row.stopWords.length}`;
+        actions.push({ kind: 'STOPWORDS', campaignId: row.campaignId, campaignName: row.campaignName, skuGroupId: row.skuGroupId, groupTitle: row.skuGroupId, adId: row.adId, query: row.query, oldCpm: row.cpm, newCpm: row.cpm, stopWords: merged, reason: `ручная правка минус-слов (${row.stopWords.length} → ${merged.length}, ${delta})` });
+      }
+    }
     for (const skuGroupId of [...new Set(own.map((row) => row.skuGroupId))]) {
       const inGroup = own.filter((row) => row.skuGroupId === skuGroupId);
       const baseStop = inGroup[0].stopWords;
       const common = { campaignId: spec.campaignId, campaignName: inGroup[0].campaignName, skuGroupId, groupTitle: skuGroupId };
-      for (const phrase of spec.phrases) {
+      for (const phrase of spec.phrases ?? []) {
         const query = normalizeQuery(phrase.query);
         if (!query) continue;
         const cpm = clampBid(phrase.cpm, 'down', cfg);
