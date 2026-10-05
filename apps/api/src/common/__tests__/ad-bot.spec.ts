@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AD_BOT_DEFAULTS, AdBotInput, AdBotKeyword, AdBotStats, buildCampaignUpdate, clampBid, decideKeyword, formatAdBotReport, groupDrrTarget, newKeywords, normalizeQuery, planAdBot, stopWordCandidates } from '../ad-bot';
+import { AD_BOT_DEFAULTS, AdBotInput, AdBotKeyword, AdBotStats, buildCampaignUpdate, clampBid, decideKeyword, formatAdBotReport, groupDrrTarget, newKeywords, normalizeQuery, planAdBot, seedKeywordActions, stopWordCandidates } from '../ad-bot';
 
 const now = new Date('2026-09-28T11:00:00+05:00');
 const kw = (patch: Partial<AdBotKeyword> = {}): AdBotKeyword => ({
@@ -145,6 +145,30 @@ describe('новые слова и план', () => {
     expect(text).toContain('📣 Банное 100×150');
     expect(text).toMatch(/⬇️ снизить «полотенце для сауны» — HAVANASAUNA-БЕЛЫЙ: 20\s000 → 15\s000 ✅/);
     expect(text).toContain('➕ новое слово «полотенце для бани большое»');
+  });
+});
+
+describe('ручной посев фраз', () => {
+  it('новые фразы — во все цвета кампании, существующим — заданная ставка; «soch» у узбекских новых фраз заменяется на «soch uchun»', () => {
+    const keywords = [
+      kw(),
+      kw({ adId: '2', skuGroupId: '777', query: 'полотенце для сауны', cpm: 30_000, stopWords: ['soch', 'вафельное'] }),
+      kw({ adId: '3', campaignId: '286528', campaignName: 'HAVANA', skuGroupId: '5856539', query: 'полотенце', cpm: 40_000, stopWords: [] }),
+    ];
+    const actions = seedKeywordActions(keywords, [{ campaignId: '332097', phrases: [{ query: 'Полотенце для сауны', cpm: 25_000 }, { query: 'sauna sochiq', cpm: 15_000 }, { query: 'полотенце 100х150', cpm: 30_000 }] }]);
+    expect(actions.map((row) => [row.skuGroupId, row.kind, row.query, row.newCpm])).toEqual([
+      ['4160950', 'RAISE', 'полотенце для сауны', 25_000],
+      ['4160950', 'ADD', 'sauna sochiq', 15_000],
+      ['4160950', 'ADD', 'полотенце 100х150', 30_000],
+      ['777', 'LOWER', 'полотенце для сауны', 25_000],
+      ['777', 'ADD', 'sauna sochiq', 15_000],
+      ['777', 'ADD', 'полотенце 100х150', 30_000],
+    ]);
+    expect(actions[1].stopWords).toEqual(['вафельное']);
+    expect(actions[4].stopWords).toEqual(['вафельное', 'soch uchun', 'sochlar uchun']);
+    expect(actions[5].stopWords).toEqual(['soch', 'вафельное']);
+    // чужая кампания не тронута; совпадающая ставка — без действия
+    expect(seedKeywordActions(keywords, [{ campaignId: '286528', phrases: [{ query: 'полотенце', cpm: 40_000 }] }])).toEqual([]);
   });
 });
 

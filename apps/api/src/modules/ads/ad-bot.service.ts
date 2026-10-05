@@ -15,6 +15,8 @@ import {
   formatAdBotReport,
   normalizeQuery,
   planAdBot,
+  seedKeywordActions,
+  SeedSpec,
 } from '../../common/ad-bot';
 import { cubeUrl, isCubeContinueWait } from '../../common/ad-agent';
 import { shiftDay, tashkentDay } from '../../common/auto-pricing';
@@ -155,16 +157,27 @@ export class AdBotService {
     return result;
   }
 
-  private async collect(now: Date, today: string) {
-    const notes: string[] = [];
-    const yesterday = shiftDay(today, -1);
-    const shopId = await this.cabinet.cabinetShopId();
+  /** Ручной посев фраз по спецификации (scripts/seed-keywords.ts): без правил бота, но с его проверкой и журналом. */
+  async seed(specs: SeedSpec[], apply: boolean): Promise<{ actions: AdBotAction[]; outcomes: AdBotOutcome[]; keywords: AdBotKeyword[] }> {
+    const today = tashkentDay(new Date());
+    const sellerId = await this.resolveSellerId(today);
+    const { campaigns, keywords } = await this.loadCampaigns(sellerId, today);
+    const actions = seedKeywordActions(keywords, specs, this.config());
+    const empty = { stats14: new Map<string, AdBotStats>(), stats7: new Map<string, AdBotStats>() };
+    const outcomes = apply ? await this.apply(actions, campaigns, empty) : [];
+    if (!apply) await this.journal(actions, empty, { dryRun: true, status: 'PLANNED' });
+    return { actions, outcomes, keywords };
+  }
 
+  private async resolveSellerId(today: string): Promise<string> {
     const cpoBody = (await this.cabinet.cabinet('POST', `${CABINET}/cpo/advertisements/search`, undefined, { page: 0, size: 1, activeOnly: false, dateTo: today })).body;
     const sellerId = String(cpoBody?.payload?.advertisements?.[0]?.ownerSellerId ?? process.env.UZUM_SELLER_ID ?? '');
     if (!sellerId) throw new Error('не удалось определить sellerId (нет объявлений «Буст заказов» и не задан UZUM_SELLER_ID)');
+    return sellerId;
+  }
 
-    // Активные кампании «Буст в ТОП» (кабинет отдаёт не больше 20 за страницу).
+  /** Активные кампании «Буст в ТОП» и их слова (кабинет отдаёт не больше 20 кампаний и 10 слов за страницу). */
+  private async loadCampaigns(sellerId: string, today: string): Promise<{ campaigns: Map<string, CampaignInfo>; keywords: AdBotKeyword[] }> {
     const campaignRows: any[] = [];
     for (let page = 0; page < MAX_PAGES; page++) {
       const body = await this.get(`${CABINET}/advertising/management/ad-campaign`, { sellerId, page, size: CAMPAIGNS_PAGE, from: shiftDay(today, -28), to: today, statusGroup: 'ALL' });
@@ -194,6 +207,15 @@ export class AdBotService {
         if (groups.length < ADS_PAGE) break;
       }
     }
+    return { campaigns, keywords };
+  }
+
+  private async collect(now: Date, today: string) {
+    const notes: string[] = [];
+    const yesterday = shiftDay(today, -1);
+    const shopId = await this.cabinet.cabinetShopId();
+    const sellerId = await this.resolveSellerId(today);
+    const { campaigns, keywords } = await this.loadCampaigns(sellerId, today);
 
     // Остатки и цены цветов: группа → SKU (кабинет) → quantityActive / price из getProducts.
     const groupIds = [...new Set(keywords.map((row) => row.skuGroupId))];

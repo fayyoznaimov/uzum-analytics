@@ -341,6 +341,44 @@ export function buildCampaignUpdate(campaign: { name: string; budgetConfig: any;
   };
 }
 
+export type SeedPhrase = { query: string; cpm: number };
+export type SeedSpec = { campaignId: string; phrases: SeedPhrase[] };
+
+/**
+ * Ручной посев фраз (scripts/seed-keywords.ts): в каждый цвет кампании добавить фразы, которых там нет,
+ * а существующим с другой ставкой — поставить заданную. Правила бота здесь не применяются.
+ * Новым узбекским (латиница) фразам минус-слово «soch» заменяется на «soch uchun» / «sochlar uchun»:
+ * как Uzum сравнивает минус-слова — целиком или по части — неизвестно, и «soch» мог бы перекрыть «sochiq».
+ */
+export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], cfg: AdBotConfig = AD_BOT_DEFAULTS): AdBotAction[] {
+  const actions: AdBotAction[] = [];
+  for (const spec of specs) {
+    const own = keywords.filter((row) => row.campaignId === spec.campaignId);
+    for (const skuGroupId of [...new Set(own.map((row) => row.skuGroupId))]) {
+      const inGroup = own.filter((row) => row.skuGroupId === skuGroupId);
+      const baseStop = inGroup[0].stopWords;
+      const common = { campaignId: spec.campaignId, campaignName: inGroup[0].campaignName, skuGroupId, groupTitle: skuGroupId };
+      for (const phrase of spec.phrases) {
+        const query = normalizeQuery(phrase.query);
+        if (!query) continue;
+        const cpm = clampBid(phrase.cpm, 'down', cfg);
+        const existing = inGroup.find((row) => normalizeQuery(row.query) === query);
+        if (existing) {
+          if (existing.cpm === cpm) continue;
+          actions.push({ ...common, kind: existing.cpm > cpm ? 'LOWER' : 'RAISE', adId: existing.adId, query: existing.query, oldCpm: existing.cpm, newCpm: cpm, stopWords: existing.stopWords, reason: `ручная ставка ${fmt(cpm)} (было ${fmt(existing.cpm)})` });
+          continue;
+        }
+        let stopWords = baseStop;
+        if (isLatinQuery(query) && baseStop.some((word) => normalizeQuery(word) === 'soch')) {
+          stopWords = [...baseStop.filter((word) => normalizeQuery(word) !== 'soch'), 'soch uchun', 'sochlar uchun'].slice(0, cfg.maxStopWords);
+        }
+        actions.push({ ...common, kind: 'ADD', adId: null, query: phrase.query.trim(), oldCpm: null, newCpm: cpm, stopWords, reason: 'ручной посев фразы' });
+      }
+    }
+  }
+  return actions;
+}
+
 export const AD_BOT_LABELS: Record<AdBotActionKind, string> = { LOWER: '⬇️ снизить', SUSPEND: '⛔ остановить', STOPWORDS: '🚫 минус-слова', ADD: '➕ новое слово', RAISE: '⬆️ поднять' };
 
 export type AdBotOutcome = { action: AdBotAction; ok: boolean; message: string };
