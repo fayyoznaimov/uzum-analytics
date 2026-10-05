@@ -52,6 +52,13 @@ export const AD_BOT_DEFAULTS = {
    * нет, продаж по ним нет, и по правилу «нужна продажа» бот их не нашёл бы никогда. */
   uzbekKeywordMinClicks: 1,
   uzbekKeywordBid: 15_000,
+  /** Потолок ДРР цвета зависит от запаса (правило A12). Цвет с запасом от стольких дней — медленный:
+   * ему реклама нужна ради оборота склада, и потолок ДРР равен его марже минус запас… */
+  slowStockDays: 60,
+  /** …минус столько п.п. (половина приписанных продаж случилась бы и без рекламы — страховка)… */
+  marginDrrGapPoints: 5,
+  /** …но не выше этого. Для цветов с нормальным запасом потолок — maxDrrPercent. */
+  maxDrrCeilingPercent: 30,
   maxQueryLength: 60,
   cooldownDays: 3,
   maxChangesPerRun: 30,
@@ -73,7 +80,25 @@ export type AdBotKeyword = {
   stopWords: string[];
 };
 export type AdBotStats = { impressions: number; clicks: number; sold: number; revenue: number; spend: number; position: number | null };
-export type AdBotGroup = { skuGroupId: string; title: string; stock: number | null; price: number | null };
+export type AdBotGroup = {
+  skuGroupId: string;
+  title: string;
+  stock: number | null;
+  price: number | null;
+  /** Запас в днях по кабинету (сумма остатков / сумма средних продаж в день); Infinity — остаток есть, продаж нет. */
+  daysOfStock?: number | null;
+  /** Маржа цвета по текущей цене, % (минимум по SKU цвета с известной себестоимостью). */
+  marginPercent?: number | null;
+};
+
+/** Потолок ДРР для цвета (A12): медленному запасу разрешаем ДРР до «маржа − запас», остальным — общую цель. */
+export function groupDrrTarget(group: AdBotGroup | undefined, cfg: Pick<AdBotConfig, 'maxDrrPercent' | 'slowStockDays' | 'marginDrrGapPoints' | 'maxDrrCeilingPercent'> = AD_BOT_DEFAULTS): number {
+  const days = group?.daysOfStock;
+  const margin = group?.marginPercent;
+  if (days === null || days === undefined || days < cfg.slowStockDays) return cfg.maxDrrPercent;
+  if (margin === null || margin === undefined) return cfg.maxDrrPercent;
+  return Math.max(cfg.maxDrrPercent, Math.min(cfg.maxDrrCeilingPercent, margin - cfg.marginDrrGapPoints));
+}
 export type AdBotFeedQuery = { skuGroupId: string; searchQuery: string; impressions: number; clicks: number; atc?: number; sold: number; revenue: number };
 
 export type AdBotActionKind = 'LOWER' | 'SUSPEND' | 'STOPWORDS' | 'ADD' | 'RAISE';
@@ -155,7 +180,9 @@ export function decideKeyword(keyword: AdBotKeyword, input: AdBotInput, cfg: AdB
   const lower = (percent: number, reason: string) => action('LOWER', clampBid(keyword.cpm * (1 - percent / 100), 'down', cfg), reason);
   const raise = (reason: string) => action('RAISE', clampBid(keyword.cpm * (1 + cfg.raisePercent / 100), 'up', cfg), reason);
   const drr = drrPercent(s14);
-  const period = `за 14 дн.: показов ${s14.impressions}, кликов ${s14.clicks}, продаж ${s14.sold}, расход ${fmt(s14.spend)}${drr !== null ? `, ДРР ${drr.toFixed(1)}%` : ''}`;
+  const target = groupDrrTarget(group, cfg);
+  const slow = target > cfg.maxDrrPercent ? ` (запас ${Math.round(group?.daysOfStock ?? 0)} дн., маржа ${group?.marginPercent?.toFixed(0)}% — потолок ${target.toFixed(0)}%)` : '';
+  const period = `за 14 дн.: показов ${s14.impressions}, кликов ${s14.clicks}, продаж ${s14.sold}, расход ${fmt(s14.spend)}${drr !== null ? `, ДРР ${drr.toFixed(1)}%` : ''}${slow}`;
 
   if (group?.stock !== null && group?.stock !== undefined && group.stock <= cfg.lowStockUnits) {
     return keyword.cpm > cfg.minBid ? action('LOWER', cfg.minBid, `мало остатка у цвета (${group.stock} шт.) — ставка на минимум`) : null;
@@ -165,17 +192,17 @@ export function decideKeyword(keyword: AdBotKeyword, input: AdBotInput, cfg: AdB
     if (s14.spend >= cfg.suspendSpendRatio * price) return action('SUSPEND', keyword.cpm, `нет продаж, ставка уже минимальная, расход ≥ цены товара — слово остановлено (${period})`);
     return null;
   }
-  if (drr !== null && drr > cfg.maxDrrPercent * 1.5) return lower(cfg.lowerPercent, `ДРР ${drr.toFixed(1)}% — выше цели ${cfg.maxDrrPercent}% в 1,5 раза (${period})`);
-  if (drr !== null && drr > cfg.maxDrrPercent) return lower(cfg.lowerPercent / 2, `ДРР ${drr.toFixed(1)}% выше цели ${cfg.maxDrrPercent}% (${period})`);
+  if (drr !== null && drr > target * 1.5) return lower(cfg.lowerPercent, `ДРР ${drr.toFixed(1)}% — выше цели ${target.toFixed(0)}% в 1,5 раза (${period})`);
+  if (drr !== null && drr > target) return lower(cfg.lowerPercent / 2, `ДРР ${drr.toFixed(1)}% выше цели ${target.toFixed(0)}% (${period})`);
   if (!stockOk) return null;
-  if (drr !== null && drr <= cfg.maxDrrPercent * cfg.goodDrrRatio && s14.sold >= 2 && (s14.position === null || s14.position > cfg.topPosition)) {
+  if (drr !== null && drr <= target * cfg.goodDrrRatio && s14.sold >= 2 && (s14.position === null || s14.position > cfg.topPosition)) {
     return raise(`выгодное слово: ДРР ${drr.toFixed(1)}%, позиция ${s14.position?.toFixed(1) ?? '—'} — поднимаем выше (${period})`);
   }
   // «Нет данных» ≠ «всё хорошо»: если цвет не сматчился (нет ни ДРР, ни цены),
   // слово нельзя судить — и поднимать его тоже нельзя, иначе убыточное слово
   // росло бы на каждый прогон до максимума. Тот же принцип, что в автоценах:
   // «маржа не рассчитана — не трогаем».
-  const cheap = drr !== null ? drr <= cfg.maxDrrPercent : price !== null && s14.spend < cfg.zeroSaleSpendRatio * price;
+  const cheap = drr !== null ? drr <= target : price !== null && s14.spend < cfg.zeroSaleSpendRatio * price;
   if (s7.impressions < cfg.lowImpressions7 && cheap && s14.impressions >= cfg.reachRaiseMinImpressions14) return raise(`мало показов: ${s7.impressions} за 7 дн. — поднимаем ради охвата (${period})`);
   return null;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AD_BOT_DEFAULTS, AdBotInput, AdBotKeyword, AdBotStats, buildCampaignUpdate, clampBid, decideKeyword, formatAdBotReport, newKeywords, normalizeQuery, planAdBot, stopWordCandidates } from '../ad-bot';
+import { AD_BOT_DEFAULTS, AdBotInput, AdBotKeyword, AdBotStats, buildCampaignUpdate, clampBid, decideKeyword, formatAdBotReport, groupDrrTarget, newKeywords, normalizeQuery, planAdBot, stopWordCandidates } from '../ad-bot';
 
 const now = new Date('2026-09-28T11:00:00+05:00');
 const kw = (patch: Partial<AdBotKeyword> = {}): AdBotKeyword => ({
@@ -60,6 +60,22 @@ describe('решения по слову', () => {
     const row = decide({}, { impressions: 100, clicks: 2, spend: 3_000 }, { impressions: 40 });
     expect(row).toMatchObject({ kind: 'RAISE', newCpm: 22_000 });
     expect(row?.reason).toContain('мало показов');
+  });
+  it('медленный запас (≥ 60 дн.) и известная маржа — потолок ДРР = маржа − 5 п.п., но не выше 30 и не ниже цели', () => {
+    const slow = (patch = {}) => new Map([['4160950', { skuGroupId: '4160950', title: 'СЕРЫЙ', stock: 40, price: 200_000, daysOfStock: 90, marginPercent: 23, ...patch }]]);
+    expect(groupDrrTarget(slow().get('4160950'))).toBe(18);
+    expect(groupDrrTarget(slow({ marginPercent: 40 }).get('4160950'))).toBe(30);
+    expect(groupDrrTarget(slow({ marginPercent: 12 }).get('4160950'))).toBe(10);
+    expect(groupDrrTarget(slow({ daysOfStock: 20 }).get('4160950'))).toBe(10);
+    expect(groupDrrTarget(slow({ marginPercent: null }).get('4160950'))).toBe(10);
+    expect(groupDrrTarget(slow({ daysOfStock: Infinity }).get('4160950'))).toBe(18);
+    // ДРР 20% при потолке 18% — снижаем на половину шага; при обычном запасе то же слово получило бы −15%
+    const row = decide({ groups: slow() }, { sold: 1, revenue: 200_000, spend: 40_000 });
+    expect(row).toMatchObject({ kind: 'LOWER', newCpm: 18_500 });
+    expect(row?.reason).toContain('потолок 18%');
+    // ДРР 15% при потолке 18% — не трогаем; при потолке 10% снизили бы
+    expect(decide({ groups: slow() }, { sold: 1, revenue: 200_000, spend: 30_000 })).toBeNull();
+    expect(decide({}, { sold: 1, revenue: 200_000, spend: 30_000 })?.kind).toBe('LOWER');
   });
   it('мало остатка — ставка на минимум и не поднимаем', () => {
     const groups = new Map([['4160950', { skuGroupId: '4160950', title: 'СЕРЫЙ', stock: 2, price: 200_000 }]]);

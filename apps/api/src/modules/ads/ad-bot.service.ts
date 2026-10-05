@@ -35,6 +35,12 @@ type CampaignInfo = { id: string; name: string; budgetConfig: any; period: any }
 
 const num = (value: unknown) => (Number.isFinite(Number(value)) ? Number(value) : 0);
 
+/** Комиссия 22% + налог 1% и логистика Uzum за штуку — осторожная оценка маржи только для потолка ДРР (A12),
+ * не для цен: точную маржу по выплатам считают автоцены. */
+const COMMISSION_AND_TAX = 0.23;
+const LOGISTICS_PER_UNIT = 7_500;
+const marginAtPrice = (price: number, unitCost: number) => ((price * (1 - COMMISSION_AND_TAX) - LOGISTICS_PER_UNIT - unitCost) / price) * 100;
+
 /**
  * Рекламный бот «Буст в ТОП»: раз в день (11:00 по Ташкенту, AD_BOT_CRON) читает слова активных кампаний,
  * статистику слов и реальные запросы покупателей из Cube кабинета, решает по правилам common/ad-bot.ts,
@@ -198,26 +204,49 @@ export class AdBotService {
         skusByGroup.set(String(group.skuGroupId), (group.skuShortInfoDtos ?? []).map((sku: any) => String(sku.skuId)));
       }
     }
-    const skuInfo = new Map<string, { quantity: number; price: number; title: string }>();
+    type SkuInfo = { quantity: number; price: number; title: string; avgDailySales: number | null; unitCost: number | null };
+    const skuInfo = new Map<string, SkuInfo>();
     for (let page = 0; page < MAX_PAGES; page++) {
       const body = await this.get(`${CABINET}/shop/${shopId}/product/getProducts`, { page, size: 100 });
       const products: any[] = Array.isArray(body?.productList) ? body.productList : [];
       for (const product of products) {
         for (const sku of Array.isArray(product.skuList) ? product.skuList : []) {
-          skuInfo.set(String(sku.skuId), { quantity: num(sku.quantityActive), price: num(sku.price), title: String(sku.skuTitle ?? sku.skuFullTitle ?? '').replace(/^FAYYOZ-/, '') });
+          const avg = Number(sku.avgdsales ?? sku.avgDailySales);
+          skuInfo.set(String(sku.skuId), {
+            quantity: num(sku.quantityActive), price: num(sku.price), title: String(sku.skuTitle ?? sku.skuFullTitle ?? '').replace(/^FAYYOZ-/, ''),
+            avgDailySales: Number.isFinite(avg) && avg >= 0 ? avg : null, unitCost: null,
+          });
         }
       }
       if (products.length < 100) break;
     }
+    // Себестоимость — та же выборка, что у автоцен (действующая запись SkuCost).
+    const costRows = await this.prisma.sku.findMany({
+      where: { externalId: { in: [...skuInfo.keys()] } },
+      include: { costs: { where: { validTo: null }, orderBy: { validFrom: 'desc' }, take: 1 } },
+    });
+    for (const row of costRows) {
+      const cost = row.costs[0];
+      const info = skuInfo.get(String(row.externalId));
+      if (!cost || !info) continue;
+      const unitCost = Number(cost.amount) + Number(cost.packagingCost) + Number(cost.additionalCost) + Number(cost.warehouseLogisticsCost);
+      info.unitCost = unitCost > 0 ? unitCost : null;
+    }
     const groups = new Map<string, AdBotGroup>();
     for (const groupId of groupIds) {
-      const skus = (skusByGroup.get(groupId) ?? []).map((id) => skuInfo.get(id)).filter((row): row is { quantity: number; price: number; title: string } => Boolean(row));
+      const skus = (skusByGroup.get(groupId) ?? []).map((id) => skuInfo.get(id)).filter((row): row is SkuInfo => Boolean(row));
       const priced = skus.filter((row) => row.price > 0);
+      const stock = skus.length ? skus.reduce((sum, row) => sum + row.quantity, 0) : null;
+      const withSales = skus.filter((row) => row.avgDailySales !== null);
+      const dailySales = withSales.reduce((sum, row) => sum + (row.avgDailySales as number), 0);
+      const margins = priced.filter((row) => row.unitCost !== null).map((row) => marginAtPrice(row.price, row.unitCost as number));
       groups.set(groupId, {
         skuGroupId: groupId,
         title: skus[0]?.title.replace(/-(50 x 90|70 x140|Havana|Банный|Лицевой|Микс|Сауна|банн\S*|лицев\S*|микс|сауна)$/i, '') || groupId,
-        stock: skus.length ? skus.reduce((sum, row) => sum + row.quantity, 0) : null,
+        stock,
         price: priced.length ? Math.max(...priced.map((row) => row.price)) : null,
+        daysOfStock: stock === null || !withSales.length ? null : dailySales > 0 ? stock / dailySales : stock > 0 ? Infinity : null,
+        marginPercent: margins.length ? Math.min(...margins) : null,
       });
     }
     if (groupIds.some((id) => !skusByGroup.has(id))) notes.push('для части цветов не получен состав SKU — остаток для них не проверялся');
