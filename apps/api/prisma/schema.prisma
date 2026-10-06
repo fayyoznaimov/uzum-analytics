@@ -635,6 +635,33 @@ model SupplySlotWatch {
   supply         Supply   @relation(fields: [supplyId], references: [id], onDelete: Cascade)
 }
 
+/// Автобиддер «Буст в ТОП»: политика авто-ставки по одному ключевому слову (объявлению) кампании.
+model AdKeywordPolicy {
+  id          String    @id @default(cuid())
+  campaignId  String
+  /// id объявления (слова) в кабинете Uzum.
+  adId        String    @unique
+  skuGroupId  String
+  query       String
+  enabled     Boolean   @default(true)
+  /// Желаемый охват показов, % (10…100).
+  targetReach Int       @default(90)
+  /// Потолок ставки, сум — выше неё автобид не поднимает ни при каких условиях.
+  maxBid      Int
+  /// Максимальный ДРР, %; null — защита по ДРР выключена.
+  maxDrr      Float?
+  /// Автобид приостановлен защитой по ДРР (устойчиво критический ДРР).
+  pausedAt    DateTime?
+  pausedNote  String?
+  lastRunAt   DateTime?
+  lastBid     Int?
+  lastNote    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([campaignId])
+}
+
 model NotificationLog {
   id        String   @id @default(cuid())
   type      String

@@ -142,6 +142,8 @@ export type AdBotInput = {
   /** Когда бот последний раз менял слово: ключ — id объявления или `${skuGroupId}|${query}` для новых. */
   lastChange: Map<string, Date>;
   now: Date;
+  /** id объявлений на авто-ставке (common/auto-bidder.ts): их ставки бот не трогает, минус-слова — добавляет. */
+  managed?: Set<string>;
 };
 
 export type AdBotPlan = { actions: AdBotAction[]; deferred: AdBotAction[]; notes: string[] };
@@ -313,7 +315,8 @@ const PRIORITY: Record<AdBotActionKind, number> = { SUSPEND: 0, LOWER: 1, STOPWO
 
 export function planAdBot(input: AdBotInput, cfg: AdBotConfig = AD_BOT_DEFAULTS): AdBotPlan {
   const notes: string[] = [];
-  const decided = input.keywords.map((keyword) => decideKeyword(keyword, input, cfg)).filter((row): row is AdBotAction => row !== null);
+  const decided = input.keywords.filter((keyword) => !input.managed?.has(keyword.adId)).map((keyword) => decideKeyword(keyword, input, cfg)).filter((row): row is AdBotAction => row !== null);
+  if (input.managed?.size) notes.push(`${[...input.managed].filter((id) => input.keywords.some((keyword) => keyword.adId === id)).length} слов на авто-ставке — их ставки меняет автобиддер`);
   const actions = [...decided, ...newKeywords(input, cfg)];
 
   // Минус-слова: добавляем во все слова цвета — в уже запланированное изменение или отдельным EDIT без смены ставки.

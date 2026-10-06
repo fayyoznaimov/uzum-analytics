@@ -33,7 +33,7 @@ const FEED = 'AdvertisingFeedDailyFunnel.';
 
 export type AdBotRunResult = { apply: boolean; today: string; keywords: AdBotKeyword[]; plan: AdBotPlan; outcomes: AdBotOutcome[]; notes: string[]; messages: string[] };
 
-type CampaignInfo = { id: string; name: string; budgetConfig: any; period: any };
+export type CampaignInfo = { id: string; name: string; budgetConfig: any; period: any; status?: string; skuGroupIds?: string[]; raw?: any };
 
 const num = (value: unknown) => (Number.isFinite(Number(value)) ? Number(value) : 0);
 
@@ -118,12 +118,12 @@ export class AdBotService {
     }
   }
 
-  private async get(url: string, params?: Record<string, string | number>) {
+  async get(url: string, params?: Record<string, string | number>) {
     return (await this.cabinet.cabinet('GET', url, params)).body;
   }
 
   /** Cube: строки ответа как есть; «Continue wait» — повторяем до ~30 секунд. */
-  private async cubeRows(query: Record<string, unknown>): Promise<any[]> {
+  async cubeRows(query: Record<string, unknown>): Promise<any[]> {
     for (let attempt = 0; attempt < 15; attempt++) {
       const { body } = await this.cabinet.cabinet('GET', cubeUrl(query));
       if (isCubeContinueWait(body)) { await new Promise((resolve) => setTimeout(resolve, 2_000)); continue; }
@@ -135,7 +135,7 @@ export class AdBotService {
     throw new Error('Cube не посчитал данные за 30 секунд');
   }
 
-  private async keywordStats(sellerId: string, from: string, to: string): Promise<Map<string, AdBotStats>> {
+  async keywordStats(sellerId: string, from: string, to: string): Promise<Map<string, AdBotStats>> {
     const rows = await this.cubeRows({
       measures: ['impressions_sum', 'clicks_sum', 'sold_quantity_sum', 'revenue_final', 'expenses_sum', 'weighted_average_position'].map((m) => DAILY + m),
       dimensions: [DAILY + 'bid_id'],
@@ -409,11 +409,61 @@ export class AdBotService {
       merge(stats7);
     }
 
-    return { campaigns, notes, input: { keywords, stats14, stats7, groups, feed, lastChange, now } };
+    // Слова на авто-ставке (AdKeywordPolicy): их ставки меняет автобиддер, бот добавляет им только минус-слова.
+    const managedRows = await this.prisma.adKeywordPolicy.findMany({ where: { enabled: true }, select: { adId: true } }).catch(() => [] as Array<{ adId: string }>);
+    const managed = new Set<string>((managedRows as Array<{ adId: string }>).map((row) => row.adId));
+
+    return { campaigns, notes, input: { keywords, stats14, stats7, groups, feed, lastChange, now, managed } };
+  }
+
+  /** sellerId кабинета — для автобиддера (modules/ads/auto-bidder.service.ts). */
+  async sellerId(today: string): Promise<string> { return this.resolveSellerId(today); }
+
+  /** Все кампании «Буст в ТОП» за 28 дней со статусом, бюджетом, периодом и цветами — для экрана «Авто-ставка». */
+  async listCampaigns(sellerId: string, today: string): Promise<CampaignInfo[]> {
+    const campaignRows: any[] = [];
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const body = await this.get(`${CABINET}/advertising/management/ad-campaign`, { sellerId, page, size: CAMPAIGNS_PAGE, from: shiftDay(today, -28), to: today, statusGroup: 'ALL' });
+      const rows: any[] = Array.isArray(body?.payload) ? body.payload : [];
+      campaignRows.push(...rows);
+      if (rows.length < CAMPAIGNS_PAGE) break;
+    }
+    const result: CampaignInfo[] = [];
+    for (const row of campaignRows) {
+      const id = String(row.id);
+      const details = (await this.get(`${CABINET}/advertising/management/ad-campaign/${id}`).catch(() => null))?.payload ?? row;
+      const groupIds: any[] = Array.isArray(details.skuGroupIds) ? details.skuGroupIds : Array.isArray(details.skuGroups) ? details.skuGroups.map((g: any) => g?.id ?? g?.skuGroupId ?? g) : [];
+      result.push({
+        id, name: String(details.name ?? row.name ?? id), status: String(details.status ?? row.status ?? ''),
+        budgetConfig: details.budgetConfig ?? row.budgetConfig, period: details.period ?? row.period,
+        skuGroupIds: groupIds.map(String).filter(Boolean), raw: { ...row, ...details },
+      });
+    }
+    return result;
+  }
+
+  /** Слова одной кампании (только QUERY), постранично по 10. */
+  async loadKeywords(info: CampaignInfo): Promise<AdBotKeyword[]> {
+    const keywords: AdBotKeyword[] = [];
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const body = await this.get(`${CABINET}/advertising/management/ad-campaign/${info.id}/advertisement`, { page, size: ADS_PAGE });
+      const groups: any[] = Array.isArray(body?.payload?.skuGroupAdvertisements) ? body.payload.skuGroupAdvertisements : [];
+      for (const group of groups) {
+        for (const ad of Array.isArray(group.advertisements) ? group.advertisements : []) {
+          if (String(ad.promotionType ?? 'QUERY') !== 'QUERY' || !ad.query || !Number.isFinite(Number(ad.cpm))) continue;
+          keywords.push({
+            campaignId: info.id, campaignName: info.name, adId: String(ad.id), skuGroupId: String(ad.skuGroupId ?? group.skuGroupId),
+            query: String(ad.query), cpm: Number(ad.cpm), stopWords: Array.isArray(ad.stopWords) ? ad.stopWords.map(String) : [],
+          });
+        }
+      }
+      if (groups.length < ADS_PAGE) break;
+    }
+    return keywords;
   }
 
   /** По кампании — один PUT со всеми её изменениями; после — проверка, что ставки встали. */
-  private async apply(actions: AdBotAction[], campaigns: Map<string, CampaignInfo>, input: { stats14: Map<string, AdBotStats>; stats7: Map<string, AdBotStats> }, budgets?: Map<string, { weeklyAmount?: number; uniform?: boolean }>): Promise<AdBotOutcome[]> {
+  async apply(actions: AdBotAction[], campaigns: Map<string, CampaignInfo>, input: { stats14: Map<string, AdBotStats>; stats7: Map<string, AdBotStats> }, budgets?: Map<string, { weeklyAmount?: number; uniform?: boolean }>): Promise<AdBotOutcome[]> {
     const outcomes: AdBotOutcome[] = [];
     const byCampaign = new Map<string, AdBotAction[]>();
     for (const row of actions) byCampaign.set(row.campaignId, [...(byCampaign.get(row.campaignId) ?? []), row]);
@@ -468,7 +518,7 @@ export class AdBotService {
     return result;
   }
 
-  private async journal(rows: AdBotAction[], input: { stats14: Map<string, AdBotStats>; stats7: Map<string, AdBotStats> }, extra: { dryRun: boolean; status: string; request?: unknown; response?: unknown; error?: string; adId?: string }) {
+  async journal(rows: AdBotAction[], input: { stats14: Map<string, AdBotStats>; stats7: Map<string, AdBotStats> }, extra: { dryRun: boolean; status: string; request?: unknown; response?: unknown; error?: string; adId?: string }) {
     for (const row of rows) {
       await this.prisma.adBotChange.create({
         data: {

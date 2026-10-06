@@ -45,6 +45,8 @@ import { AdAgentService } from './modules/ads/ad-agent.service';
 import { AdBotService } from './modules/ads/ad-bot.service';
 import { MarketingController } from './modules/pricing/marketing.controller';
 import { PriceExperimentService } from './modules/pricing/price-experiment.service';
+import { AutoBidderService } from './modules/ads/auto-bidder.service';
+import { AdsController } from './modules/ads/ads.controller';
 
 @Module({
   imports: [
@@ -63,7 +65,7 @@ import { PriceExperimentService } from './modules/pricing/price-experiment.servi
   controllers: [
     HealthController, AuthController, IntegrationsController, CostsController, GoalsController,
     DashboardController, ProductsController, SyncController, SuppliesController, WarehouseController, ReviewsController,
-    FinancialStatementsController, PricingController, CompetitorsController, CompetitorWatchController, MarketingController,
+    FinancialStatementsController, PricingController, CompetitorsController, CompetitorWatchController, MarketingController, AdsController,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
@@ -71,7 +73,7 @@ import { PriceExperimentService } from './modules/pricing/price-experiment.servi
     CompetitorsService,
     PrismaService, CryptoService, TelegramClient, OpenclawClient, AuthService, AuthGuard, IntegrationsService, CabinetAuthService,
     CostsService, GoalsService, DashboardService, ProductsService, SyncService, SuppliesService,
-    WarehouseService, DigestService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService, AdAgentService, AdBotService, PriceExperimentService,
+    WarehouseService, DigestService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService, AdAgentService, AdBotService, PriceExperimentService, AutoBidderService,
   ],
 })
 export class AppModule {}
