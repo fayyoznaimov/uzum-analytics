@@ -27,7 +27,7 @@ export type PolicyInput = { campaignId: string; skuGroupId: string; query: strin
 export type AutoBidderRunResult = { apply: boolean; today: string; plan: AutoBidderPlan; outcomes: AdBotOutcome[]; notes: string[]; messages: string[] };
 
 /**
- * Автобиддер «Буст в ТОП»: для слов с включённой авто-ставкой (AdKeywordPolicy, ключ «кампания|цвет|запрос») раз в час
+ * Автобиддер «Буст в ТОП»: для слов с включённой авто-ставкой (AdAutoBidPolicy, ключ «кампания|цвет|запрос») раз в час
  * (AUTO_BIDDER_CRON) читает ставки и статистику из кабинета, при настроенном AD_BID_LADDER_URL — «лестницу» цен охвата,
  * решает по правилам common/auto-bidder.ts и присылает отчёт в Telegram, только если что-то поменялось. По умолчанию —
  * предложения; AUTO_BIDDER_APPLY=true — меняет ставки тем же PUT кампании, что и рекламный бот. Журнал — AdBotChange
@@ -54,7 +54,7 @@ export class AutoBidderService {
   @Cron(process.env.AUTO_BIDDER_CRON || '20 * * * *', { name: 'auto-bidder', timeZone: 'Asia/Tashkent' })
   async scheduled() {
     if (process.env.AUTO_BIDDER_ENABLED === 'false') return;
-    const count = await this.prisma.adKeywordPolicy.count({ where: { enabled: true, pausedAt: null } }).catch(() => 0);
+    const count = await this.prisma.adAutoBidPolicy.count({ where: { enabled: true, pausedAt: null } }).catch(() => 0);
     if (!count) return;
     this.logger.log(`Авто-ставка: запуск по расписанию, слов ${count}`);
     try {
@@ -97,7 +97,7 @@ export class AutoBidderService {
     const today = tashkentDay(new Date());
     const sellerId = await this.cached('sellerId', () => this.adBot.sellerId(today));
     const rows = await this.cached(`campaigns:${today}`, () => this.adBot.listCampaigns(sellerId, today));
-    const policies: any[] = await this.prisma.adKeywordPolicy.findMany({ where: { enabled: true }, select: { campaignId: true, pausedAt: true } }).catch(() => [] as any[]);
+    const policies: any[] = await this.prisma.adAutoBidPolicy.findMany({ where: { enabled: true }, select: { campaignId: true, pausedAt: true } }).catch(() => [] as any[]);
     const count = (id: string, paused: boolean) => policies.filter((row) => row.campaignId === id && (!paused || row.pausedAt)).length;
     const order = (status: string) => (status === 'ACTIVE' ? 0 : 1);
     return {
@@ -137,7 +137,7 @@ export class AutoBidderService {
     if (!campaign) throw new NotFoundException(`кампания ${campaignId} не найдена в кабинете`);
     const keywords = await this.cached(`keywords:${campaignId}`, () => this.adBot.loadKeywords(campaign));
     const stats7 = await this.cached(`stats7:${campaignId}:${today}`, () => this.adBot.keywordStatsByKey(sellerId, keywords, shiftDay(yesterday, -6), yesterday));
-    const policies: any[] = await this.prisma.adKeywordPolicy.findMany({ where: { campaignId: String(campaignId) } });
+    const policies: any[] = await this.prisma.adAutoBidPolicy.findMany({ where: { campaignId: String(campaignId) } });
     const policyByKey = new Map<string, any>(policies.map((row) => [row.key, row]));
     const changes: any[] = await this.prisma.adBotChange.findMany({
       where: { campaignId: String(campaignId), status: 'SENT', dryRun: false, createdAt: { gte: new Date(Date.now() - 7 * 86_400_000) } },
@@ -152,7 +152,7 @@ export class AutoBidderService {
       const stats = stats7.get(this.statKey(keyword)) ?? EMPTY;
       const ladder = this.ladderConfigured() ? await this.ladder(keyword).catch(() => null) : null;
       const policy = policyByKey.get(key) ?? null;
-      if (policy && policy.adId !== keyword.adId) await this.prisma.adKeywordPolicy.update({ where: { id: policy.id }, data: { adId: keyword.adId } }).catch(() => undefined);
+      if (policy && policy.adId !== keyword.adId) await this.prisma.adAutoBidPolicy.update({ where: { id: policy.id }, data: { adId: keyword.adId } }).catch(() => undefined);
       const target = ladder && policy ? bidForReach(ladder, policy.targetReach) : null;
       const last = lastChange.get(key);
       rows.push({
@@ -204,15 +204,15 @@ export class AutoBidderService {
       targetReach: input.targetReach, maxBid: Math.round(input.maxBid), maxDrr: input.maxDrr,
       enabled: input.enabled ?? true, pausedAt: null, pausedNote: null,
     };
-    const row = await this.prisma.adKeywordPolicy.upsert({ where: { key }, update: data, create: { key, ...data } });
+    const row = await this.prisma.adAutoBidPolicy.upsert({ where: { key }, update: data, create: { key, ...data } });
     this.cache.delete(`keywords:${input.campaignId}`);
     return this.policyView(row);
   }
 
   async disablePolicy(id: string) {
-    const row = await this.prisma.adKeywordPolicy.findUnique({ where: { id: String(id) } });
+    const row = await this.prisma.adAutoBidPolicy.findUnique({ where: { id: String(id) } });
     if (!row) throw new NotFoundException('авто-ставка для этого слова не настроена');
-    const updated = await this.prisma.adKeywordPolicy.update({ where: { id: String(id) }, data: { enabled: false, pausedAt: null, pausedNote: null } });
+    const updated = await this.prisma.adAutoBidPolicy.update({ where: { id: String(id) }, data: { enabled: false, pausedAt: null, pausedNote: null } });
     this.cache.delete(`keywords:${row.campaignId}`);
     return this.policyView(updated);
   }
@@ -234,7 +234,7 @@ export class AutoBidderService {
       if (options.apply && !apply) notes.push('AUTO_BIDDER_APPLY не включён — ставки не меняются, только предложения');
       if (!this.ladderConfigured()) notes.push('AD_BID_LADDER_URL не задан — лестницы охвата нет, автобид держит ставки в пределах потолка и ДРР');
 
-      const policyRows: any[] = await this.prisma.adKeywordPolicy.findMany({ where: { enabled: true } });
+      const policyRows: any[] = await this.prisma.adAutoBidPolicy.findMany({ where: { enabled: true } });
       const policies: AutoBidPolicy[] = policyRows.map((row) => ({
         id: row.id, key: row.key, adId: row.adId ?? null, campaignId: row.campaignId, skuGroupId: row.skuGroupId, query: row.query, enabled: row.enabled,
         targetReach: row.targetReach, maxBid: row.maxBid, maxDrr: row.maxDrr ?? null, pausedAt: row.pausedAt ?? null,
@@ -265,7 +265,7 @@ export class AutoBidderService {
       for (const policy of policies) {
         const keyword = keywords.get(policy.key);
         if (!keyword) continue;
-        if (policy.adId !== keyword.adId) await this.prisma.adKeywordPolicy.update({ where: { id: policy.id }, data: { adId: keyword.adId } }).catch(() => undefined);
+        if (policy.adId !== keyword.adId) await this.prisma.adAutoBidPolicy.update({ where: { id: policy.id }, data: { adId: keyword.adId } }).catch(() => undefined);
         ladders.set(policy.key, await this.ladder(keyword).catch((error: any) => { notes.push(`«${keyword.query}»: лестница не получена — ${String(error?.message || error).slice(0, 120)}`); return null; }));
       }
 
@@ -291,7 +291,7 @@ export class AutoBidderService {
       for (const row of plan.rows) {
         const ok = okByKey.get(row.policy.key) === true;
         const paused = row.decision.kind === 'PAUSE' && apply && ok;
-        await this.prisma.adKeywordPolicy.update({
+        await this.prisma.adAutoBidPolicy.update({
           where: { id: row.policy.id },
           data: {
             lastRunAt: now, lastBid: apply && ok ? row.decision.newCpm : row.keyword.cpm,

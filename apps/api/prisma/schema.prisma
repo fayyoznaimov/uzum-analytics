@@ -636,7 +636,7 @@ model SupplySlotWatch {
 }
 
 /// Автобиддер «Буст в ТОП»: политика авто-ставки по одному ключевому слову (объявлению) кампании.
-model AdKeywordPolicy {
+model AdAutoBidPolicy {
   id          String    @id @default(cuid())
   /// Ключ слова `campaignId|skuGroupId|нормализованный запрос`: Uzum при каждой правке ставки пересоздаёт
   /// объявление с новым id, поэтому политика привязана к паре «цвет + запрос», а не к id.

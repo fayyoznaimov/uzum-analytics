@@ -409,8 +409,8 @@ export class AdBotService {
       merge(stats7);
     }
 
-    // Слова на авто-ставке (AdKeywordPolicy, ключ «кампания|цвет|запрос»): их ставки меняет автобиддер, бот добавляет им только минус-слова.
-    const managedRows = await this.prisma.adKeywordPolicy.findMany({ where: { enabled: true }, select: { key: true } }).catch(() => [] as Array<{ key: string }>);
+    // Слова на авто-ставке (AdAutoBidPolicy, ключ «кампания|цвет|запрос»): их ставки меняет автобиддер, бот добавляет им только минус-слова.
+    const managedRows = await this.prisma.adAutoBidPolicy.findMany({ where: { enabled: true }, select: { key: true } }).catch(() => [] as Array<{ key: string }>);
     const managedKeys = new Set<string>((managedRows as Array<{ key: string }>).map((row) => row.key));
     const managed = new Set<string>(keywords.filter((keyword) => managedKeys.has(`${keyword.campaignId}|${keyOf(keyword.skuGroupId, keyword.query)}`)).map((keyword) => keyword.adId));
 
