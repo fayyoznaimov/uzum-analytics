@@ -5,6 +5,8 @@
  *   npx tsx apps/api/scripts/uzum-openapi.ts                 пути с «fbs» (накладные FBS, тайм-слоты, точки сдачи)
  *   npx tsx apps/api/scripts/uzum-openapi.ts --filter=shop   любой другой фильтр по подстроке пути
  *   npx tsx apps/api/scripts/uzum-openapi.ts --all           все пути (только метод и summary)
+ *   npx tsx apps/api/scripts/uzum-openapi.ts --probe         прощупать пути FBS-накладных: GET и OPTIONS по реальной накладной,
+ *                                                            по кодам ответа (404 нет / 405 есть, но другой метод) и заголовку Allow
  *
  * Токен берётся из БД (IntegrationCredential UZUM) и нигде не печатается. Только чтение.
  */
@@ -60,6 +62,35 @@ function resolve(doc: any, schema: any, depth = 0): any {
   return schema;
 }
 
+/** Прощуп путей без побочных эффектов: только GET и OPTIONS. */
+async function probe(token: string, prisma: PrismaService) {
+  const fbs = await prisma.supply.findFirst({ where: { type: 'FBS' }, orderBy: { createdAt: 'desc' } });
+  const id = fbs?.externalId ?? '1';
+  console.log(`Прощуп по FBS-накладной №${id}${fbs ? ` (${fbs.status}, слот ${fbs.slotFrom ? 'назначен' : 'нет'})` : ' (в БД нет FBS-поставок, id условный)'}
+`);
+  const paths = [
+    '/v1/fbs/invoice', '/v1/fbs/invoice/dop', '/v1/fbs/invoice/dop/time-slot', '/v1/fbs/invoice/time-slot', '/v1/fbs/invoice/dop/time-slot/reserve',
+    `/v1/fbs/invoice/${id}`, `/v1/fbs/invoice/${id}/time-slot`, `/v1/fbs/invoice/${id}/dop`, `/v1/fbs/invoice/${id}/dop/time-slot`, `/v1/fbs/invoice/${id}/reserve`,
+    `/v1/fbs/invoice/${id}/book`, `/v1/fbs/invoice/${id}/change-time-slot`, `/v1/fbs/invoice/${id}/change-dop`, `/v1/fbs/invoice/${id}/confirm`, `/v1/fbs/invoice/${id}/cancel`,
+    `/v1/fbs/invoice/${id}/waybill`, `/v1/fbs/invoice/${id}/products`, `/v1/fbs/invoice/${id}/orders`, `/v1/fbs/invoice/${id}/status`,
+    '/v1/fbs/dop', '/v1/fbs/time-slot', '/v1/fbs/invoice/create', '/v1/fbs/order', '/v1/fbs/orders',
+  ];
+  for (const path of paths) {
+    const out: string[] = [];
+    for (const method of ['GET', 'OPTIONS']) {
+      try {
+        const response = await fetch(UZUM_OPENAPI_BASE + path, { method, headers: { Authorization: token, Accept: 'application/json' } });
+        const allow = response.headers.get('allow') || response.headers.get('access-control-allow-methods');
+        const text = (await response.text()).replace(/\s+/g, ' ').slice(0, 160);
+        out.push(`${method} ${response.status}${allow ? ` Allow=${allow}` : ''}${response.status !== 404 && text ? ` ${text}` : ''}`);
+      } catch (error: any) { out.push(`${method} ошибка ${error?.message || error}`); }
+    }
+    console.log(`${path}
+   ${out.join('
+   ')}`);
+  }
+}
+
 async function main() {
   const prisma = new PrismaService();
   const crypto = new CryptoService();
@@ -67,6 +98,7 @@ async function main() {
     const row = await prisma.integrationCredential.findUnique({ where: { type: IntegrationType.UZUM } });
     const token = row ? crypto.decrypt(row) : null;
     if (!token) throw new Error('UZUM token не настроен');
+    if (flag('probe')) { await probe(token, prisma); return; }
     const found = await fetchDoc(token);
     if (!found) { console.log('Документация не получена ни по одному адресу.'); return; }
     console.log(`\n=== OpenAPI ${found.doc.info?.title ?? ''} ${found.doc.info?.version ?? ''} из ${found.url}; путей: ${Object.keys(found.doc.paths).length}\n`);

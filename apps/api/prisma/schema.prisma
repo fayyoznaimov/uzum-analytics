@@ -627,6 +627,15 @@ model SupplySlotWatch {
   supplyId       String   @unique
   enabled        Boolean  @default(true)
   dropOffPointId String?
+  /// Желаемое окно даты поставки (дни по Asia/Tashkent, включительно); пусто — любая дата.
+  desiredFrom    DateTime?
+  desiredTo      DateTime?
+  /// Бронировать первый подходящий слот автоматически (нужен SUPPLY_AUTO_BOOK_APPLY=true), иначе только уведомить.
+  autoBook       Boolean  @default(false)
+  bookedAt       DateTime?
+  bookedSlotFrom DateTime?
+  bookedSlotTo   DateTime?
+  bookError      String?
   lastCheckedAt  DateTime?
   lastFoundAt    DateTime?
   lastError      String?

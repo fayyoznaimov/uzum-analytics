@@ -214,3 +214,7 @@ button{font-family:inherit}
 .ab-warn{display:flex;gap:8px;align-items:flex-start;background:#fff0f1;color:#b63846;border:1px solid #efc3c8;border-radius:10px;padding:8px 10px;font-size:12.5px;line-height:1.4}.ab-warn svg{flex:0 0 auto;margin-top:1px}.ab-note{background:#fff7e8;border:1px solid #f3ddb0;color:#8a5a00;border-radius:10px;padding:8px 10px;font-size:12.5px;line-height:1.4}
 .ab-dialog-actions{display:flex;gap:8px;align-items:center;margin-top:4px}.ab-spacer{flex:1}.ab-danger{color:var(--red)}
 @media(max-width:720px){.ab-hero{flex-direction:column;align-items:flex-start}.ab-hero-side{text-align:left}}
+
+/* Автобронь тайм-слота FBS (SuppliesClient) */
+.slot-book{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;padding:10px 0 2px}.slot-book label{display:grid;gap:4px;font-size:11.5px;color:var(--muted);font-weight:600}.slot-book input[type=date]{font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink)}.slot-book input[type=date]:disabled{background:#f4f5f8;color:var(--muted)}.slot-book-auto{display:flex!important;align-items:center;gap:7px;padding-bottom:8px;color:var(--ink)!important}.slot-book-auto input{width:16px;height:16px;accent-color:var(--violet);margin:0}
+.slot-booked{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--green);font-weight:700}.slot-waiting{font-size:11.5px;color:var(--muted)}

@@ -14,6 +14,10 @@ on:
         description: 'Все пути, только метод и название'
         type: boolean
         default: false
+      probe:
+        description: 'Прощупать пути FBS-накладных (GET/OPTIONS по реальной накладной)'
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy
@@ -28,11 +32,13 @@ jobs:
         env:
           FILTER: ${{ inputs.filter }}
           ALL: ${{ inputs.all }}
+          PROBE: ${{ inputs.probe }}
         run: |
           set -euo pipefail
           args=()
           [ -n "$FILTER" ] && args+=("--filter=$FILTER")
           [ "$ALL" = "true" ] && args+=(--all)
+          [ "$PROBE" = "true" ] && args+=(--probe)
           cd ~/uzum
           set -a && . ./.env && set +a
           npx tsx apps/api/scripts/uzum-openapi.ts "${args[@]}"

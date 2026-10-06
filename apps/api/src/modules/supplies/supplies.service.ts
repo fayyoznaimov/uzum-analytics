@@ -5,6 +5,7 @@ import { PrismaService } from '../../common/prisma.service';
 import { uzumRequest } from '../../common/uzum-http';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { buildFboSupplySummary } from '../../common/fbo-supply-summary';
+import { DesiredWindow, FreeSlot, formatSlot, formatWindow, pickSlot } from '../../common/slot-booking';
 
 type QueryValue = string | number | boolean | Array<string | number> | undefined | null;
 
@@ -501,36 +502,68 @@ export class SuppliesService {
     if (!orderIds.length) throw new BadRequestException('В созданной FBS-поставке не удалось определить заказы для поиска слота');
     const point = dropOffPointId || supply.slotWatch?.dropOffPointId || supply.dropOffPointId;
     const result = await this.requestTimeSlots(cfg.token, orderIds, point);
+    const window: DesiredWindow = { from: supply.slotWatch?.desiredFrom ?? null, to: supply.slotWatch?.desiredTo ?? null };
+    const matched = pickSlot(result.slots as FreeSlot[], window);
     await this.prisma.supplySlotWatch.upsert({
       where: { supplyId: supply.id },
-      update: { dropOffPointId: point || null, lastCheckedAt: new Date(), lastFoundAt: result.slots.length ? new Date() : undefined, lastError: null },
-      create: { supplyId: supply.id, dropOffPointId: point || null, lastCheckedAt: new Date(), lastFoundAt: result.slots.length ? new Date() : null, enabled: false },
+      update: { dropOffPointId: point || null, lastCheckedAt: new Date(), lastFoundAt: matched ? new Date() : undefined, lastError: null },
+      create: { supplyId: supply.id, dropOffPointId: point || null, lastCheckedAt: new Date(), lastFoundAt: matched ? new Date() : null, enabled: false },
     });
-    if (result.slots.length) {
-      const first = result.slots[0];
-      const slotKey = first.id || first.from?.toISOString() || 'available';
+    // Уведомляем только о слоте, который подходит под желаемую дату; автобронь шлёт своё сообщение сама.
+    if (matched && !(supply.slotWatch?.autoBook && this.autoBookEnabled())) {
+      const slotKey = matched.id || matched.from?.toISOString() || 'available';
       const dedupeKey = `slot-found:${supply.id}:${slotKey}`;
       if (!await this.prisma.notificationLog.findUnique({ where: { dedupeKey } })) {
         const sent = await this.integrations.notifyTelegram(
-          `🟢 Найден тайм-слот для FBS-поставки №${supply.externalId}
-${first.from ? first.from.toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent' }) : 'Время доступно'}${first.to ? ` — ${first.to.toLocaleTimeString('ru-RU', { timeZone: 'Asia/Tashkent' })}` : ''}`,
+          `🟢 Найден тайм-слот для FBS-поставки №${supply.externalId}\n${formatSlot(matched)} (желаемая дата: ${formatWindow(window)})${supply.slotWatch?.autoBook ? '\nАвтобронь выключена на сервере (SUPPLY_AUTO_BOOK_APPLY) — забронируйте в кабинете.' : ''}`,
           'notifySlotFound',
         ).catch(() => false);
         if (sent) await this.prisma.notificationLog.create({ data: { type: 'SLOT_FOUND', dedupeKey, payload: { supplyId: supply.id, slotKey } } });
       }
     }
-    return { supply: { id: supply.id, externalId: supply.externalId }, orderIds, dropOffPointId: point || null, ...result };
+    return { supply: { id: supply.id, externalId: supply.externalId }, orderIds, dropOffPointId: point || null, window, matched, ...result };
   }
 
-  async setWatch(id: string, enabled: boolean, dropOffPointId?: string) {
+  autoBookEnabled() { return process.env.SUPPLY_AUTO_BOOK_APPLY === 'true'; }
+
+  /**
+   * Бронь тайм-слота в кабинете через OpenAPI. Запрос задаётся в .env шаблоном SUPPLY_BOOK_SLOT_REQUEST:
+   * `METHOD /путь` с подстановками {invoiceId} {slotId} {dropOffPointId}; тело — SUPPLY_BOOK_SLOT_BODY (JSON с теми же
+   * подстановками плюс "{orderIds}" — массив, {from} {to} — ISO). Пока не настроен — бронь невозможна, только уведомления.
+   */
+  private async reserveSlot(token: string, supply: { externalId: string }, orderIds: string[], slot: FreeSlot, dropOffPointId: string | null) {
+    const template = process.env.SUPPLY_BOOK_SLOT_REQUEST;
+    if (!template) throw new Error('SUPPLY_BOOK_SLOT_REQUEST не задан — эндпоинт брони слота ещё не настроен');
+    const sub = (value: string) => value
+      .replace(/\{invoiceId\}/g, encodeURIComponent(supply.externalId))
+      .replace(/\{slotId\}/g, encodeURIComponent(slot.id || ''))
+      .replace(/\{dropOffPointId\}/g, encodeURIComponent(dropOffPointId || ''));
+    const [method, path] = template.trim().split(/\s+/, 2);
+    let body: unknown;
+    if (process.env.SUPPLY_BOOK_SLOT_BODY) {
+      const json = sub(process.env.SUPPLY_BOOK_SLOT_BODY)
+        .replace(/"\{orderIds\}"/g, JSON.stringify(orderIds))
+        .replace(/\{from\}/g, slot.from?.toISOString() ?? '')
+        .replace(/\{to\}/g, slot.to?.toISOString() ?? '');
+      body = JSON.parse(json);
+    }
+    return uzumRequest(sub(path || ''), { method: (method || 'POST').toUpperCase() as 'GET' | 'POST' | 'PUT', token, body, timeoutMs: 25_000 });
+  }
+
+  async setWatch(id: string, input: { enabled: boolean; dropOffPointId?: string; desiredFrom?: string | null; desiredTo?: string | null; autoBook?: boolean }) {
     const supply = await this.prisma.supply.findUnique({ where: { id } });
     if (!supply) throw new BadRequestException('Поставка не найдена');
     if (supply.type !== SupplyType.FBS) throw new BadRequestException('Автопоиск слота через официальный API доступен только для FBS');
-    return this.prisma.supplySlotWatch.upsert({
-      where: { supplyId: id },
-      update: { enabled, dropOffPointId: dropOffPointId || null, lastError: null },
-      create: { supplyId: id, enabled, dropOffPointId: dropOffPointId || null },
-    });
+    const day = (value?: string | null, end = false) => {
+      if (!value) return null;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new BadRequestException('Дата задаётся как ГГГГ-ММ-ДД');
+      return new Date(`${value}T${end ? '23:59:59' : '00:00:00'}+05:00`);
+    };
+    const desiredFrom = day(input.desiredFrom);
+    const desiredTo = day(input.desiredTo, true);
+    if (desiredFrom && desiredTo && desiredFrom > desiredTo) throw new BadRequestException('Дата «с» позже даты «по»');
+    const data = { enabled: input.enabled, dropOffPointId: input.dropOffPointId || null, desiredFrom, desiredTo, autoBook: Boolean(input.autoBook), lastError: null, bookError: null };
+    return this.prisma.supplySlotWatch.upsert({ where: { supplyId: id }, update: data, create: { supplyId: id, ...data } });
   }
 
   @Cron(process.env.SLOT_WATCH_CRON || '*/5 * * * *')
@@ -543,10 +576,36 @@ ${first.from ? first.from.toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent' })
     for (const watch of watches) {
       try {
         const result = await this.findSlots(watch.supplyId, watch.dropOffPointId || undefined);
-        await this.prisma.supplySlotWatch.update({
-          where: { id: watch.id },
-          data: { lastCheckedAt: new Date(), lastError: null, ...(result.slots.length ? { enabled: false, lastFoundAt: new Date() } : {}) },
-        });
+        const matched = result.matched;
+        if (!matched) {
+          await this.prisma.supplySlotWatch.update({ where: { id: watch.id }, data: { lastCheckedAt: new Date(), lastError: null } });
+          continue;
+        }
+        if (!(watch.autoBook && this.autoBookEnabled())) {
+          // Только уведомление (уже отправлено в findSlots) — поиск останавливаем, бронирует владелец.
+          await this.prisma.supplySlotWatch.update({ where: { id: watch.id }, data: { lastCheckedAt: new Date(), lastError: null, enabled: false, lastFoundAt: new Date() } });
+          continue;
+        }
+        const cfg = await this.integrations.getPlain(IntegrationType.UZUM);
+        if (!cfg?.token) throw new Error('Uzum API token не настроен');
+        try {
+          const response = await this.reserveSlot(cfg.token, watch.supply, result.orderIds, matched, result.dropOffPointId);
+          await this.prisma.supplySlotWatch.update({
+            where: { id: watch.id },
+            data: { enabled: false, lastCheckedAt: new Date(), lastFoundAt: new Date(), lastError: null, bookError: null, bookedAt: new Date(), bookedSlotFrom: matched.from, bookedSlotTo: matched.to },
+          });
+          await this.prisma.supply.update({ where: { id: watch.supplyId }, data: { slotFrom: matched.from, slotTo: matched.to, dropOffPointId: result.dropOffPointId ?? undefined } }).catch(() => undefined);
+          await this.prisma.notificationLog.create({ data: { type: 'SLOT_BOOKED', dedupeKey: `slot-booked:${watch.supplyId}:${matched.id || matched.from?.toISOString()}`, payload: { supplyId: watch.supplyId, slot: formatSlot(matched), response: response ?? null } as Prisma.InputJsonValue } }).catch(() => undefined);
+          await this.integrations.notifyTelegram(`✅ Забронирован тайм-слот для FBS-поставки №${watch.supply.externalId}\n${formatSlot(matched)} (желаемая дата: ${formatWindow(result.window)})`, 'notifySlotFound').catch(() => false);
+        } catch (error: any) {
+          const message = String(error?.message || error).slice(0, 300);
+          await this.prisma.supplySlotWatch.update({ where: { id: watch.id }, data: { lastCheckedAt: new Date(), bookError: message } });
+          const dedupeKey = `slot-book-failed:${watch.supplyId}:${message.slice(0, 60)}`;
+          if (!await this.prisma.notificationLog.findUnique({ where: { dedupeKey } })) {
+            const sent = await this.integrations.notifyTelegram(`⚠️ Слот найден (${formatSlot(matched)}), но бронь поставки №${watch.supply.externalId} не прошла: ${message}\nЗабронируйте в кабинете или проверьте настройку брони.`, 'notifySlotFound').catch(() => false);
+            if (sent) await this.prisma.notificationLog.create({ data: { type: 'SLOT_BOOK_FAILED', dedupeKey, payload: { supplyId: watch.supplyId } } });
+          }
+        }
       } catch (error: any) {
         await this.prisma.supplySlotWatch.update({ where: { id: watch.id }, data: { lastCheckedAt: new Date(), lastError: error.message } });
       }

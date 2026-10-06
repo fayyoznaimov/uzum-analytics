@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
-import { IsBoolean, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsString, Matches, Min } from 'class-validator';
 import { AuthGuard } from '../auth/auth.guard';
 import { SuppliesService } from './supplies.service';
 
@@ -7,6 +7,9 @@ class FindSlotsDto { @IsOptional() @IsString() dropOffPointId?: string; }
 class WatchDto {
   @IsBoolean() enabled!: boolean;
   @IsOptional() @IsString() dropOffPointId?: string;
+  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/) desiredFrom?: string | null;
+  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/) desiredTo?: string | null;
+  @IsOptional() @IsBoolean() autoBook?: boolean;
 }
 class LogisticsCostDto { @IsNumber() @Min(0) amount!: number; }
 
@@ -21,5 +24,6 @@ export class SuppliesController {
   @Post(':id/summary') summary(@Param('id') id: string) { return this.service.formatFboSupplySummary(id); }
   @Get(':id/history') history(@Param('id') id: string) { return this.service.history(id); }
   @Post(':id/find-slots') findSlots(@Param('id') id: string, @Body() dto: FindSlotsDto) { return this.service.findSlots(id, dto.dropOffPointId); }
-  @Post(':id/watch') watch(@Param('id') id: string, @Body() dto: WatchDto) { return this.service.setWatch(id, dto.enabled, dto.dropOffPointId); }
+  @Post(':id/watch') watch(@Param('id') id: string, @Body() dto: WatchDto) { return this.service.setWatch(id, dto); }
+  @Get('auto-book') autoBook() { return { apply: this.service.autoBookEnabled(), configured: Boolean(process.env.SUPPLY_BOOK_SLOT_REQUEST) }; }
 }
