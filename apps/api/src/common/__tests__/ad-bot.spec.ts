@@ -216,6 +216,13 @@ describe('ручной посев фраз', () => {
     expect(clampBid(40_000, 'up', configFor('332097', capped))).toBe(18_500);
     expect(clampBid(40_000, 'up', configFor('286528', capped))).toBe(40_000);
     expect(decideKeyword(kw({ cpm: 18_000 }), input({}, { sold: 3, revenue: 600_000, spend: 20_000, position: 9 }), capped)?.newCpm).toBe(18_500);
+    // копирование объявлений цвета-источника в пустой цвет (возобновление группы / новый цвет)
+    const cloned = seedKeywordActions(keywords, [{ campaignId: '332097', cloneGroups: { '999': '4160950' } }]);
+    expect(cloned.map((row) => [row.skuGroupId, row.kind, row.query, row.newCpm])).toEqual([
+      ['999', 'ADD', 'sauna sochiq', 15_000], ['999', 'ADD', 'полотенце для сауны', 20_000], ['999', 'ADD', 'katta sochiq', 15_000],
+    ]);
+    expect(cloned[0].stopWords).toEqual(keywords[0].stopWords);
+    expect(cloned[0].reason).toContain('скопировано из цвета 4160950');
     // бюджет кампании через buildCampaignUpdate
     const body = buildCampaignUpdate({ name: 'x', budgetConfig: { weeklyAmount: 150_000, uniformDistribution: false }, period: { dateFrom: '2026-09-26', dateTo: null, isEndless: true } }, [], { weeklyAmount: 50_000, uniform: true });
     expect(body.budgetConfig).toEqual({ reset: false, uniformDistribution: true, weeklyAmount: 50_000 });

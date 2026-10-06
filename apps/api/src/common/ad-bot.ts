@@ -387,6 +387,9 @@ export type SeedSpec = {
   suspendGroups?: string[];
   budgetWeekly?: number;
   uniform?: boolean;
+  /** Скопировать объявления цвета-источника в цвет-цель (цель → источник): так возобновляют группу,
+   * чьи объявления остановлены (кабинет их не отдаёт), или добавляют новый цвет в кампанию. */
+  cloneGroups?: Record<string, string>;
 };
 
 function mergeStopWords(current: string[], rule: SeedStopWords, limit: number): string[] | null {
@@ -441,6 +444,14 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
       }
     }
     if (spec.campaignId === '*') continue;
+    for (const [target, source] of Object.entries(spec.cloneGroups ?? {})) {
+      const from = own.filter((row) => row.skuGroupId === source);
+      const have = new Set(own.filter((row) => row.skuGroupId === target).map((row) => normalizeQuery(row.query)));
+      for (const row of from) {
+        if (have.has(normalizeQuery(row.query))) continue;
+        actions.push({ kind: 'ADD', campaignId: spec.campaignId, campaignName: row.campaignName, skuGroupId: target, groupTitle: target, adId: null, query: row.query, oldCpm: null, newCpm: clampBid(row.cpm, 'down', cfg), stopWords: row.stopWords, reason: `скопировано из цвета ${source}` });
+      }
+    }
     for (const skuGroupId of [...new Set(own.map((row) => row.skuGroupId))]) {
       if (suspended.has(skuGroupId)) continue;
       const inGroup = own.filter((row) => row.skuGroupId === skuGroupId);
