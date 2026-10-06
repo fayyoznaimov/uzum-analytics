@@ -85,8 +85,7 @@ async function probe(token: string, prisma: PrismaService) {
         out.push(`${method} ${response.status}${allow ? ` Allow=${allow}` : ''}${response.status !== 404 && text ? ` ${text}` : ''}`);
       } catch (error: any) { out.push(`${method} ошибка ${error?.message || error}`); }
     }
-    console.log([path, ...out.map((line) => `   ${line}`)].join('
-'));
+    for (const line of [path, ...out.map((item) => `   ${item}`)]) console.log(line);
   }
 }
 
