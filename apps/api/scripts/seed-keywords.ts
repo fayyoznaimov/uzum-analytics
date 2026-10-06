@@ -10,7 +10,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { IntegrationType } from '@prisma/client';
-import { AD_BOT_LABELS, SeedSpec } from '../src/common/ad-bot';
+import { AD_BOT_LABELS, isRelevantQuery, SeedSpec } from '../src/common/ad-bot';
 import { CryptoService } from '../src/common/crypto.service';
 import { PrismaService } from '../src/common/prisma.service';
 import { TelegramClient } from '../src/common/telegram.client';
@@ -56,7 +56,9 @@ async function main() {
   try {
     const { actions, outcomes, keywords } = await service.seed(specs, apply);
     console.log(`${apply ? 'ПРИМЕНЕНО' : 'ПЛАН'}: слов в активных кампаниях ${keywords.length}, действий ${actions.length}\n`);
-    for (const spec of specs) {
+    const campaignIds = specs.some((spec) => spec.campaignId === '*') ? [...new Set(keywords.map((row) => row.campaignId))] : specs.map((spec) => spec.campaignId);
+    for (const campaignId of campaignIds) {
+      const spec = specs.find((row) => row.campaignId === campaignId) ?? { campaignId };
       const own = actions.filter((row) => row.campaignId === spec.campaignId);
       const all = keywords.filter((row) => row.campaignId === spec.campaignId);
       const name = own[0]?.campaignName ?? all[0]?.campaignName ?? '(кампания не активна или не найдена)';
@@ -71,6 +73,11 @@ async function main() {
         const withSoch = latin.filter((row) => row.stopWords.some((word) => word.trim().toLowerCase() === 'soch')).length;
         console.log(`  узбекских фраз ${latin.length}; минус-слов на фразу: ${Math.min(...all.map((row) => row.stopWords.length))}–${Math.max(...all.map((row) => row.stopWords.length))}; списков > 58: ${over}; дублей «цвет+фраза»: ${dupes}; узбекских с «soch»: ${withSoch}`);
         for (const row of latin) console.log(`    ${row.skuGroupId}  «${row.query}»  ${fmt(row.cpm)}  минус-слов ${row.stopWords.length}${row.stopWords.some((word) => word.trim().toLowerCase() === 'soch') ? '  [soch]' : ''}`);
+      }
+      if (flag('all')) {
+        for (const row of [...all].sort((a, b) => a.skuGroupId.localeCompare(b.skuGroupId) || a.query.localeCompare(b.query))) {
+          console.log(`    ${row.skuGroupId}  «${row.query}»  ${fmt(row.cpm)}${isRelevantQuery(row.query) ? '' : '  ⚠ не про товар?'}`);
+        }
       }
       const byQuery = new Map<string, typeof own>();
       for (const row of own) byQuery.set(row.query, [...(byQuery.get(row.query) ?? []), row]);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AD_BOT_DEFAULTS, AdBotInput, AdBotKeyword, AdBotStats, buildCampaignUpdate, clampBid, decideKeyword, formatAdBotReport, groupDrrTarget, newKeywords, normalizeQuery, planAdBot, seedKeywordActions, stopWordCandidates } from '../ad-bot';
+import { AD_BOT_DEFAULTS, AdBotInput, AdBotKeyword, AdBotStats, buildCampaignUpdate, clampBid, decideKeyword, formatAdBotReport, groupDrrTarget, isRelevantQuery, newKeywords, normalizeQuery, planAdBot, seedKeywordActions, stopWordCandidates } from '../ad-bot';
 
 const now = new Date('2026-09-28T11:00:00+05:00');
 const kw = (patch: Partial<AdBotKeyword> = {}): AdBotKeyword => ({
@@ -102,22 +102,38 @@ describe('новые слова и план', () => {
     { skuGroupId: '4160950', searchQuery: 'полотенце вафельное', impressions: 50, clicks: 5, sold: 1, revenue: 100_000 },
     { skuGroupId: '999', searchQuery: 'чужой цвет', impressions: 50, clicks: 5, sold: 5, revenue: 100_000 },
   ];
-  it('берём реальные запросы с продажами, которых нет у цвета и без стоп-слов; ставка — медиана цвета', () => {
+  it('берём реальные запросы с продажами, которых нет у цвета и без стоп-слов; ставка — минимальная, не медиана', () => {
     const rows = newKeywords(input({ feed }));
     expect(rows.map((row) => row.query)).toEqual(['полотенце для бани большое']);
-    expect(rows[0]).toMatchObject({ kind: 'ADD', newCpm: 20_000, skuGroupId: '4160950', stopWords: ['вафельное'] });
+    expect(rows[0]).toMatchObject({ kind: 'ADD', newCpm: 9_500, skuGroupId: '4160950', stopWords: ['вафельное'] });
   });
-  it('узбекский запрос (латиница) берём и без продажи, если по нему был клик — по ставке 15 000; русский без продажи — нет', () => {
+  it('узбекский запрос (латиница) берём без продажи только при ≥ 3 кликах и корзине — по 9 500; русский без продажи — нет', () => {
     const uz = [
       ...feed,
-      { skuGroupId: '4160950', searchQuery: 'sochiqlar', impressions: 900, clicks: 4, sold: 0, revenue: 0 },
-      { skuGroupId: '4160950', searchQuery: 'sochiq to\'plami', impressions: 300, clicks: 0, sold: 0, revenue: 0 },
+      { skuGroupId: '4160950', searchQuery: 'sochiqlar', impressions: 900, clicks: 4, atc: 1, sold: 0, revenue: 0 },
+      { skuGroupId: '4160950', searchQuery: 'katta sochiq', impressions: 900, clicks: 4, atc: 0, sold: 0, revenue: 0 },
+      { skuGroupId: '4160950', searchQuery: 'sochiq to\'plami', impressions: 300, clicks: 2, atc: 1, sold: 0, revenue: 0 },
       { skuGroupId: '4160950', searchQuery: 'полотенце махровое', impressions: 900, clicks: 9, sold: 0, revenue: 0 },
     ];
-    const rows = newKeywords(input({ feed: uz }));
+    const rows = newKeywords(input({ feed: uz }), { ...AD_BOT_DEFAULTS, newKeywordsPerGroup: 3 });
     expect(rows.map((row) => row.query)).toEqual(['полотенце для бани большое', 'sochiqlar']);
-    expect(rows[1]).toMatchObject({ newCpm: 15_000 });
+    expect(rows[1]).toMatchObject({ newCpm: 9_500 });
     expect(rows[1].reason).toContain('узбекский запрос без продажи');
+  });
+  it('посторонние запросы не добавляем даже с продажей: нет слова товара или есть запретное; не больше одной фразы на цвет', () => {
+    const junk = [
+      ...feed,
+      { skuGroupId: '4160950', searchQuery: 'штаны мужские теплые для дома', impressions: 500, clicks: 20, sold: 2, revenue: 300_000 },
+      { skuGroupId: '4160950', searchQuery: 'sochiq nabor banya xalat', impressions: 500, clicks: 5, atc: 2, sold: 0, revenue: 0 },
+      { skuGroupId: '4160950', searchQuery: 'barashka pled', impressions: 500, clicks: 5, atc: 2, sold: 1, revenue: 150_000 },
+      { skuGroupId: '4160950', searchQuery: 'полотенце махровое большое', impressions: 500, clicks: 5, sold: 4, revenue: 800_000 },
+    ];
+    const rows = newKeywords(input({ feed: junk }));
+    expect(rows.map((row) => row.query)).toEqual(['полотенце махровое большое']);
+    expect(isRelevantQuery('плед для пикника')).toBe(true);
+    expect(isRelevantQuery('yopinchiq 100x170')).toBe(true);
+    expect(isRelevantQuery('костюм для бани')).toBe(false);
+    expect(isRelevantQuery('детская кроватка')).toBe(false);
   });
   it('план: сначала снижения, потом новые слова, потом повышения; лимит за запуск', () => {
     const keywords = [kw(), kw({ adId: '2', query: 'katta sochiq' })];
@@ -133,7 +149,7 @@ describe('новые слова и план', () => {
     const body = buildCampaignUpdate({ name: 'Банное 100×150', budgetConfig: { weeklyAmount: 150_000, uniformDistribution: false }, period: { dateFrom: '2026-09-26', dateTo: null, isEndless: true } }, plan.actions);
     expect(body.advertisements).toEqual([
       { action: 'EDIT', advertisement: { id: 1, cpm: 15_000, promotionType: 'QUERY', query: 'полотенце для сауны', skuGroupId: 4160950, stopWords: ['вафельное'] } },
-      { action: 'NEW', advertisement: { cpm: 20_000, promotionType: 'QUERY', query: 'полотенце для бани большое', skuGroupId: 4160950, stopWords: ['вафельное'] } },
+      { action: 'NEW', advertisement: { cpm: 9_500, promotionType: 'QUERY', query: 'полотенце для бани большое', skuGroupId: 4160950, stopWords: ['вафельное'] } },
     ]);
     expect(body.budgetConfig).toEqual({ reset: false, uniformDistribution: false, weeklyAmount: 150_000 });
     expect(body.period).toEqual({ dateFrom: '2026-09-26', dateTo: '', isEndless: true });
@@ -178,6 +194,9 @@ describe('ручной посев фраз', () => {
       kw({ adId: '3', query: 'katta sochiq', cpm: 15_000, stopWords: ['oshxona', 'salfetka'] }),
     ];
     const rows = seedKeywordActions(keywords, [{ campaignId: '332097', stopWords: { remove: ['soch'], add: ['soch uchun', 'sochlar uchun', 'oshxona', 'salfetka'], dropIfFull: ['майнкрафт', 'волка'], onlyLatin: true } }]);
+    // остановка по точному запросу во всех кампаниях («*»)
+    const stop = seedKeywordActions(keywords, [{ campaignId: '*', suspend: ['Sauna  sochiq', 'штаны'] }]);
+    expect(stop.map((row) => [row.adId, row.kind])).toEqual([['1', 'SUSPEND']]);
     // русская фраза (adId 2) не тронута; у adId 3 просто добавились две минус-фразы
     expect(rows.map((row) => [row.adId, row.kind, row.newCpm])).toEqual([['1', 'STOPWORDS', 15_000], ['3', 'STOPWORDS', 15_000]]);
     expect(rows[1].stopWords).toEqual(['oshxona', 'salfetka', 'soch uchun', 'sochlar uchun', 'detskiy', 'qogoz', 'moshina', 'tabletka'].filter((word) => ['oshxona', 'salfetka', 'soch uchun', 'sochlar uchun'].includes(word)));

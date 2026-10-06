@@ -47,11 +47,20 @@ export const AD_BOT_DEFAULTS = {
   topPosition: 5,
   lowStockUnits: 3,
   newKeywordMinSold: 1,
-  newKeywordsPerGroup: 3,
-  /** Узбекские (латиница) запросы берём и без продажи — от стольких кликов: узбекских фраз в кампаниях
-   * нет, продаж по ним нет, и по правилу «нужна продажа» бот их не нашёл бы никогда. */
-  uzbekKeywordMinClicks: 1,
-  uzbekKeywordBid: 15_000,
+  /** Не больше одной новой фразы на цвет за запуск. */
+  newKeywordsPerGroup: 1,
+  /** Узбекские (латиница) запросы берём и без продажи — но от стольких кликов И корзин: при пороге
+   * «1 клик» бот 06.10.2026 добавил «sochiq nabor banya xalat» и «barashka pled». */
+  uzbekKeywordMinClicks: 3,
+  uzbekKeywordMinAtc: 1,
+  /** Стартовая ставка любой новой фразы — минимальная, а не медиана цвета: 06.10.2026 «штаны мужские
+   * теплые для дома» получили 20 000 по медиане. Дальше ставку ведут правила по ДРР. */
+  newKeywordBid: 9_500,
+  uzbekKeywordBid: 9_500,
+  /** Новая фраза берётся, только если в запросе есть слово товара и нет запретного: Uzum подбирает показы
+   * широко, и в запросах с продажей бывают посторонние вещи («штаны», «халат», «barashka pled»). */
+  productWords: ['полотен', 'sochiq', 'сочик', 'махров', 'банн', 'плед', 'pled', 'покрывал', 'yopinchiq', 'adyol', 'parisa'] as string[],
+  junkWords: ['штаны', 'брюки', 'халат', 'xalat', 'barashka', 'kiyim', 'костюм', 'kostyum', 'носки', 'футболк', 'шапк', 'одеял', 'пижам', 'джинс', 'куртк', 'платье', 'тапоч', 'свитер', 'шорты', 'белье', 'трусы'] as string[],
   /** Потолок ДРР цвета зависит от запаса (правило A12). Цвет с запасом от стольких дней — медленный:
    * ему реклама нужна ради оборота склада, и потолок ДРР равен его марже минус запас… */
   slowStockDays: 60,
@@ -208,6 +217,14 @@ export function decideKeyword(keyword: AdBotKeyword, input: AdBotInput, cfg: AdB
 }
 
 /** Новые слова из реальных запросов покупателей с продажами, которых ещё нет у цвета. */
+/** Запрос про наш товар: есть слово товара и нет запретного (по нормализованному запросу, по вхождению). */
+export function isRelevantQuery(query: string, cfg: Pick<AdBotConfig, 'productWords' | 'junkWords'> = AD_BOT_DEFAULTS): boolean {
+  const text = normalizeQuery(query);
+  if (!text) return false;
+  if (cfg.junkWords.some((word) => text.includes(normalizeQuery(word)))) return false;
+  return cfg.productWords.some((word) => text.includes(normalizeQuery(word)));
+}
+
 export function newKeywords(input: AdBotInput, cfg: AdBotConfig = AD_BOT_DEFAULTS): AdBotAction[] {
   const byGroup = new Map<string, AdBotKeyword[]>();
   for (const keyword of input.keywords) byGroup.set(keyword.skuGroupId, [...(byGroup.get(keyword.skuGroupId) ?? []), keyword]);
@@ -218,14 +235,14 @@ export function newKeywords(input: AdBotInput, cfg: AdBotConfig = AD_BOT_DEFAULT
     const existing = new Set(keywords.map((row) => normalizeQuery(row.query)));
     const stopWords = keywords[0].stopWords;
     const stop = stopWords.map(normalizeQuery).filter(Boolean);
-    const bid = clampBid(median(keywords.map((row) => row.cpm)) ?? cfg.minBid, 'down', cfg);
     const candidates = new Map<string, AdBotFeedQuery>();
     for (const row of input.feed) {
       if (row.skuGroupId !== skuGroupId) continue;
       const query = normalizeQuery(row.searchQuery);
-      const uzbek = isLatinQuery(query) && row.clicks >= cfg.uzbekKeywordMinClicks;
+      const uzbek = isLatinQuery(query) && row.clicks >= cfg.uzbekKeywordMinClicks && (row.atc ?? 0) >= cfg.uzbekKeywordMinAtc;
       if (row.sold < cfg.newKeywordMinSold && !uzbek) continue;
       if (!query || query.length > cfg.maxQueryLength || existing.has(query)) continue;
+      if (!isRelevantQuery(query, cfg)) continue;
       if (stop.some((word) => query.split(' ').includes(word))) continue;
       if (input.lastChange.has(`${skuGroupId}|${query}`)) continue;
       const prev = candidates.get(query);
@@ -237,7 +254,7 @@ export function newKeywords(input: AdBotInput, cfg: AdBotConfig = AD_BOT_DEFAULT
       actions.push({
         kind: 'ADD', campaignId: keywords[0].campaignId, campaignName: keywords[0].campaignName, skuGroupId,
         groupTitle: group?.title ?? skuGroupId, adId: null, query: row.searchQuery, oldCpm: null,
-        newCpm: withoutSale ? clampBid(cfg.uzbekKeywordBid, 'down', cfg) : bid, stopWords,
+        newCpm: clampBid(withoutSale ? cfg.uzbekKeywordBid : cfg.newKeywordBid, 'down', cfg), stopWords,
         reason: withoutSale
           ? `узбекский запрос без продажи, но с кликами (${row.clicks} за 28 дн.) — пробуем по минимальной ставке`
           : `покупатели находили цвет по этому запросу: продаж ${row.sold}, кликов ${row.clicks} за 28 дн.`,
@@ -345,7 +362,8 @@ export type SeedPhrase = { query: string; cpm: number };
 /** Правка минус-слов существующих фраз кампании: убрать remove, добавить add; если список упёрся в 58 —
  * сначала выбросить dropIfFull (бесполезные слова), что не влезло — не добавлять. onlyLatin — только узбекские фразы. */
 export type SeedStopWords = { add?: string[]; remove?: string[]; dropIfFull?: string[]; onlyLatin?: boolean };
-export type SeedSpec = { campaignId: string; phrases?: SeedPhrase[]; stopWords?: SeedStopWords };
+/** campaignId «*» — все активные кампании (только для stopWords и suspend). suspend — остановить фразы по точному совпадению. */
+export type SeedSpec = { campaignId: string; phrases?: SeedPhrase[]; stopWords?: SeedStopWords; suspend?: string[] };
 
 function mergeStopWords(current: string[], rule: SeedStopWords, limit: number): string[] | null {
   const norm = (word: string) => normalizeQuery(word);
@@ -375,7 +393,15 @@ function mergeStopWords(current: string[], rule: SeedStopWords, limit: number): 
 export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], cfg: AdBotConfig = AD_BOT_DEFAULTS): AdBotAction[] {
   const actions: AdBotAction[] = [];
   for (const spec of specs) {
-    const own = keywords.filter((row) => row.campaignId === spec.campaignId);
+    const own = spec.campaignId === '*' ? keywords : keywords.filter((row) => row.campaignId === spec.campaignId);
+    if (spec.suspend?.length) {
+      const targets = new Set(spec.suspend.map(normalizeQuery));
+      for (const row of own) {
+        if (!targets.has(normalizeQuery(row.query))) continue;
+        actions.push({ kind: 'SUSPEND', campaignId: row.campaignId, campaignName: row.campaignName, skuGroupId: row.skuGroupId, groupTitle: row.skuGroupId, adId: row.adId, query: row.query, oldCpm: row.cpm, newCpm: row.cpm, stopWords: row.stopWords, reason: 'ручная остановка: запрос не про товар' });
+      }
+    }
+    if (spec.campaignId === '*') { if (!spec.stopWords) continue; }
     if (spec.stopWords) {
       for (const row of own) {
         if (spec.stopWords.onlyLatin && !isLatinQuery(normalizeQuery(row.query))) continue;
@@ -385,6 +411,7 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
         actions.push({ kind: 'STOPWORDS', campaignId: row.campaignId, campaignName: row.campaignName, skuGroupId: row.skuGroupId, groupTitle: row.skuGroupId, adId: row.adId, query: row.query, oldCpm: row.cpm, newCpm: row.cpm, stopWords: merged, reason: `ручная правка минус-слов (${row.stopWords.length} → ${merged.length}, ${delta})` });
       }
     }
+    if (spec.campaignId === '*') continue;
     for (const skuGroupId of [...new Set(own.map((row) => row.skuGroupId))]) {
       const inGroup = own.filter((row) => row.skuGroupId === skuGroupId);
       const baseStop = inGroup[0].stopWords;
