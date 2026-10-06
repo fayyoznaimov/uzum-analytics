@@ -28,9 +28,10 @@ const fmt = (value: number | null) => (value === null ? '—' : Math.round(value
 
 async function main() {
   const specPath = option('spec');
-  if (!specPath) throw new Error('нужен --spec <файл.json>');
-  const specs = JSON.parse(readFileSync(specPath, 'utf8')) as SeedSpec[];
-  if (!Array.isArray(specs) || !specs.length) throw new Error('спецификация пуста');
+  const skuFilter = option('skus');
+  if (!specPath && skuFilter === undefined) throw new Error('нужен --spec <файл.json> или --skus <фильтр по названию>');
+  const specs = specPath ? (JSON.parse(readFileSync(specPath, 'utf8')) as SeedSpec[]) : [];
+  if (specPath && (!Array.isArray(specs) || !specs.length)) throw new Error('спецификация пуста');
 
   const prisma = new PrismaService();
   const crypto = new CryptoService();
@@ -54,8 +55,16 @@ async function main() {
   const service = new AdBotService(prisma, integrations, promo);
   const apply = flag('apply');
   try {
-    const { actions, outcomes, keywords } = await service.seed(specs, apply);
+    if (skuFilter !== undefined) {
+      const rows = await service.listSkus(skuFilter);
+      console.log(`SKU по фильтру «${skuFilter}»: ${rows.length}`);
+      for (const row of rows) console.log(`  ${row.skuId}  ${row.title}  цена ${fmt(row.price)}  остаток ${row.quantity}`);
+      return;
+    }
+    const { actions, outcomes, keywords, groupTitles, budgetNotes } = await service.seed(specs, apply);
     console.log(`${apply ? 'ПРИМЕНЕНО' : 'ПЛАН'}: слов в активных кампаниях ${keywords.length}, действий ${actions.length}\n`);
+    for (const note of budgetNotes) console.log(`💰 ${note}`);
+    const title = (groupId: string) => groupTitles.get(groupId) ?? groupId;
     const campaignIds = specs.some((spec) => spec.campaignId === '*') ? [...new Set(keywords.map((row) => row.campaignId))] : specs.map((spec) => spec.campaignId);
     for (const campaignId of campaignIds) {
       const spec = specs.find((row) => row.campaignId === campaignId) ?? { campaignId };
@@ -72,13 +81,14 @@ async function main() {
         const dupes = [...seen.values()].filter((count) => count > 1).length;
         const withSoch = latin.filter((row) => row.stopWords.some((word) => word.trim().toLowerCase() === 'soch')).length;
         console.log(`  узбекских фраз ${latin.length}; минус-слов на фразу: ${Math.min(...all.map((row) => row.stopWords.length))}–${Math.max(...all.map((row) => row.stopWords.length))}; списков > 58: ${over}; дублей «цвет+фраза»: ${dupes}; узбекских с «soch»: ${withSoch}`);
-        for (const row of latin) console.log(`    ${row.skuGroupId}  «${row.query}»  ${fmt(row.cpm)}  минус-слов ${row.stopWords.length}${row.stopWords.some((word) => word.trim().toLowerCase() === 'soch') ? '  [soch]' : ''}`);
+        for (const row of latin) console.log(`    ${row.skuGroupId} ${title(row.skuGroupId)}  «${row.query}»  ${fmt(row.cpm)}  минус-слов ${row.stopWords.length}${row.stopWords.some((word) => word.trim().toLowerCase() === 'soch') ? '  [soch]' : ''}`);
       }
       if (flag('all')) {
         for (const row of [...all].sort((a, b) => a.skuGroupId.localeCompare(b.skuGroupId) || a.query.localeCompare(b.query))) {
-          console.log(`    ${row.skuGroupId}  «${row.query}»  ${fmt(row.cpm)}${isRelevantQuery(row.query) ? '' : '  ⚠ не про товар?'}`);
+          console.log(`    ${row.skuGroupId} ${title(row.skuGroupId)}  «${row.query}»  ${fmt(row.cpm)}${isRelevantQuery(row.query) ? '' : '  ⚠ не про товар?'}`);
         }
       }
+      for (const row of own.filter((row) => row.kind === 'SUSPEND' && row.reason.includes('цвета'))) console.log(`  ⛔ цвет ${row.skuGroupId} ${title(row.skuGroupId)}: «${row.query}» остановлена`);
       const byQuery = new Map<string, typeof own>();
       for (const row of own) byQuery.set(row.query, [...(byQuery.get(row.query) ?? []), row]);
       for (const [query, rows] of byQuery) {

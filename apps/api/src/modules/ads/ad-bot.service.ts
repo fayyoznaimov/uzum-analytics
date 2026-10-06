@@ -82,6 +82,10 @@ export class AdBotService {
       maxDrrPercent: env('AD_AGENT_MAX_DRR_PERCENT') ?? AD_BOT_DEFAULTS.maxDrrPercent,
       maxBid: env('AD_BOT_MAX_BID') ?? AD_BOT_DEFAULTS.maxBid,
       maxChangesPerRun: env('AD_BOT_MAX_CHANGES') ?? AD_BOT_DEFAULTS.maxChangesPerRun,
+      campaignMaxBid: Object.fromEntries(
+        String(process.env.AD_BOT_CAMPAIGN_MAX_BID || '').split(',').map((pair) => pair.split(':').map((part) => part.trim()))
+          .filter(([id, cap]) => id && Number.isFinite(Number(cap)) && Number(cap) > 0).map(([id, cap]) => [id, Number(cap)]),
+      ),
     };
   }
 
@@ -158,15 +162,86 @@ export class AdBotService {
   }
 
   /** Ручной посев фраз по спецификации (scripts/seed-keywords.ts): без правил бота, но с его проверкой и журналом. */
-  async seed(specs: SeedSpec[], apply: boolean): Promise<{ actions: AdBotAction[]; outcomes: AdBotOutcome[]; keywords: AdBotKeyword[] }> {
+  async seed(specs: SeedSpec[], apply: boolean): Promise<{ actions: AdBotAction[]; outcomes: AdBotOutcome[]; keywords: AdBotKeyword[]; groupTitles: Map<string, string>; budgetNotes: string[] }> {
     const today = tashkentDay(new Date());
     const sellerId = await this.resolveSellerId(today);
     const { campaigns, keywords } = await this.loadCampaigns(sellerId, today);
     const actions = seedKeywordActions(keywords, specs, this.config());
     const empty = { stats14: new Map<string, AdBotStats>(), stats7: new Map<string, AdBotStats>() };
-    const outcomes = apply ? await this.apply(actions, campaigns, empty) : [];
+    const budgets = new Map<string, { weeklyAmount?: number; uniform?: boolean }>();
+    for (const spec of specs) {
+      if (spec.campaignId !== '*' && (spec.budgetWeekly !== undefined || spec.uniform !== undefined)) budgets.set(spec.campaignId, { weeklyAmount: spec.budgetWeekly, uniform: spec.uniform });
+    }
+    const budgetNotes: string[] = [];
+    for (const [campaignId, budget] of budgets) {
+      const campaign = campaigns.get(campaignId);
+      if (!campaign) { budgetNotes.push(`${campaignId}: кампания не активна — бюджет не менялся`); continue; }
+      budgetNotes.push(`${campaignId} «${campaign.name}»: бюджет ${Number(campaign.budgetConfig?.weeklyAmount) || 0} → ${budget.weeklyAmount ?? 'без изменений'}, равномерно: ${budget.uniform ?? Boolean(campaign.budgetConfig?.uniformDistribution)}`);
+    }
+    const outcomes = apply ? await this.apply(actions, campaigns, empty, budgets) : [];
+    if (apply) {
+      // Кампании, где меняется только бюджет (действий по словам нет): отдельный PUT без объявлений.
+      for (const [campaignId, budget] of budgets) {
+        const campaign = campaigns.get(campaignId);
+        if (!campaign || actions.some((row) => row.campaignId === campaignId)) continue;
+        try {
+          await this.cabinet.cabinet('PUT', `${CABINET}/advertising/management/ad-campaign/${campaignId}`, undefined, buildCampaignUpdate(campaign, [], budget));
+          budgetNotes.push(`${campaignId}: бюджет отправлен`);
+        } catch (error: any) {
+          budgetNotes.push(`${campaignId}: бюджет НЕ отправлен — ${String(error?.message || error).slice(0, 200)}`);
+        }
+      }
+    }
     if (!apply) await this.journal(actions, empty, { dryRun: true, status: 'PLANNED' });
-    return { actions, outcomes, keywords };
+    const groupTitles = await this.groupTitles([...new Set(keywords.map((row) => row.skuGroupId))]);
+    return { actions, outcomes, keywords, groupTitles, budgetNotes };
+  }
+
+  /** Названия цветов по id групп: группа → SKU → skuTitle из getProducts. */
+  private async groupTitles(groupIds: string[]): Promise<Map<string, string>> {
+    const titles = new Map<string, string>();
+    if (!groupIds.length) return titles;
+    const shopId = await this.cabinet.cabinetShopId();
+    const skusByGroup = new Map<string, string[]>();
+    for (let index = 0; index < groupIds.length; index += 20) {
+      const body = await this.get(`${CABINET}/product/skugroup/sku`, { skuGroupIds: groupIds.slice(index, index + 20).join(',') });
+      for (const group of Array.isArray(body?.payload) ? body.payload : []) {
+        skusByGroup.set(String(group.skuGroupId), (group.skuShortInfoDtos ?? []).map((sku: any) => String(sku.skuId)));
+      }
+    }
+    const skuTitle = new Map<string, string>();
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const body = await this.get(`${CABINET}/shop/${shopId}/product/getProducts`, { page, size: 100 });
+      const products: any[] = Array.isArray(body?.productList) ? body.productList : [];
+      for (const product of products) {
+        for (const sku of Array.isArray(product.skuList) ? product.skuList : []) skuTitle.set(String(sku.skuId), String(sku.skuTitle ?? sku.skuFullTitle ?? '').replace(/^FAYYOZ-/, ''));
+      }
+      if (products.length < 100) break;
+    }
+    for (const [groupId, skus] of skusByGroup) {
+      const names = skus.map((id) => skuTitle.get(id)).filter(Boolean) as string[];
+      if (names.length) titles.set(groupId, names[0].replace(/-(50 x 90|70 x140|Havana|Банный|Лицевой|Микс|Сауна|банн\S*|лицев\S*|микс|сауна)$/i, ''));
+    }
+    return titles;
+  }
+
+  /** Список SKU кабинета с ценой и остатком — для ручных правок цен (scripts/seed-keywords.ts --skus <фильтр>). */
+  async listSkus(filter: string): Promise<Array<{ skuId: string; title: string; price: number; quantity: number }>> {
+    const shopId = await this.cabinet.cabinetShopId();
+    const rows: Array<{ skuId: string; title: string; price: number; quantity: number }> = [];
+    const needle = filter.toLowerCase();
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const body = await this.get(`${CABINET}/shop/${shopId}/product/getProducts`, { page, size: 100 });
+      const products: any[] = Array.isArray(body?.productList) ? body.productList : [];
+      for (const product of products) {
+        for (const sku of Array.isArray(product.skuList) ? product.skuList : []) {
+          const title = String(sku.skuTitle ?? sku.skuFullTitle ?? '');
+          if (!needle || title.toLowerCase().includes(needle)) rows.push({ skuId: String(sku.skuId), title, price: num(sku.price), quantity: num(sku.quantityActive) });
+        }
+      }
+      if (products.length < 100) break;
+    }
+    return rows.sort((a, b) => a.title.localeCompare(b.title));
   }
 
   private async resolveSellerId(today: string): Promise<string> {
@@ -338,14 +413,14 @@ export class AdBotService {
   }
 
   /** По кампании — один PUT со всеми её изменениями; после — проверка, что ставки встали. */
-  private async apply(actions: AdBotAction[], campaigns: Map<string, CampaignInfo>, input: { stats14: Map<string, AdBotStats>; stats7: Map<string, AdBotStats> }): Promise<AdBotOutcome[]> {
+  private async apply(actions: AdBotAction[], campaigns: Map<string, CampaignInfo>, input: { stats14: Map<string, AdBotStats>; stats7: Map<string, AdBotStats> }, budgets?: Map<string, { weeklyAmount?: number; uniform?: boolean }>): Promise<AdBotOutcome[]> {
     const outcomes: AdBotOutcome[] = [];
     const byCampaign = new Map<string, AdBotAction[]>();
     for (const row of actions) byCampaign.set(row.campaignId, [...(byCampaign.get(row.campaignId) ?? []), row]);
     for (const [campaignId, rows] of byCampaign) {
       const campaign = campaigns.get(campaignId);
       if (!campaign) continue;
-      const body = buildCampaignUpdate(campaign, rows);
+      const body = buildCampaignUpdate(campaign, rows, budgets?.get(campaignId));
       try {
         await this.cabinet.cabinet('PUT', `${CABINET}/advertising/management/ad-campaign/${campaignId}`, undefined, body);
         const isApplied = (check: Array<{ id: string; skuGroupId: string; query: string; cpm: number }>, row: AdBotAction) => {

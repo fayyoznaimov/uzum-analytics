@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AD_BOT_DEFAULTS, AdBotInput, AdBotKeyword, AdBotStats, buildCampaignUpdate, clampBid, decideKeyword, formatAdBotReport, groupDrrTarget, isRelevantQuery, newKeywords, normalizeQuery, planAdBot, seedKeywordActions, stopWordCandidates } from '../ad-bot';
+import { AD_BOT_DEFAULTS, AdBotInput, AdBotKeyword, AdBotStats, buildCampaignUpdate, clampBid, configFor, decideKeyword, formatAdBotReport, groupDrrTarget, isRelevantQuery, newKeywords, normalizeQuery, planAdBot, seedKeywordActions, stopWordCandidates } from '../ad-bot';
 
 const now = new Date('2026-09-28T11:00:00+05:00');
 const kw = (patch: Partial<AdBotKeyword> = {}): AdBotKeyword => ({
@@ -194,9 +194,22 @@ describe('ручной посев фраз', () => {
       kw({ adId: '3', query: 'katta sochiq', cpm: 15_000, stopWords: ['oshxona', 'salfetka'] }),
     ];
     const rows = seedKeywordActions(keywords, [{ campaignId: '332097', stopWords: { remove: ['soch'], add: ['soch uchun', 'sochlar uchun', 'oshxona', 'salfetka'], dropIfFull: ['майнкрафт', 'волка'], onlyLatin: true } }]);
-    // остановка по точному запросу во всех кампаниях («*»)
+    // остановка по точному запросу во всех кампаниях («*») и целого цвета по id группы
     const stop = seedKeywordActions(keywords, [{ campaignId: '*', suspend: ['Sauna  sochiq', 'штаны'] }]);
     expect(stop.map((row) => [row.adId, row.kind])).toEqual([['1', 'SUSPEND']]);
+    const stopGroup = seedKeywordActions(keywords, [{ campaignId: '332097', suspendGroups: ['4160950'], phrases: [{ query: 'banya sochiq', cpm: 9_500 }], stopWords: { add: ['костюм'] } }]);
+    // остановленный цвет: только SUSPEND — ни новых фраз, ни правок минус-слов ему не нужно
+    expect(stopGroup.map((row) => [row.skuGroupId, row.kind])).toEqual([['4160950', 'SUSPEND'], ['4160950', 'SUSPEND'], ['4160950', 'SUSPEND']]);
+    expect(stopGroup[0].reason).toContain('цвета');
+    // потолок ставки по кампании: 50 000 → 18 500 только для 332097
+    const capped = { ...AD_BOT_DEFAULTS, campaignMaxBid: { '332097': 18_500 } };
+    expect(clampBid(40_000, 'up', configFor('332097', capped))).toBe(18_500);
+    expect(clampBid(40_000, 'up', configFor('286528', capped))).toBe(40_000);
+    expect(decideKeyword(kw({ cpm: 18_000 }), input({}, { sold: 3, revenue: 600_000, spend: 20_000, position: 9 }), capped)?.newCpm).toBe(18_500);
+    // бюджет кампании через buildCampaignUpdate
+    const body = buildCampaignUpdate({ name: 'x', budgetConfig: { weeklyAmount: 150_000, uniformDistribution: false }, period: { dateFrom: '2026-09-26', dateTo: null, isEndless: true } }, [], { weeklyAmount: 50_000, uniform: true });
+    expect(body.budgetConfig).toEqual({ reset: false, uniformDistribution: true, weeklyAmount: 50_000 });
+    expect(body.advertisements).toEqual([]);
     // русская фраза (adId 2) не тронута; у adId 3 просто добавились две минус-фразы
     expect(rows.map((row) => [row.adId, row.kind, row.newCpm])).toEqual([['1', 'STOPWORDS', 15_000], ['3', 'STOPWORDS', 15_000]]);
     expect(rows[1].stopWords).toEqual(['oshxona', 'salfetka', 'soch uchun', 'sochlar uchun', 'detskiy', 'qogoz', 'moshina', 'tabletka'].filter((word) => ['oshxona', 'salfetka', 'soch uchun', 'sochlar uchun'].includes(word)));

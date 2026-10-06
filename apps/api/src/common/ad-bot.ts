@@ -32,6 +32,8 @@ export const AD_BOT_DEFAULTS = {
   maxDrrPercent: 10,
   minBid: 9_500,
   maxBid: 50_000,
+  /** Потолок ставки по кампании (campaignId → сум), ниже общего maxBid: AD_BOT_CAMPAIGN_MAX_BID=332097:18500,… */
+  campaignMaxBid: {} as Record<string, number>,
   bidRounding: 500,
   raisePercent: 10,
   lowerPercent: 15,
@@ -170,7 +172,14 @@ function median(values: number[]): number | null {
 const fmt = (value: number) => Math.round(value).toLocaleString('ru-RU');
 
 /** Решение по одному слову (без лимита на число изменений). null — оставить как есть. */
-export function decideKeyword(keyword: AdBotKeyword, input: AdBotInput, cfg: AdBotConfig = AD_BOT_DEFAULTS): AdBotAction | null {
+/** Конфиг для кампании: общий, но с её потолком ставки, если задан. */
+export function configFor(campaignId: string, cfg: AdBotConfig = AD_BOT_DEFAULTS): AdBotConfig {
+  const cap = cfg.campaignMaxBid[campaignId];
+  return cap && cap < cfg.maxBid ? { ...cfg, maxBid: Math.max(cfg.minBid, cap) } : cfg;
+}
+
+export function decideKeyword(keyword: AdBotKeyword, input: AdBotInput, base: AdBotConfig = AD_BOT_DEFAULTS): AdBotAction | null {
+  const cfg = configFor(keyword.campaignId, base);
   const last = input.lastChange.get(keyword.adId);
   if (last && input.now.getTime() - last.getTime() < cfg.cooldownDays * DAY_MS) return null;
   const s14 = input.stats14.get(keyword.adId) ?? EMPTY;
@@ -254,7 +263,7 @@ export function newKeywords(input: AdBotInput, cfg: AdBotConfig = AD_BOT_DEFAULT
       actions.push({
         kind: 'ADD', campaignId: keywords[0].campaignId, campaignName: keywords[0].campaignName, skuGroupId,
         groupTitle: group?.title ?? skuGroupId, adId: null, query: row.searchQuery, oldCpm: null,
-        newCpm: clampBid(withoutSale ? cfg.uzbekKeywordBid : cfg.newKeywordBid, 'down', cfg), stopWords,
+        newCpm: clampBid(withoutSale ? cfg.uzbekKeywordBid : cfg.newKeywordBid, 'down', configFor(keywords[0].campaignId, cfg)), stopWords,
         reason: withoutSale
           ? `узбекский запрос без продажи, но с кликами (${row.clicks} за 28 дн.) — пробуем по минимальной ставке`
           : `покупатели находили цвет по этому запросу: продаж ${row.sold}, кликов ${row.clicks} за 28 дн.`,
@@ -341,7 +350,7 @@ export function planAdBot(input: AdBotInput, cfg: AdBotConfig = AD_BOT_DEFAULTS)
 }
 
 /** Тело PUT для кампании: только изменения, бюджет/название/период — как есть. */
-export function buildCampaignUpdate(campaign: { name: string; budgetConfig: any; period: any }, actions: AdBotAction[]) {
+export function buildCampaignUpdate(campaign: { name: string; budgetConfig: any; period: any }, actions: AdBotAction[], budget?: { weeklyAmount?: number; uniform?: boolean }) {
   return {
     advertisements: actions.map((row) => {
       if (row.kind === 'ADD') return { action: 'NEW', advertisement: { cpm: row.newCpm, promotionType: 'QUERY', query: row.query, skuGroupId: Number(row.skuGroupId), stopWords: row.stopWords } };
@@ -350,8 +359,8 @@ export function buildCampaignUpdate(campaign: { name: string; budgetConfig: any;
     }),
     budgetConfig: {
       reset: false,
-      uniformDistribution: Boolean(campaign.budgetConfig?.uniformDistribution),
-      weeklyAmount: Number(campaign.budgetConfig?.weeklyAmount) || 0,
+      uniformDistribution: budget?.uniform ?? Boolean(campaign.budgetConfig?.uniformDistribution),
+      weeklyAmount: budget?.weeklyAmount ?? (Number(campaign.budgetConfig?.weeklyAmount) || 0),
     },
     name: campaign.name,
     period: { dateFrom: campaign.period?.dateFrom ?? '', dateTo: campaign.period?.dateTo ?? '', isEndless: Boolean(campaign.period?.isEndless) },
@@ -362,8 +371,17 @@ export type SeedPhrase = { query: string; cpm: number };
 /** Правка минус-слов существующих фраз кампании: убрать remove, добавить add; если список упёрся в 58 —
  * сначала выбросить dropIfFull (бесполезные слова), что не влезло — не добавлять. onlyLatin — только узбекские фразы. */
 export type SeedStopWords = { add?: string[]; remove?: string[]; dropIfFull?: string[]; onlyLatin?: boolean };
-/** campaignId «*» — все активные кампании (только для stopWords и suspend). suspend — остановить фразы по точному совпадению. */
-export type SeedSpec = { campaignId: string; phrases?: SeedPhrase[]; stopWords?: SeedStopWords; suspend?: string[] };
+/** campaignId «*» — все активные кампании (только для stopWords и suspend). suspend — остановить фразы по точному
+ * совпадению; suspendGroups — остановить все фразы цветов (по id группы); budgetWeekly / uniform — бюджет кампании. */
+export type SeedSpec = {
+  campaignId: string;
+  phrases?: SeedPhrase[];
+  stopWords?: SeedStopWords;
+  suspend?: string[];
+  suspendGroups?: string[];
+  budgetWeekly?: number;
+  uniform?: boolean;
+};
 
 function mergeStopWords(current: string[], rule: SeedStopWords, limit: number): string[] | null {
   const norm = (word: string) => normalizeQuery(word);
@@ -394,16 +412,21 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
   const actions: AdBotAction[] = [];
   for (const spec of specs) {
     const own = spec.campaignId === '*' ? keywords : keywords.filter((row) => row.campaignId === spec.campaignId);
-    if (spec.suspend?.length) {
-      const targets = new Set(spec.suspend.map(normalizeQuery));
+    if (spec.suspend?.length || spec.suspendGroups?.length) {
+      const targets = new Set((spec.suspend ?? []).map(normalizeQuery));
+      const groups = new Set(spec.suspendGroups ?? []);
       for (const row of own) {
-        if (!targets.has(normalizeQuery(row.query))) continue;
-        actions.push({ kind: 'SUSPEND', campaignId: row.campaignId, campaignName: row.campaignName, skuGroupId: row.skuGroupId, groupTitle: row.skuGroupId, adId: row.adId, query: row.query, oldCpm: row.cpm, newCpm: row.cpm, stopWords: row.stopWords, reason: 'ручная остановка: запрос не про товар' });
+        const byQuery = targets.has(normalizeQuery(row.query));
+        const byGroup = groups.has(row.skuGroupId);
+        if (!byQuery && !byGroup) continue;
+        actions.push({ kind: 'SUSPEND', campaignId: row.campaignId, campaignName: row.campaignName, skuGroupId: row.skuGroupId, groupTitle: row.skuGroupId, adId: row.adId, query: row.query, oldCpm: row.cpm, newCpm: row.cpm, stopWords: row.stopWords, reason: byGroup ? 'ручная остановка цвета: нет остатка до дозаказа' : 'ручная остановка: запрос не про товар' });
       }
     }
+    const suspended = new Set(spec.suspendGroups ?? []);
     if (spec.campaignId === '*') { if (!spec.stopWords) continue; }
     if (spec.stopWords) {
       for (const row of own) {
+        if (suspended.has(row.skuGroupId)) continue;
         if (spec.stopWords.onlyLatin && !isLatinQuery(normalizeQuery(row.query))) continue;
         const merged = mergeStopWords(row.stopWords, spec.stopWords, cfg.maxStopWords);
         if (!merged) continue;
@@ -413,6 +436,7 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
     }
     if (spec.campaignId === '*') continue;
     for (const skuGroupId of [...new Set(own.map((row) => row.skuGroupId))]) {
+      if (suspended.has(skuGroupId)) continue;
       const inGroup = own.filter((row) => row.skuGroupId === skuGroupId);
       const baseStop = inGroup[0].stopWords;
       const common = { campaignId: spec.campaignId, campaignName: inGroup[0].campaignName, skuGroupId, groupTitle: skuGroupId };
@@ -434,7 +458,23 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
       }
     }
   }
-  return actions;
+  // Одно объявление — одна правка в PUT: ставку и минус-слова по одному adId сливаем.
+  const merged: AdBotAction[] = [];
+  const byAd = new Map<string, AdBotAction>();
+  for (const row of actions) {
+    if (!row.adId) { merged.push(row); continue; }
+    const prev = byAd.get(row.adId);
+    if (!prev) { byAd.set(row.adId, row); merged.push(row); continue; }
+    const cpmChange = [prev, row].find((item) => item.kind === 'LOWER' || item.kind === 'RAISE' || item.kind === 'SUSPEND');
+    const words = [prev, row].find((item) => item.kind === 'STOPWORDS');
+    Object.assign(prev, {
+      kind: cpmChange?.kind ?? prev.kind,
+      newCpm: cpmChange?.newCpm ?? prev.newCpm,
+      stopWords: words?.stopWords ?? prev.stopWords,
+      reason: `${prev.reason}; ${row.reason}`,
+    });
+  }
+  return merged;
 }
 
 export const AD_BOT_LABELS: Record<AdBotActionKind, string> = { LOWER: '⬇️ снизить', SUSPEND: '⛔ остановить', STOPWORDS: '🚫 минус-слова', ADD: '➕ новое слово', RAISE: '⬆️ поднять' };
