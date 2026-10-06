@@ -81,6 +81,16 @@ describe('решения по слову', () => {
     const groups = new Map([['4160950', { skuGroupId: '4160950', title: 'СЕРЫЙ', stock: 2, price: 200_000 }]]);
     expect(decide({ groups }, { impressions: 100 }, { impressions: 40 })).toMatchObject({ kind: 'LOWER', newCpm: 9_500 });
   });
+  it('товар вернулся, ставка на минимуме и показов нет — сразу возвращаем 15 000, не ждём 10 показов', () => {
+    const groups = new Map([['4160950', { skuGroupId: '4160950', title: 'ШОКОЛ', stock: 19, price: 69_200 }]]);
+    const back = decideKeyword(kw({ cpm: 9_500 }), input({ groups }, { impressions: 0, clicks: 0 }, { impressions: 0 }));
+    expect(back).toMatchObject({ kind: 'RAISE', newCpm: 15_000 });
+    expect(back?.reason).toContain('снова на складе');
+    // показы есть — обычные правила, не этот
+    expect(decideKeyword(kw({ cpm: 9_500 }), input({ groups }, { impressions: 30, clicks: 1 }, { impressions: 12 }))?.reason).not.toContain('снова на складе');
+    // потолок кампании ограничивает и этот возврат
+    expect(decideKeyword(kw({ cpm: 9_500 }), input({ groups }, { impressions: 0 }, { impressions: 0 }), { ...AD_BOT_DEFAULTS, campaignMaxBid: { '332097': 12_000 } })?.newCpm).toBe(12_000);
+  });
   it('цвет не сматчился (нет ни цены, ни ДРР) — не судим и НЕ поднимаем', () => {
     // Раньше слово без данных о товаре считалось «дёшевым» и росло на каждый
     // прогон до максимума. «Нет данных» ≠ «всё хорошо».

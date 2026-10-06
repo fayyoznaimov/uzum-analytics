@@ -48,6 +48,9 @@ export const AD_BOT_DEFAULTS = {
   goodDrrRatio: 0.5,
   topPosition: 5,
   lowStockUnits: 3,
+  /** Цвет вернулся на склад, а ставка осталась на минимуме после «остаток ≤ 3» и показов нет — поднять сразу
+   * до этой ставки: правило «ради охвата» требует ≥ 10 показов, и с нуля слово само никогда не выбралось бы. */
+  restockBid: 15_000,
   newKeywordMinSold: 1,
   /** Не больше одной новой фразы на цвет за запуск. */
   newKeywordsPerGroup: 1,
@@ -204,6 +207,9 @@ export function decideKeyword(keyword: AdBotKeyword, input: AdBotInput, base: Ad
 
   if (group?.stock !== null && group?.stock !== undefined && group.stock <= cfg.lowStockUnits) {
     return keyword.cpm > cfg.minBid ? action('LOWER', cfg.minBid, `мало остатка у цвета (${group.stock} шт.) — ставка на минимум`) : null;
+  }
+  if (group?.stock !== null && group?.stock !== undefined && group.stock > cfg.lowStockUnits && keyword.cpm <= cfg.minBid && s7.impressions === 0 && price !== null) {
+    return action('RAISE', clampBid(cfg.restockBid, 'down', cfg), `цвет снова на складе (${group.stock} шт.), ставка на минимуме и показов нет — возвращаем ${fmt(cfg.restockBid)}`);
   }
   if (s14.sold === 0 && price !== null && s14.clicks >= cfg.minClicksToJudge && s14.spend >= cfg.zeroSaleSpendRatio * price) {
     if (keyword.cpm > cfg.minBid) return lower(cfg.cutPercent, `нет продаж при расходе ${fmt(s14.spend)} (${period})`);
