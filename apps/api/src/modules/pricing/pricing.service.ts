@@ -56,8 +56,10 @@ export class PricingService {
       buildError: (status, parsed, rawText, requestPath) => {
         const detail = uzumErrorDetail(parsed);
         const readOnly = status === 403 && /read.?only/i.test(String(detail || rawText));
-        // sku-price-001 «Ску нельзя редактировать» пришёл 25.09.2026 на SKU в акции, хотя в кабинете
-        // цену в акции менять можно — причина пока не установлена.
+        // sku-price-001 «Ску нельзя редактировать»: SKU в акции платформы «Скидка Uzum» (скидку компенсирует
+        // Uzum Market, в кабинете — метка рядом с ценой). Такой акции нет в marketing/sales, цену нельзя
+        // менять ни через OpenAPI, ни через акционный API, пока она идёт (установлено 06.10.2026: заблокирован
+        // был весь магазин; то же самое 25.09.2026).
         const locked = parsed?.errors?.some((row: any) => row?.code === 'sku-price-001');
         const hint = readOnly
           ? ' (токен Uzum выдан только на чтение — для изменения цен нужен токен с правом записи)'
