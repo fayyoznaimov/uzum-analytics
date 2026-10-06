@@ -8,6 +8,7 @@ class PolicyDto {
   @IsString() campaignId!: string;
   @IsString() skuGroupId!: string;
   @IsString() query!: string;
+  @IsOptional() @IsString() adId?: string;
   @IsInt() @Min(10) @Max(100) targetReach!: number;
   @IsInt() @Min(1) maxBid!: number;
   @Transform(({ value }) => (value === '' || value === undefined ? null : value))
@@ -23,8 +24,8 @@ export class AdsController {
   constructor(private readonly autoBidder: AutoBidderService) {}
   @Get('campaigns') campaigns() { return this.autoBidder.campaigns(); }
   @Get('campaigns/:id/keywords') keywords(@Param('id') id: string) { return this.autoBidder.keywords(id); }
-  @Put('keywords/:adId') upsert(@Param('adId') adId: string, @Body() dto: PolicyDto) { return this.autoBidder.upsertPolicy(adId, { ...dto, maxDrr: dto.maxDrr ?? null }); }
-  @Delete('keywords/:adId') disable(@Param('adId') adId: string) { return this.autoBidder.disablePolicy(adId); }
+  @Put('keywords') upsert(@Body() dto: PolicyDto) { return this.autoBidder.upsertPolicy({ ...dto, maxDrr: dto.maxDrr ?? null }); }
+  @Delete('keywords/:id') disable(@Param('id') id: string) { return this.autoBidder.disablePolicy(id); }
   @Get('changes') changes(@Query('limit') limit?: string) { return this.autoBidder.changes(Number(limit) || 100); }
   @Post('run') run(@Body() dto: RunDto) { return this.autoBidder.run({ apply: Boolean(dto.apply), notify: false }); }
 }

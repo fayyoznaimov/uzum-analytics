@@ -409,11 +409,44 @@ export class AdBotService {
       merge(stats7);
     }
 
-    // Слова на авто-ставке (AdKeywordPolicy): их ставки меняет автобиддер, бот добавляет им только минус-слова.
-    const managedRows = await this.prisma.adKeywordPolicy.findMany({ where: { enabled: true }, select: { adId: true } }).catch(() => [] as Array<{ adId: string }>);
-    const managed = new Set<string>((managedRows as Array<{ adId: string }>).map((row) => row.adId));
+    // Слова на авто-ставке (AdKeywordPolicy, ключ «кампания|цвет|запрос»): их ставки меняет автобиддер, бот добавляет им только минус-слова.
+    const managedRows = await this.prisma.adKeywordPolicy.findMany({ where: { enabled: true }, select: { key: true } }).catch(() => [] as Array<{ key: string }>);
+    const managedKeys = new Set<string>((managedRows as Array<{ key: string }>).map((row) => row.key));
+    const managed = new Set<string>(keywords.filter((keyword) => managedKeys.has(`${keyword.campaignId}|${keyOf(keyword.skuGroupId, keyword.query)}`)).map((keyword) => keyword.adId));
 
     return { campaigns, notes, input: { keywords, stats14, stats7, groups, feed, lastChange, now, managed } };
+  }
+
+  /**
+   * Статистика слов по ключу «цвет|запрос» (normalizeQuery): Cube считает по bid_id, а Uzum при каждой правке
+   * ставки пересоздаёт объявление с новым id — поэтому суммируем все id ключа: текущий и те, что знает журнал бота
+   * (adId до правки, response.newAdId после). Для автобиддера (modules/ads/auto-bidder.service.ts).
+   */
+  async keywordStatsByKey(sellerId: string, keywords: AdBotKeyword[], from: string, to: string): Promise<Map<string, AdBotStats>> {
+    const byId = await this.keywordStats(sellerId, from, to);
+    const keyOf = (skuGroupId: string, query: string) => `${skuGroupId}|${normalizeQuery(query)}`;
+    const idsByKey = new Map<string, Set<string>>();
+    const addId = (key: string, id: unknown) => { if (id) idsByKey.set(key, (idsByKey.get(key) ?? new Set()).add(String(id))); };
+    const history = await this.prisma.adBotChange.findMany({
+      where: { status: 'SENT', dryRun: false, createdAt: { gte: new Date(Date.now() - 45 * 86_400_000) } },
+      select: { skuGroupId: true, query: true, adId: true, response: true },
+    }).catch(() => [] as any[]);
+    for (const row of history as any[]) { const key = keyOf(row.skuGroupId, row.query); addId(key, row.adId); addId(key, row.response?.newAdId); }
+    for (const keyword of keywords) addId(keyOf(keyword.skuGroupId, keyword.query), keyword.adId);
+    const result = new Map<string, AdBotStats>();
+    for (const keyword of keywords) {
+      const key = keyOf(keyword.skuGroupId, keyword.query);
+      if (result.has(key)) continue;
+      const parts = [...(idsByKey.get(key) ?? [])].map((id) => byId.get(id)).filter((row): row is AdBotStats => Boolean(row));
+      if (!parts.length) continue;
+      const sum = (field: 'impressions' | 'clicks' | 'sold' | 'revenue' | 'spend') => parts.reduce((total, row) => total + row[field], 0);
+      const withPosition = parts.filter((row) => row.position !== null && row.impressions > 0);
+      const position = withPosition.length
+        ? withPosition.reduce((total, row) => total + (row.position as number) * row.impressions, 0) / withPosition.reduce((total, row) => total + row.impressions, 0)
+        : null;
+      result.set(key, { impressions: sum('impressions'), clicks: sum('clicks'), sold: sum('sold'), revenue: sum('revenue'), spend: sum('spend'), position });
+    }
+    return result;
   }
 
   /** sellerId кабинета — для автобиддера (modules/ads/auto-bidder.service.ts). */

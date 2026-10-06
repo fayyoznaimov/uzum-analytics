@@ -17,7 +17,7 @@
  * слово не трогаем чаще раза в cooldownMinutes.
  */
 import type { AdBotAction, AdBotStats } from './ad-bot';
-import { drrPercent } from './ad-bot';
+import { drrPercent, normalizeQuery } from './ad-bot';
 
 export const AUTO_BIDDER_DEFAULTS = {
   minBid: 9_500,
@@ -38,8 +38,14 @@ export type AutoBidderConfig = typeof AUTO_BIDDER_DEFAULTS;
 /** Ступень лестницы кабинета: какая ставка покупает какой охват (и какую примерно позицию). */
 export type BidLadderStep = { position: number | null; cpm: number; impressionPercent: number };
 
+/** Ключ слова: Uzum при каждой правке ставки пересоздаёт объявление с новым id, поэтому слово опознаём по «кампания|цвет|запрос». */
+export const policyKey = (campaignId: string, skuGroupId: string, query: string) => `${campaignId}|${skuGroupId}|${normalizeQuery(query)}`;
+
 export type AutoBidPolicy = {
-  adId: string;
+  id: string;
+  key: string;
+  /** Последний известный id объявления; после правки ставки у слова будет новый. */
+  adId: string | null;
   campaignId: string;
   skuGroupId: string;
   query: string;
@@ -202,15 +208,15 @@ export function decideAutoBid(policy: AutoBidPolicy, keyword: AutoBidKeyword, ct
 export type AutoBidderPlanRow = { policy: AutoBidPolicy; keyword: AutoBidKeyword; decision: AutoBidDecision };
 export type AutoBidderPlan = { rows: AutoBidderPlanRow[]; actions: AdBotAction[]; notes: string[] };
 
-/** План по всем включённым словам: действия в формате рекламного бота — их отправляет тот же PUT кампании. */
-export function planAutoBidder(policies: AutoBidPolicy[], keywords: Map<string, AutoBidKeyword>, context: (adId: string) => AutoBidContext, cfg: AutoBidderConfig = AUTO_BIDDER_DEFAULTS): AutoBidderPlan {
+/** План по всем включённым словам. keywords и context — по ключу слова (policyKey), не по id объявления. */
+export function planAutoBidder(policies: AutoBidPolicy[], keywords: Map<string, AutoBidKeyword>, context: (key: string) => AutoBidContext, cfg: AutoBidderConfig = AUTO_BIDDER_DEFAULTS): AutoBidderPlan {
   const rows: AutoBidderPlanRow[] = [];
   const actions: AdBotAction[] = [];
   const notes: string[] = [];
   for (const policy of policies) {
-    const keyword = keywords.get(policy.adId);
+    const keyword = keywords.get(policy.key);
     if (!keyword) { notes.push(`«${policy.query}»: слова больше нет в кампании ${policy.campaignId} — авто-ставка пропущена`); continue; }
-    const decision = decideAutoBid(policy, keyword, context(policy.adId), cfg);
+    const decision = decideAutoBid(policy, keyword, context(policy.key), cfg);
     rows.push({ policy, keyword, decision });
     if (decision.kind === 'KEEP') continue;
     if (decision.newCpm === keyword.cpm) continue;
@@ -233,11 +239,11 @@ export function formatAutoBidderReport(input: { label: string; apply: boolean; p
   const head = `🎯 Авто-ставка, ${input.label} — ${input.apply ? 'ставки меняются' : 'только предложения, ничего не меняется'}\nСлов на авто-ставке: ${input.plan.rows.length}; изменений: ${changed.length}`;
   const lines: string[] = [];
   for (const note of [...input.notes, ...input.plan.notes]) lines.push(`⚠️ ${note}`);
-  const outcome = new Map(input.outcomes.map((row) => [row.action.adId, row]));
+  const outcome = new Map(input.outcomes.map((row) => [policyKey(row.action.campaignId, row.action.skuGroupId, row.action.query), row]));
   let campaign = '';
   for (const row of changed) {
     if (row.keyword.campaignName !== campaign) { campaign = row.keyword.campaignName; lines.push('', `📣 ${campaign}`); }
-    const done = outcome.get(row.keyword.adId);
+    const done = outcome.get(row.policy.key);
     const verb = input.apply ? LABELS[row.decision.kind] : LABELS[row.decision.kind].replace('подняли', 'поднять').replace('снизили', 'снизить').replace('приостановили', 'приостановить');
     lines.push(`${verb} «${row.keyword.query}»: ${fmt(row.keyword.cpm)} → ${fmt(row.decision.newCpm)}${row.decision.currentReach !== null ? ` (охват ${row.decision.currentReach}% → цель ${row.policy.targetReach}%)` : ''}${done ? (done.ok ? ' ✅' : ` ❌ ${done.message}`) : ''}`);
     lines.push(`   ${row.decision.reason}`);

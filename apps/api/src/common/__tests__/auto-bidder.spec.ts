@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AdBotStats } from '../ad-bot';
-import { AUTO_BIDDER_DEFAULTS, AutoBidContext, AutoBidKeyword, AutoBidPolicy, BidLadderStep, bidForReach, decideAutoBid, formatAutoBidderReport, parseLadder, planAutoBidder, reachForBid } from '../auto-bidder';
+import { AUTO_BIDDER_DEFAULTS, AutoBidContext, AutoBidKeyword, AutoBidPolicy, BidLadderStep, bidForReach, decideAutoBid, formatAutoBidderReport, parseLadder, planAutoBidder, policyKey, reachForBid } from '../auto-bidder';
 
 const now = new Date('2026-10-06T12:00:00+05:00');
 const ladder: BidLadderStep[] = [
@@ -8,7 +8,8 @@ const ladder: BidLadderStep[] = [
   { position: 9, cpm: 27_776, impressionPercent: 70 }, { position: 13, cpm: 25_281, impressionPercent: 60 }, { position: 19, cpm: 21_899, impressionPercent: 50 },
   { position: 27, cpm: 19_164, impressionPercent: 40 }, { position: 39, cpm: 15_892, impressionPercent: 30 }, { position: 51, cpm: 11_951, impressionPercent: 20 },
 ];
-const policy = (patch: Partial<AutoBidPolicy> = {}): AutoBidPolicy => ({ adId: '1', campaignId: '332097', skuGroupId: '4160952', query: 'katta hammom sochiq', enabled: true, targetReach: 60, maxBid: 30_000, maxDrr: 10, pausedAt: null, ...patch });
+const KEY = policyKey('332097', '4160952', 'katta hammom sochiq');
+const policy = (patch: Partial<AutoBidPolicy> = {}): AutoBidPolicy => ({ id: 'p1', key: KEY, adId: '1', campaignId: '332097', skuGroupId: '4160952', query: 'katta hammom sochiq', enabled: true, targetReach: 60, maxBid: 30_000, maxDrr: 10, pausedAt: null, ...patch });
 const keyword = (patch: Partial<AutoBidKeyword> = {}): AutoBidKeyword => ({ campaignId: '332097', campaignName: 'Банное 100×150', adId: '1', skuGroupId: '4160952', query: 'katta hammom sochiq', cpm: 15_000, stopWords: [], ...patch });
 const st = (patch: Partial<AdBotStats> = {}): AdBotStats => ({ impressions: 400, clicks: 10, sold: 1, revenue: 150_000, spend: 9_000, position: 20, ...patch });
 const ctx = (patch: Partial<AutoBidContext> = {}): AutoBidContext => ({ ladder, stats7: st(), stats14: st(), lastChange: null, now, ...patch });
@@ -102,20 +103,23 @@ describe('решение по слову', () => {
 
 describe('план и отчёт', () => {
   it('собирает действия в формате рекламного бота и отмечает пропавшие слова', () => {
-    const plan = planAutoBidder([policy(), policy({ adId: '2', query: 'нет такого' })], new Map([['1', keyword()]]), () => ctx());
+    const plan = planAutoBidder([policy(), policy({ id: 'p2', key: policyKey('332097', '4160952', 'нет такого'), adId: '2', query: 'нет такого' })], new Map([[KEY, keyword()]]), () => ctx());
     expect(plan.actions).toHaveLength(1);
     expect(plan.actions[0]).toMatchObject({ kind: 'RAISE', adId: '1', oldCpm: 15_000, newCpm: 19_000 });
     expect(plan.actions[0].reason).toContain('авто-ставка');
     expect(plan.notes[0]).toContain('нет такого');
   });
   it('отчёт: изменения с охватом, итог отправки, без изменений — короткая строка', () => {
-    const plan = planAutoBidder([policy()], new Map([['1', keyword()]]), () => ctx());
+    const plan = planAutoBidder([policy()], new Map([[KEY, keyword()]]), () => ctx());
     const [raw] = formatAutoBidderReport({ label: '06.10 12:00', apply: true, plan, outcomes: [{ action: plan.actions[0], ok: true, message: 'готово' }], notes: [] });
     const text = raw.replace(/ /g, ' ');
     expect(text).toContain('ставки меняются');
     expect(text).toContain('15 000 → 19 000 (охват 20% → цель 60%) ✅');
     const quiet = formatAutoBidderReport({ label: 'x', apply: false, plan: { rows: [], actions: [], notes: [] }, outcomes: [], notes: [] });
     expect(quiet[0]).toContain('Ставки на месте');
+  });
+  it('ключ слова не зависит от регистра, ё и знаков в запросе', () => {
+    expect(policyKey('1', '2', ' Полотенце, для САУНЫ! ')).toBe('1|2|полотенце для сауны');
   });
   it('параметры по умолчанию соответствуют кабинету', () => {
     expect(AUTO_BIDDER_DEFAULTS.minBid).toBe(9_500);
