@@ -66,8 +66,8 @@ function resolve(doc: any, schema: any, depth = 0): any {
 async function probe(token: string, prisma: PrismaService) {
   const fbs = await prisma.supply.findFirst({ where: { type: 'FBS' }, orderBy: { createdAt: 'desc' } });
   const id = fbs?.externalId ?? '1';
-  console.log(`Прощуп по FBS-накладной №${id}${fbs ? ` (${fbs.status}, слот ${fbs.slotFrom ? 'назначен' : 'нет'})` : ' (в БД нет FBS-поставок, id условный)'}
-`);
+  console.log(`Прощуп по FBS-накладной №${id}${fbs ? ` (${fbs.status}, слот ${fbs.slotFrom ? 'назначен' : 'нет'})` : ' (в БД нет FBS-поставок, id условный)'}`);
+  console.log('');
   const paths = [
     '/v1/fbs/invoice', '/v1/fbs/invoice/dop', '/v1/fbs/invoice/dop/time-slot', '/v1/fbs/invoice/time-slot', '/v1/fbs/invoice/dop/time-slot/reserve',
     `/v1/fbs/invoice/${id}`, `/v1/fbs/invoice/${id}/time-slot`, `/v1/fbs/invoice/${id}/dop`, `/v1/fbs/invoice/${id}/dop/time-slot`, `/v1/fbs/invoice/${id}/reserve`,
@@ -85,9 +85,8 @@ async function probe(token: string, prisma: PrismaService) {
         out.push(`${method} ${response.status}${allow ? ` Allow=${allow}` : ''}${response.status !== 404 && text ? ` ${text}` : ''}`);
       } catch (error: any) { out.push(`${method} ошибка ${error?.message || error}`); }
     }
-    console.log(`${path}
-   ${out.join('
-   ')}`);
+    console.log([path, ...out.map((line) => `   ${line}`)].join('
+'));
   }
 }
 
