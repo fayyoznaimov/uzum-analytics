@@ -62,6 +62,9 @@ export const AD_BOT_DEFAULTS = {
    * теплые для дома» получили 20 000 по медиане. Дальше ставку ведут правила по ДРР. */
   newKeywordBid: 9_500,
   uzbekKeywordBid: 9_500,
+  /** Узбекскую фразу (латиница или «сочик…») без продаж за 14 дней бот не поднимает выше этой ставки — ни «ради охвата»,
+   * ни «снова на складе»: 07.10.2026 владелец — «если есть заказы, пускай остаётся, если нет — урезай». */
+  uzbekNoSaleMaxBid: 9_500,
   /** Новая фраза берётся, только если в запросе есть слово товара и нет запретного: Uzum подбирает показы
    * широко, и в запросах с продажей бывают посторонние вещи («штаны», «халат», «barashka pled»). */
   productWords: ['полотен', 'sochiq', 'сочик', 'махров', 'банн', 'плед', 'pled', 'покрывал', 'yopinchiq', 'adyol', 'parisa'] as string[],
@@ -158,6 +161,11 @@ export const normalizeQuery = (value: string) => value.toLowerCase().replace(/ё
 export function isLatinQuery(query: string): boolean {
   return /[a-z]/.test(query) && !/[а-яё]/i.test(query);
 }
+/** Узбекский запрос: латиница или кириллицей «сочиклар». */
+export function isUzbekQuery(query: string): boolean {
+  const text = normalizeQuery(query);
+  return isLatinQuery(text) || text.includes('сочик');
+}
 
 export function clampBid(value: number, direction: 'up' | 'down', cfg: Pick<AdBotConfig, 'minBid' | 'maxBid' | 'bidRounding'> = AD_BOT_DEFAULTS): number {
   const step = Math.max(1, cfg.bidRounding);
@@ -192,7 +200,12 @@ export function decideKeyword(keyword: AdBotKeyword, input: AdBotInput, base: Ad
   const group = input.groups.get(keyword.skuGroupId);
   const price = group?.price ?? null;
   const stockOk = group?.stock === null || group?.stock === undefined || group.stock > cfg.lowStockUnits;
+  const uzbekNoSale = isUzbekQuery(keyword.query) && s14.sold === 0;
   const action = (kind: AdBotActionKind, newCpm: number, reason: string): AdBotAction | null => {
+    if (kind === 'RAISE' && uzbekNoSale) {
+      newCpm = Math.min(newCpm, cfg.uzbekNoSaleMaxBid);
+      if (newCpm <= keyword.cpm) return null;
+    }
     if (kind !== 'SUSPEND' && newCpm === keyword.cpm) return null;
     return {
       kind, campaignId: keyword.campaignId, campaignName: keyword.campaignName, skuGroupId: keyword.skuGroupId,
@@ -376,7 +389,8 @@ export function buildCampaignUpdate(campaign: { name: string; budgetConfig: any;
   };
 }
 
-export type SeedPhrase = { query: string; cpm: number };
+/** onlyExisting — только ставка существующим, в цвета без фразы не добавлять; exceptGroups — эти цвета не трогать. */
+export type SeedPhrase = { query: string; cpm: number; onlyExisting?: boolean; exceptGroups?: string[] };
 /** Правка минус-слов существующих фраз кампании: убрать remove, добавить add; если список упёрся в 58 —
  * сначала выбросить dropIfFull (бесполезные слова), что не влезло — не добавлять. onlyLatin — только узбекские фразы. */
 export type SeedStopWords = { add?: string[]; remove?: string[]; dropIfFull?: string[]; onlyLatin?: boolean };
@@ -462,7 +476,7 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
       const common = { campaignId: spec.campaignId, campaignName: inGroup[0].campaignName, skuGroupId, groupTitle: skuGroupId };
       for (const phrase of spec.phrases ?? []) {
         const query = normalizeQuery(phrase.query);
-        if (!query) continue;
+        if (!query || phrase.exceptGroups?.includes(skuGroupId)) continue;
         const cpm = clampBid(phrase.cpm, 'down', cfg);
         const existing = inGroup.find((row) => normalizeQuery(row.query) === query);
         if (existing) {
@@ -470,6 +484,7 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
           actions.push({ ...common, kind: existing.cpm > cpm ? 'LOWER' : 'RAISE', adId: existing.adId, query: existing.query, oldCpm: existing.cpm, newCpm: cpm, stopWords: existing.stopWords, reason: `ручная ставка ${fmt(cpm)} (было ${fmt(existing.cpm)})` });
           continue;
         }
+        if (phrase.onlyExisting) continue;
         let stopWords = baseStop;
         if (isLatinQuery(query) && baseStop.some((word) => normalizeQuery(word) === 'soch')) {
           stopWords = [...baseStop.filter((word) => normalizeQuery(word) !== 'soch'), 'soch uchun', 'sochlar uchun'].slice(0, cfg.maxStopWords);

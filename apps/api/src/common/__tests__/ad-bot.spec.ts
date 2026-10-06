@@ -77,6 +77,15 @@ describe('решения по слову', () => {
     expect(decide({ groups: slow() }, { sold: 1, revenue: 200_000, spend: 30_000 })).toBeNull();
     expect(decide({}, { sold: 1, revenue: 200_000, spend: 30_000 })?.kind).toBe('LOWER');
   });
+  it('узбекская фраза без продаж — не поднимаем выше 9 500 ни ради охвата, ни «снова на складе»; с продажей — как обычно', () => {
+    const groups = new Map([['4160950', { skuGroupId: '4160950', title: 'ШОКОЛ', stock: 19, price: 69_200 }]]);
+    const uz = (patch: Partial<AdBotKeyword>, s14: Partial<AdBotStats>, s7: Partial<AdBotStats>) => decideKeyword(kw({ query: 'sochiqlar', ...patch }), input({ groups, keywords: [kw({ query: 'sochiqlar', ...patch })] }, s14, s7));
+    expect(uz({ cpm: 9_500 }, { impressions: 0, clicks: 0 }, { impressions: 0 })).toBeNull();
+    expect(uz({ cpm: 9_500 }, { impressions: 100, clicks: 2, spend: 3_000 }, { impressions: 40 })).toBeNull();
+    expect(uz({ cpm: 9_500, query: 'сочиклар' }, { impressions: 100, clicks: 2, spend: 3_000 }, { impressions: 40 })).toBeNull();
+    expect(uz({ cpm: 20_000 }, { sold: 3, revenue: 600_000, spend: 20_000, position: 9 }, {})).toMatchObject({ kind: 'RAISE', newCpm: 22_000 });
+    expect(uz({ cpm: 20_000 }, { spend: 120_000, clicks: 40 }, {})).toMatchObject({ kind: 'LOWER' });
+  });
   it('мало остатка — ставка на минимум и не поднимаем', () => {
     const groups = new Map([['4160950', { skuGroupId: '4160950', title: 'СЕРЫЙ', stock: 2, price: 200_000 }]]);
     expect(decide({ groups }, { impressions: 100 }, { impressions: 40 })).toMatchObject({ kind: 'LOWER', newCpm: 9_500 });
@@ -146,7 +155,7 @@ describe('новые слова и план', () => {
     expect(isRelevantQuery('детская кроватка')).toBe(false);
   });
   it('план: сначала снижения, потом новые слова, потом повышения; лимит за запуск', () => {
-    const keywords = [kw(), kw({ adId: '2', query: 'katta sochiq' })];
+    const keywords = [kw(), kw({ adId: '2', query: 'большое полотенце' })];
     const data = input({ keywords, feed, stats14: new Map([['1', st({ spend: 120_000, clicks: 40 })], ['2', st({ impressions: 50 })]]), stats7: new Map([['2', st({ impressions: 10 })]]) });
     const plan = planAdBot(data);
     expect(plan.actions.map((row) => row.kind)).toEqual(['LOWER', 'ADD', 'RAISE']);
@@ -195,6 +204,9 @@ describe('ручной посев фраз', () => {
     expect(actions[5].stopWords).toEqual(['soch', 'вафельное']);
     // чужая кампания не тронута; совпадающая ставка — без действия
     expect(seedKeywordActions(keywords, [{ campaignId: '286528', phrases: [{ query: 'полотенце', cpm: 40_000 }] }])).toEqual([]);
+    // onlyExisting — в цвета без фразы не добавляем; exceptGroups — цвет не трогаем
+    const only = seedKeywordActions(keywords, [{ campaignId: '332097', phrases: [{ query: 'полотенце для сауны', cpm: 9_500, onlyExisting: true, exceptGroups: ['777'] }, { query: 'sauna sochiq', cpm: 9_500, onlyExisting: true }] }]);
+    expect(only.map((row) => [row.skuGroupId, row.kind, row.newCpm])).toEqual([['4160950', 'LOWER', 9_500]]);
   });
   it('правка минус-слов: убрать, добавить, при полном списке выбросить бесполезные; только узбекские фразы', () => {
     const full = Array.from({ length: 56 }, (_, index) => `слово${index}`).concat(['soch', 'майнкрафт']);
