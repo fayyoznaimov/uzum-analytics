@@ -1,0 +1,38 @@
+# Дамп документации Uzum Seller OpenAPI (пути, параметры, тела) — ручной запуск из GitHub (Actions → «Документация Uzum API»).
+# Выполняется на сервере ParisaUbuntu: swagger открывается только с токеном продавца, который лежит в БД там.
+# Только чтение; токен в лог не попадает.
+name: Документация Uzum API
+
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: 'Подстрока пути (например fbs, shop, finance); пусто — fbs'
+        type: string
+        default: 'fbs'
+      all:
+        description: 'Все пути, только метод и название'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  uzum-openapi:
+    runs-on: [self-hosted, uzum-server]
+    timeout-minutes: 10
+    steps:
+      - name: Документация Uzum API
+        env:
+          FILTER: ${{ inputs.filter }}
+          ALL: ${{ inputs.all }}
+        run: |
+          set -euo pipefail
+          args=()
+          [ -n "$FILTER" ] && args+=("--filter=$FILTER")
+          [ "$ALL" = "true" ] && args+=(--all)
+          cd ~/uzum
+          set -a && . ./.env && set +a
+          npx tsx apps/api/scripts/uzum-openapi.ts "${args[@]}"
