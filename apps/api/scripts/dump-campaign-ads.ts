@@ -2,6 +2,7 @@
  * Сырой список объявлений кампании «Буст в ТОП» — какие группы и статусы отдаёт кабинет.
  *
  *   npx tsx apps/api/scripts/dump-campaign-ads.ts --campaign 286528 [--raw]
+ *   ... --ads                                   каждое объявление строкой: id, фраза, ставка
  *
  * Токен кабинета берётся из БД (UZUM_INTERNAL) и нигде не печатается.
  */
@@ -89,6 +90,8 @@ async function main() {
         const types = [...new Set(ads.map((ad) => String(ad.promotionType ?? '—')))].join(',');
         console.log(`стр.${page} группа ${group.skuGroupId} «${group.skuGroupName ?? group.name ?? group.title ?? ''}» статус группы ${group.status ?? '—'} объявлений ${ads.length} статусы [${statuses}] типы [${types}]`);
         if (flag('raw')) console.log(JSON.stringify(group).slice(0, 1500));
+        // --ads: каждое объявление строкой — id, фраза, ставка, число минус-слов (новые объявления — с наибольшим id).
+        if (flag('ads')) for (const ad of ads) console.log(`объявление ${ad.id} | группа ${group.skuGroupId} | «${ad.query}» | ${ad.cpm} | минус-слов ${Array.isArray(ad.stopWords) ? ad.stopWords.length : 0}`);
       }
       if (groups.length < 10) break;
     }
