@@ -77,6 +77,18 @@ export class TelegramClient {
     return this.call<any[]>(token, 'getUpdates', { timeout: 0, allowed_updates: ['message', 'callback_query'], ...(offset ? { offset } : {}) });
   }
 
+  /**
+   * Кнопка меню чата (слева от поля ввода) открывает мини-приложение.
+   * Telegram принимает только https-адрес, поэтому вызывающий код сначала
+   * проверяет схему: иначе метод вернёт ошибку BUTTON_URL_INVALID.
+   */
+  setChatMenuButton(token: string, chatId: string, text: string, url: string) {
+    return this.call<boolean>(token, 'setChatMenuButton', {
+      chat_id: chatId,
+      menu_button: { type: 'web_app', text, web_app: { url } },
+    });
+  }
+
   answerCallbackQuery(token: string, callbackQueryId: string) {
     return this.call<boolean>(token, 'answerCallbackQuery', { callback_query_id: callbackQueryId });
   }

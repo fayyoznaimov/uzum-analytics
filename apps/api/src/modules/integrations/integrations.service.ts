@@ -28,8 +28,20 @@ export class IntegrationsService {
     @Inject(forwardRef(() => ReviewsService)) private readonly reviews: ReviewsService,
   ) {}
 
+  /**
+   * Адрес мини-приложения. Telegram открывает Web App только по https, поэтому
+   * http-адрес (например, локальный http://172.0.30.4:3200) не подставляем —
+   * кнопка с ним вернула бы BUTTON_URL_INVALID и сломала всё меню.
+   */
+  private miniAppUrl() {
+    const url = String(process.env.TELEGRAM_MINIAPP_URL || '').trim();
+    return /^https:\/\//.test(url) ? url.replace(/\/$/, '') : null;
+  }
+
   private telegramMenu() {
+    const miniApp = this.miniAppUrl();
     return { inline_keyboard: [
+      ...(miniApp ? [[{ text: '📱 Профит сегодня', web_app: { url: miniApp } }]] : []),
       [
         { text: '📊 Сегодня', callback_data: 'report:today' },
         { text: '📅 Вчера', callback_data: 'report:yesterday' },
@@ -263,11 +275,20 @@ export class IntegrationsService {
     await this.telegram.sendMessage(token, chatId, text, 'HTML', this.telegramMenu());
   }
 
+  /** Кнопка меню чата → мини-приложение; молча пропускаем, если адрес не задан. */
+  private async syncMiniAppMenuButton(token: string, chatId: string) {
+    const miniApp = this.miniAppUrl();
+    if (!miniApp) return;
+    await this.telegram.setChatMenuButton(token, chatId, 'Профит', miniApp)
+      .catch((error: any) => this.logger.warn(`Кнопка мини-приложения не установлена: ${error?.message || error}`));
+  }
+
   async sendTelegramMenu() {
     const stored = await this.getPlain(IntegrationType.TELEGRAM);
     const token = stored?.token;
     const chatId = String(stored?.metadata?.chatId || '');
     if (!token || !chatId) throw new BadRequestException('Telegram-бот или Chat ID не настроены');
+    await this.syncMiniAppMenuButton(token, chatId);
     const sent = await this.telegram.sendMessage(token, chatId, 'Выберите отчёт:', undefined, this.telegramMenu());
     return { ok: true, messageId: sent.message_id };
   }
@@ -310,6 +331,10 @@ export class IntegrationsService {
           } else if (action?.startsWith('reviews:send:')) {
             await this.sendReviewAndAdvance(token, chatId, action.slice('reviews:send:'.length));
           } else if (action === 'menu' || update.message?.text === '/start' || update.message?.text === '/menu') {
+            // Заодно держим кнопку меню чата (слева от поля ввода) привязанной к
+            // мини-приложению: адрес туннеля меняется, а /start — самый частый
+            // способ переоткрыть бота, так что привязка обновляется бесплатно.
+            await this.syncMiniAppMenuButton(token, chatId);
             await this.telegram.sendMessage(token, chatId, 'Выберите отчёт:', undefined, this.telegramMenu());
           }
         } catch (error: any) {

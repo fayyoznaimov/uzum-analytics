@@ -1,0 +1,34 @@
+/* Мини-приложение Telegram: отдельная мобильная тема, цвета берём из клиента
+   Telegram (tg-theme-*), чтобы экран совпадал со светлой/тёмной темой телефона. */
+.tg-app{--tg-bg:var(--tg-theme-bg-color,#fff);--tg-fg:var(--tg-theme-text-color,#17191f);--tg-hint:var(--tg-theme-hint-color,#707579);--tg-card:var(--tg-theme-section-bg-color,var(--tg-theme-secondary-bg-color,#f4f5f8));--tg-line:rgba(128,134,148,.22);--tg-accent:var(--tg-theme-button-color,#6c47ff);--tg-accent-fg:var(--tg-theme-button-text-color,#fff);--tg-green:#1aab55;--tg-red:#e8453c;min-height:100vh;background:var(--tg-bg);color:var(--tg-fg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;padding:12px 12px 28px;box-sizing:border-box}
+.tg-app *{box-sizing:border-box}
+.tg-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:2px 2px 10px}
+.tg-head h1{margin:0;font-size:17px;font-weight:700}
+.tg-head span{font-size:12px;color:var(--tg-hint)}
+.tg-periods{display:flex;gap:6px;overflow-x:auto;padding:0 2px 10px;scrollbar-width:none}
+.tg-periods::-webkit-scrollbar{display:none}
+.tg-periods button{flex:0 0 auto;border:0;border-radius:999px;padding:7px 13px;font-size:13px;font-weight:600;background:var(--tg-card);color:var(--tg-fg);cursor:pointer}
+.tg-periods button.on{background:var(--tg-accent);color:var(--tg-accent-fg)}
+.tg-card{background:var(--tg-card);border-radius:16px;padding:14px;margin-bottom:10px}
+.tg-card h2{margin:0 0 10px;font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--tg-hint)}
+.tg-hero{display:flex;align-items:flex-end;gap:8px;margin-bottom:12px}
+.tg-hero strong{font-size:30px;line-height:1;font-weight:800;letter-spacing:-.02em}
+.tg-hero small{font-size:13px;color:var(--tg-hint);padding-bottom:3px}
+.tg-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid var(--tg-line);font-size:14px}
+.tg-row:first-of-type{border-top:0}
+.tg-row span{color:var(--tg-hint)}
+.tg-row b{font-weight:700;text-align:right;white-space:nowrap}
+.tg-row.big{font-size:16px;padding:10px 0}
+.tg-row.big b{font-size:19px}
+.tg-green{color:var(--tg-green)}
+.tg-red{color:var(--tg-red)}
+.tg-unknown{color:var(--tg-hint);font-weight:600}
+.tg-sub{font-size:12px;color:var(--tg-hint);margin:4px 2px 0;line-height:1.45}
+.tg-notes{margin:12px 2px 0;font-size:12px;color:var(--tg-hint);line-height:1.5}
+.tg-notes p{margin:0 0 6px}
+.tg-refresh{display:block;width:100%;margin-top:14px;border:0;border-radius:12px;padding:13px;font-size:15px;font-weight:600;background:var(--tg-accent);color:var(--tg-accent-fg);cursor:pointer}
+.tg-refresh:disabled{opacity:.6}
+.tg-state{padding:40px 16px;text-align:center;color:var(--tg-hint);font-size:14px;line-height:1.5}
+.tg-state b{display:block;color:var(--tg-fg);font-size:15px;margin-bottom:6px}
+.tg-skeleton{height:92px;border-radius:16px;background:var(--tg-card);margin-bottom:10px;animation:tg-pulse 1.2s ease-in-out infinite}
+@keyframes tg-pulse{0%,100%{opacity:1}50%{opacity:.55}}
