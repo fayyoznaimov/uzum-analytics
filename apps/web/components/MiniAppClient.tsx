@@ -26,19 +26,54 @@ type Summary = {
 
 function tg() { return typeof window === 'undefined' ? null : (window as any).Telegram?.WebApp || null; }
 
-/** Скрипт Telegram подключается на клиенте: без него initData недоступен. */
+const INIT_DATA_KEY = 'uzum-miniapp-init-data';
+
+/**
+ * initData из адреса страницы. Telegram кладёт подпись в фрагмент
+ * (#tgWebAppData=...), а telegram-web-app.js лишь разбирает его, поэтому адрес —
+ * единственный источник, который работает даже когда скрипт с telegram.org не
+ * загрузился: у операторов в UZ домен telegram.org нередко режется, и тогда
+ * window.Telegram не появляется вовсе.
+ */
+export function readInitDataFromUrl(hash: string, search: string): string {
+  for (const raw of [hash, search]) {
+    if (!raw) continue;
+    const value = new URLSearchParams(raw.replace(/^[#?]/, '')).get('tgWebAppData');
+    if (value) return value;
+  }
+  return '';
+}
+
+/** Подпись Telegram: из SDK, если он доступен, иначе из адреса страницы. */
 function useTelegram() {
-  const [ready, setReady] = useState(false);
+  const [state, setState] = useState<{ ready: boolean; initData: string }>({ ready: false, initData: '' });
   useEffect(() => {
-    if (tg()) { tg().ready?.(); tg().expand?.(); setReady(true); return; }
+    const fromUrl = readInitDataFromUrl(window.location.hash, window.location.search);
+    // Переключение периода не теряет подпись, даже если Telegram вычистил фрагмент.
+    try {
+      if (fromUrl) sessionStorage.setItem(INIT_DATA_KEY, fromUrl);
+    } catch { /* приватный режим — просто обойдёмся адресом */ }
+    const stored = (() => { try { return sessionStorage.getItem(INIT_DATA_KEY) || ''; } catch { return ''; } })();
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      tg()?.ready?.();
+      tg()?.expand?.();
+      setState({ ready: true, initData: tg()?.initData || fromUrl || stored });
+    };
+    if (tg()) { finish(); return; }
     const script = document.createElement('script');
     script.src = 'https://telegram.org/js/telegram-web-app.js';
     script.async = true;
-    script.onload = () => { tg()?.ready?.(); tg()?.expand?.(); setReady(true); };
-    script.onerror = () => setReady(true);
+    script.onload = finish;
+    script.onerror = finish;
     document.head.appendChild(script);
+    // Скрипт может висеть без ответа (заблокированный домен) — не ждём его дольше 2 секунд.
+    const timer = setTimeout(finish, 2000);
+    return () => clearTimeout(timer);
   }, []);
-  return ready;
+  return state;
 }
 
 /** Прибыль показываем числом только когда бэкенд её знает целиком, иначе — «не рассчитана». */
@@ -48,17 +83,17 @@ function Profit({ value, suffix }: { value: number | null; suffix?: string }) {
 }
 
 export default function MiniAppClient() {
-  const ready = useTelegram();
+  const { ready, initData } = useTelegram();
   const [period, setPeriod] = useState('today');
   const [data, setData] = useState<Summary | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async (key: string) => {
+  const load = useCallback(async (key: string, auth: string) => {
     setLoading(true); setError('');
     try {
-      const initData = tg()?.initData || '';
-      const response = await fetch(`${API}/miniapp/summary?period=${key}`, { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+      if (!auth) throw new Error('Telegram не передал подпись. Откройте мини-приложение кнопкой «📱 Профит сегодня» в меню бота — по обычной ссылке из браузера данные не открываются.');
+      const response = await fetch(`${API}/miniapp/summary?period=${key}`, { headers: { 'x-telegram-init-data': auth }, cache: 'no-store' });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(Array.isArray(body?.message) ? body.message.join(', ') : body?.message || `HTTP ${response.status}`);
       setData(body as Summary);
@@ -69,7 +104,7 @@ export default function MiniAppClient() {
     }
   }, []);
 
-  useEffect(() => { if (ready) void load(period); }, [ready, period, load]);
+  useEffect(() => { if (ready) void load(period, initData); }, [ready, period, initData, load]);
 
   const title = data?.period.title || PERIODS.find(([key]) => key === period)?.[1] || '';
   return <div className="tg-app">
@@ -109,6 +144,6 @@ export default function MiniAppClient() {
       </section>}
       <div className="tg-notes">{data.notes.map((note) => <p key={note}>{note}</p>)}</div>
     </>}
-    <button className="tg-refresh" disabled={loading} onClick={() => void load(period)}>{loading ? 'Обновляю…' : 'Обновить'}</button>
+    <button className="tg-refresh" disabled={loading} onClick={() => void load(period, initData)}>{loading ? 'Обновляю…' : 'Обновить'}</button>
   </div>;
 }
