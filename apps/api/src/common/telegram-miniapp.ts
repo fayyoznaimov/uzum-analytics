@@ -105,7 +105,17 @@ export type MiniAppSummary = {
     advertisingCoverage: number | null;
   };
   bought: { units: number; revenue: number; payout: number };
-  profit: { net: number | null; marginPercent: number | null };
+  profit: {
+    /** Финальная прибыль: null, пока хоть один вход неизвестен. */
+    net: number | null;
+    marginPercent: number | null;
+    /** Прибыль по фактическим данным «на сейчас»: модельная реклама в неё не входит. */
+    current: number | null;
+    currentMarginPercent: number | null;
+    final: boolean;
+    /** Что ещё может уточнить число. */
+    pending: string[];
+  };
   expenses: {
     cogs: number; commission: number; commissionPercent: number;
     logistics: number; advertising: number; advertisingPercent: number;
@@ -141,9 +151,22 @@ export function buildMiniAppSummary(
   const tax = num(m.taxExpense);
   const logistics = num(m.marketplaceLogistics);
   const otherFees = num(m.otherMarketplaceFeesExpense) + num(m.otherMarketplaceDeductions);
+  // Прибыль «на сейчас» — это факт: выплата, себестоимость, комиссия, налог и
+  // пришедшие рекламные списания. Модельная реклама в неё не входит, поэтому
+  // число может только уточниться вниз, когда Uzum спишет рекламу за день.
+  const currentProfit = Number.isFinite(Number(m.profit)) ? num(m.profit) : null;
+  const payoutPendingOrders = num(m.realizedPayoutPendingOrders);
+  const missingCostItems = num(m.realizedMissingCostItems);
+  const pending: string[] = [];
+  if (payoutPendingOrders > 0) pending.push(`заказов без отчёта Uzum о выплате: ${payoutPendingOrders}`);
+  if (missingCostItems > 0) pending.push(`позиций без себестоимости: ${missingCostItems}`);
+  if (!profitKnown && payoutPendingOrders === 0 && missingCostItems === 0) {
+    pending.push('реклама за свежие дни — Uzum списывает её на следующий день');
+  }
   const notes: string[] = [];
-  if (profitKnown) notes.push('Реклама учтена только по поступившему факту Uzum.');
-  else notes.push('Чистая прибыль не показана: данные периода ещё не финальны, модельная реклама не подменяет факт.');
+  if (profitKnown) notes.push('Период закрыт: все расходы пришли от Uzum, реклама учтена по факту.');
+  else if (currentProfit === null) notes.push('Чистая прибыль не рассчитана: нет фактических данных по периоду.');
+  else notes.push(`Прибыль «на сейчас» — по фактическим данным. Уточнится: ${pending.join('; ')}.`);
   if (!orderedProfitKnown) notes.push('Прибыль по заказам — ожидаемая: пока известны не все расходы по заказанному.');
   return {
     period,
@@ -161,6 +184,10 @@ export function buildMiniAppSummary(
     profit: {
       net: profitKnown ? num(m.profit) : null,
       marginPercent: profitKnown && revenue > 0 ? num(m.profit) / revenue * 100 : null,
+      current: currentProfit,
+      currentMarginPercent: currentProfit !== null && revenue > 0 ? currentProfit / revenue * 100 : null,
+      final: profitKnown,
+      pending,
     },
     expenses: {
       cogs, commission,

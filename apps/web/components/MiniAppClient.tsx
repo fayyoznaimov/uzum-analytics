@@ -17,7 +17,7 @@ type Summary = {
   shop: string | null;
   ordered: { units: number; revenue: number; payout: number; potentialProfit: number | null; potentialProfitEstimate: number | null; costCoverage: number | null; advertisingCoverage: number | null };
   bought: { units: number; revenue: number; payout: number };
-  profit: { net: number | null; marginPercent: number | null };
+  profit: { net: number | null; marginPercent: number | null; current: number | null; currentMarginPercent: number | null; final: boolean; pending: string[] };
   expenses: { cogs: number; commission: number; commissionPercent: number; logistics: number; advertising: number; advertisingPercent: number; tax: number; otherFees: number; total: number };
   returns: { units: number; amount: number };
   notes: string[];
@@ -78,18 +78,27 @@ function useTelegram() {
   return state;
 }
 
-/** Прибыль показываем числом только когда бэкенд её знает целиком, иначе — «не рассчитана». */
-function Profit({ value, suffix }: { value: number | null; suffix?: string }) {
-  if (value === null) return <b className="tg-unknown">не рассчитана</b>;
-  return <b className={value >= 0 ? 'tg-green' : 'tg-red'}>{money(value)}{suffix || ''}</b>;
+/**
+ * Финальное число — без оговорок. Пока период не закрыт, показываем факт
+ * «на сейчас» с пометкой: прятать его целиком незачем — это не модель, а
+ * пришедшие от Uzum данные, которые могут только уточниться.
+ */
+function Profit({ value, current, final }: { value: number | null; current?: number | null; final?: boolean }) {
+  const shown = value !== null ? value : current ?? null;
+  if (shown === null) return <b className="tg-unknown">не рассчитана</b>;
+  return <b className={shown >= 0 ? 'tg-green' : 'tg-red'}>
+    {money(shown)}
+    {value === null && final !== true ? <span className="tg-tag">на сейчас</span> : null}
+  </b>;
 }
 
 export default function MiniAppClient() {
   const { ready, initData, source } = useTelegram();
   const [period, setPeriod] = useState('today');
-  const [data, setData] = useState<Summary | null>(null);
+  const [cache, setCache] = useState<Record<string, Summary>>({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const data = cache[period] || null;
 
   const load = useCallback(async (key: string, auth: string, from: string) => {
     setLoading(true); setError('');
@@ -111,7 +120,7 @@ export default function MiniAppClient() {
         if (!auth) throw new Error('Telegram не передал подпись. Откройте мини-приложение кнопкой «📱 Профит сегодня» в меню бота, а не ссылкой из браузера. Если открыли кнопкой — покажите эту строку, она уже в логах сервера.');
         throw new Error(Array.isArray(body?.message) ? body.message.join(', ') : body?.message || `HTTP ${response.status}`);
       }
-      setData(body as Summary);
+      setCache((loaded) => ({ ...loaded, [key]: body as Summary }));
     } catch (e: any) {
       setError(String(e?.message || 'Не удалось загрузить данные'));
     } finally {
@@ -119,7 +128,20 @@ export default function MiniAppClient() {
     }
   }, []);
 
-  useEffect(() => { if (ready) void load(period, initData, source); }, [ready, period, initData, source, load]);
+  useEffect(() => {
+    if (!ready) return;
+    // Через туннель каждый запрос стоит около секунды, поэтому остальные периоды
+    // подгружаем в фоне сразу после открытого: переключение потом мгновенное.
+    void (async () => {
+      await load(period, initData, source);
+      for (const [key] of PERIODS) if (key !== period) await load(key, initData, source);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, initData, source, load]);
+
+  useEffect(() => {
+    if (ready && !cache[period]) void load(period, initData, source);
+  }, [ready, period, cache, initData, source, load]);
 
   const title = data?.period.title || PERIODS.find(([key]) => key === period)?.[1] || '';
   return <div className="tg-app">
@@ -132,16 +154,20 @@ export default function MiniAppClient() {
         <h2>Выкуплено • {title}</h2>
         <div className="tg-hero"><strong>{units(data.bought.units)}</strong><small>на {money(data.bought.revenue)}</small></div>
         <div className="tg-row"><span>Выплата Uzum по выкупам</span><b>{money(data.bought.payout)}</b></div>
-        <div className="tg-row big"><span>Чистая прибыль</span><Profit value={data.profit.net}/></div>
-        <div className="tg-row"><span>Чистая маржа</span><b>{data.profit.marginPercent === null ? <span className="tg-unknown">—</span> : percent(data.profit.marginPercent)}</b></div>
+        <div className="tg-row big"><span>Чистая прибыль</span><Profit value={data.profit.net} current={data.profit.current} final={data.profit.final}/></div>
+        <div className="tg-row"><span>Чистая маржа</span><b>{(data.profit.marginPercent ?? data.profit.currentMarginPercent) === null
+          ? <span className="tg-unknown">—</span>
+          : percent((data.profit.marginPercent ?? data.profit.currentMarginPercent) as number)}</b></div>
+        {!data.profit.final && data.profit.pending.length > 0
+          && <p className="tg-sub">Уточнится: {data.profit.pending.join('; ')}.</p>}
       </section>
       <section className="tg-card">
         <h2>Заказано • ожидаемый профит</h2>
         <div className="tg-hero"><strong>{units(data.ordered.units)}</strong><small>на {money(data.ordered.revenue)}</small></div>
         <div className="tg-row"><span>Выплата Uzum по заказам</span><b>{money(data.ordered.payout)}</b></div>
-        <div className="tg-row big"><span>Ожидаемая прибыль</span><Profit value={data.ordered.potentialProfit}/></div>
+        <div className="tg-row big"><span>Ожидаемая прибыль</span><Profit value={data.ordered.potentialProfit} current={data.ordered.potentialProfitEstimate} final={false}/></div>
         {data.ordered.potentialProfit === null && data.ordered.potentialProfitEstimate !== null
-          && <p className="tg-sub">Оценка: {money(data.ordered.potentialProfitEstimate)} — не факт, часть расходов по заказанному ещё не пришла от Uzum.</p>}
+          && <p className="tg-sub">Это оценка: часть расходов по заказанному ещё не пришла от Uzum.</p>}
       </section>
       <section className="tg-card">
         <h2>Расходы по выкупленному</h2>

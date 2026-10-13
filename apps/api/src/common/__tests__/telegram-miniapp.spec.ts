@@ -70,7 +70,7 @@ describe('miniAppRange', () => {
 describe('buildMiniAppSummary', () => {
   const period = { key: 'today' as const, from: '2026-10-12', to: '2026-10-12', title: 'Сегодня' };
 
-  it('не превращает неизвестную прибыль в ноль', () => {
+  it('не выдаёт неполную прибыль за финальную, но показывает факт «на сейчас»', () => {
     const summary = buildMiniAppSummary({
       metrics: {
         orderedUnits: 4, orderedRevenue: 400, orderedPayout: 320,
@@ -80,10 +80,28 @@ describe('buildMiniAppSummary', () => {
     }, period);
     expect(summary.profit.net).toBeNull();
     expect(summary.profit.marginPercent).toBeNull();
+    expect(summary.profit.final).toBe(false);
+    expect(summary.profit.current).toBe(55);
+    expect(summary.profit.currentMarginPercent).toBeCloseTo(27.5);
+    expect(summary.profit.pending).toContain('реклама за свежие дни — Uzum списывает её на следующий день');
     expect(summary.ordered.potentialProfit).toBeNull();
     expect(summary.ordered.potentialProfitEstimate).toBe(70);
-    expect(summary.notes.join(' ')).toContain('не показана');
+    expect(summary.notes.join(' ')).toContain('на сейчас');
     expect(summary.notes.join(' ')).toContain('ожидаемая');
+  });
+
+  it('называет конкретные причины, пока период не закрыт', () => {
+    const summary = buildMiniAppSummary({
+      metrics: {
+        paidUnits: 2, revenue: 200, payout: 160, profit: 40, profitKnown: false,
+        realizedPayoutPendingOrders: 3, realizedMissingCostItems: 2,
+      },
+    }, period);
+    expect(summary.profit.pending).toEqual([
+      'заказов без отчёта Uzum о выплате: 3',
+      'позиций без себестоимости: 2',
+    ]);
+    expect(summary.profit.current).toBe(40);
   });
 
   it('считает прибыль, маржу и расходы, когда всё известно', () => {
@@ -102,6 +120,9 @@ describe('buildMiniAppSummary', () => {
     expect(summary.bought).toEqual({ units: 2, revenue: 1000, payout: 800 });
     expect(summary.profit.net).toBe(250);
     expect(summary.profit.marginPercent).toBeCloseTo(25);
+    expect(summary.profit.final).toBe(true);
+    expect(summary.profit.pending).toEqual([]);
+    expect(summary.notes.join(' ')).toContain('Период закрыт');
     expect(summary.ordered.potentialProfit).toBe(60);
     expect(summary.expenses.advertisingPercent).toBeCloseTo(6);
     expect(summary.expenses.otherFees).toBe(10);
@@ -114,6 +135,7 @@ describe('buildMiniAppSummary', () => {
     const summary = buildMiniAppSummary({ empty: true }, period);
     expect(summary.bought).toEqual({ units: 0, revenue: 0, payout: 0 });
     expect(summary.profit.net).toBeNull();
+    expect(summary.profit.current).toBeNull();
     expect(summary.expenses.total).toBe(0);
     expect(summary.shop).toBeNull();
   });
