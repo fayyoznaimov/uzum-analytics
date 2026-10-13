@@ -1,0 +1,19 @@
+# Шлюз для Telegram Mini App: пускает наружу только /miniapp и /api/miniapp/*.
+# Туннель (Cloudflare) смотрит на этот порт, а не на 3200 — см. scripts/miniapp-gateway.mjs.
+# Установка: cp deploy/systemd/uzum-miniapp-gateway.service ~/.config/systemd/user/ &&
+#            systemctl --user daemon-reload && systemctl --user enable --now uzum-miniapp-gateway
+[Unit]
+Description=Uzum Analytics Telegram Mini App gateway
+After=uzum-web.service
+[Service]
+Type=simple
+WorkingDirectory=/home/parisahome/uzum
+EnvironmentFile=/home/parisahome/uzum/.env
+Environment=NODE_ENV=production
+Environment=MINIAPP_GATEWAY_PORT=3250
+Environment=PATH=/home/parisahome/.nvm/versions/node/v20.20.2/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/parisahome/.nvm/versions/node/v20.20.2/bin/node /home/parisahome/uzum/scripts/miniapp-gateway.mjs
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=default.target
