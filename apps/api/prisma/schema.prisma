@@ -227,6 +227,7 @@ model Sku {
   costs            SkuCost[]
   orderItems       OrderItem[]
   snapshots        StockSnapshot[]
+  warehouseSnapshots SkuWarehouseSnapshot[]
   inventoryMetrics InventoryMetric[]
   supplyItems      SupplyItem[]
 
@@ -364,6 +365,19 @@ model OrderItem {
   @@unique([orderId, externalId])
   @@index([orderId])
   @@index([skuId])
+}
+
+model SkuWarehouseSnapshot {
+  id            String   @id @default(cuid())
+  skuId         String
+  available     Int
+  returnedTotal Int
+  defectedTotal Int
+  pendingTotal  Int      @default(0)
+  capturedAt    DateTime @default(now())
+  sku           Sku      @relation(fields: [skuId], references: [id], onDelete: Cascade)
+
+  @@index([skuId, capturedAt])
 }
 
 model StockSnapshot {

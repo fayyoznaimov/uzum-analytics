@@ -32,6 +32,7 @@ import { SuppliesService } from './modules/supplies/supplies.service';
 import { WarehouseController } from './modules/warehouse/warehouse.controller';
 import { WarehouseService } from './modules/warehouse/warehouse.service';
 import { DigestService } from './modules/notifications/digest.service';
+import { ReturnsWatchService } from './modules/notifications/returns-watch.service';
 import { HealthController } from './modules/health/health.controller';
 import { ReviewsController } from './modules/reviews/reviews.controller';
 import { ReviewsService } from './modules/reviews/reviews.service';
@@ -75,7 +76,7 @@ import { MiniAppService } from './modules/miniapp/miniapp.service';
     CompetitorsService,
     PrismaService, CryptoService, TelegramClient, OpenclawClient, AuthService, AuthGuard, IntegrationsService, CabinetAuthService,
     CostsService, GoalsService, DashboardService, ProductsService, SyncService, SuppliesService,
-    WarehouseService, DigestService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService, AdAgentService, AdBotService, PriceExperimentService, AutoBidderService, MiniAppService,
+    WarehouseService, DigestService, ReturnsWatchService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService, AdAgentService, AdBotService, PriceExperimentService, AutoBidderService, MiniAppService,
   ],
 })
 export class AppModule {}
