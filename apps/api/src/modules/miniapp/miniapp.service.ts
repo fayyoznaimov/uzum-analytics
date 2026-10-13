@@ -28,7 +28,8 @@ export class MiniAppService {
     return new Set([chatId, ...extra].filter(Boolean));
   }
 
-  async summary(initData: string | undefined, period: string | undefined) {
+  async summary(initData: string | undefined, period: string | undefined, client?: string) {
+    const clientInfo = client ? ` [клиент: ${String(client).slice(0, 200)}]` : '';
     const stored = await this.integrations.getPlain(IntegrationType.TELEGRAM);
     const token = stored?.token;
     const chatId = String(stored?.metadata?.chatId || '');
@@ -37,12 +38,12 @@ export class MiniAppService {
     try {
       user = verifyInitData(String(initData || ''), token);
     } catch (error: any) {
-      this.logger.warn(`Мини-приложение: отказ — ${error?.message || error}`);
+      this.logger.warn(`Мини-приложение: отказ — ${error?.message || error}${clientInfo}`);
       throw new UnauthorizedException(String(error?.message || 'Не удалось проверить данные Telegram'));
     }
     const allowed = this.allowedUserIds(chatId);
     if (allowed.size && !allowed.has(user.id)) {
-      this.logger.warn(`Мини-приложение: Telegram-аккаунт ${user.id} не в списке разрешённых`);
+      this.logger.warn(`Мини-приложение: Telegram-аккаунт ${user.id} не в списке разрешённых${clientInfo}`);
       throw new UnauthorizedException('Этот Telegram-аккаунт не имеет доступа к отчётам магазина');
     }
     const key = normalizeMiniAppPeriod(period);

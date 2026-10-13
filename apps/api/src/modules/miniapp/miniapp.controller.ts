@@ -6,7 +6,13 @@ import { MiniAppService } from './miniapp.service';
 export class MiniAppController {
   constructor(private readonly service: MiniAppService) {}
   @Get('summary')
-  summary(@Headers('x-telegram-init-data') initData?: string, @Query('period') period?: string) {
-    return this.service.summary(initData, period);
+  summary(
+    @Headers('x-telegram-init-data') initData?: string,
+    @Query('period') period?: string,
+    // Чем открыли и что увидел клиент — попадает в лог при отказе: иначе причину
+    // «подписи нет» на чужом телефоне не разобрать.
+    @Headers('x-miniapp-client') client?: string,
+  ) {
+    return this.service.summary(initData, period, client);
   }
 }

@@ -46,7 +46,7 @@ export function readInitDataFromUrl(hash: string, search: string): string {
 
 /** Подпись Telegram: из SDK, если он доступен, иначе из адреса страницы. */
 function useTelegram() {
-  const [state, setState] = useState<{ ready: boolean; initData: string }>({ ready: false, initData: '' });
+  const [state, setState] = useState<{ ready: boolean; initData: string; source: string }>({ ready: false, initData: '', source: '' });
   useEffect(() => {
     const fromUrl = readInitDataFromUrl(window.location.hash, window.location.search);
     // Переключение периода не теряет подпись, даже если Telegram вычистил фрагмент.
@@ -60,7 +60,9 @@ function useTelegram() {
       done = true;
       tg()?.ready?.();
       tg()?.expand?.();
-      setState({ ready: true, initData: tg()?.initData || fromUrl || stored });
+      const sdk = tg()?.initData || '';
+      const initData = sdk || fromUrl || stored;
+      setState({ ready: true, initData, source: sdk ? 'скрипт Telegram' : fromUrl ? 'адрес страницы' : stored ? 'сессия' : 'нет' });
     };
     if (tg()) { finish(); return; }
     const script = document.createElement('script');
@@ -83,19 +85,32 @@ function Profit({ value, suffix }: { value: number | null; suffix?: string }) {
 }
 
 export default function MiniAppClient() {
-  const { ready, initData } = useTelegram();
+  const { ready, initData, source } = useTelegram();
   const [period, setPeriod] = useState('today');
   const [data, setData] = useState<Summary | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async (key: string, auth: string) => {
+  const load = useCallback(async (key: string, auth: string, from: string) => {
     setLoading(true); setError('');
     try {
-      if (!auth) throw new Error('Telegram не передал подпись. Откройте мини-приложение кнопкой «📱 Профит сегодня» в меню бота — по обычной ссылке из браузера данные не открываются.');
-      const response = await fetch(`${API}/miniapp/summary?period=${key}`, { headers: { 'x-telegram-init-data': auth }, cache: 'no-store' });
+      // Только латиница: HTTP-заголовок с кириллицей роняет запрос.
+      const diagnostics = JSON.stringify({
+        src: from === 'скрипт Telegram' ? 'sdk' : from === 'адрес страницы' ? 'url' : from === 'сессия' ? 'session' : 'none',
+        sdk: Boolean(tg()),
+        hash: typeof window === 'undefined' ? 0 : window.location.hash.length,
+        platform: tg()?.platform || '',
+        version: tg()?.version || '',
+      });
+      const response = await fetch(`${API}/miniapp/summary?period=${key}`, {
+        headers: { 'x-telegram-init-data': auth, 'x-miniapp-client': diagnostics },
+        cache: 'no-store',
+      });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(Array.isArray(body?.message) ? body.message.join(', ') : body?.message || `HTTP ${response.status}`);
+      if (!response.ok) {
+        if (!auth) throw new Error('Telegram не передал подпись. Откройте мини-приложение кнопкой «📱 Профит сегодня» в меню бота, а не ссылкой из браузера. Если открыли кнопкой — покажите эту строку, она уже в логах сервера.');
+        throw new Error(Array.isArray(body?.message) ? body.message.join(', ') : body?.message || `HTTP ${response.status}`);
+      }
       setData(body as Summary);
     } catch (e: any) {
       setError(String(e?.message || 'Не удалось загрузить данные'));
@@ -104,7 +119,7 @@ export default function MiniAppClient() {
     }
   }, []);
 
-  useEffect(() => { if (ready) void load(period, initData); }, [ready, period, initData, load]);
+  useEffect(() => { if (ready) void load(period, initData, source); }, [ready, period, initData, source, load]);
 
   const title = data?.period.title || PERIODS.find(([key]) => key === period)?.[1] || '';
   return <div className="tg-app">
@@ -144,6 +159,7 @@ export default function MiniAppClient() {
       </section>}
       <div className="tg-notes">{data.notes.map((note) => <p key={note}>{note}</p>)}</div>
     </>}
-    <button className="tg-refresh" disabled={loading} onClick={() => void load(period, initData)}>{loading ? 'Обновляю…' : 'Обновить'}</button>
+    <button className="tg-refresh" disabled={loading} onClick={() => void load(period, initData, source)}>{loading ? 'Обновляю…' : 'Обновить'}</button>
+    <p className="tg-diag">подпись: {source || '—'}</p>
   </div>;
 }
