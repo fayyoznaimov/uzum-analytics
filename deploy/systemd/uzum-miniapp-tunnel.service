@@ -1,0 +1,19 @@
+# Quick-туннель Cloudflare для мини-приложения: scripts/miniapp-tunnel.sh
+# поднимает туннель на шлюз (3250), прописывает новый адрес в TELEGRAM_MINIAPP_URL
+# и перезапускает uzum-api.
+# Установка: cp deploy/systemd/uzum-miniapp-tunnel.service ~/.config/systemd/user/ &&
+#            systemctl --user daemon-reload && systemctl --user enable --now uzum-miniapp-tunnel
+[Unit]
+Description=Uzum Analytics Telegram Mini App tunnel (cloudflared)
+After=network-online.target uzum-miniapp-gateway.service
+Wants=uzum-miniapp-gateway.service
+[Service]
+Type=simple
+WorkingDirectory=/home/parisahome/uzum
+Environment=MINIAPP_GATEWAY_PORT=3250
+Environment=PATH=/home/parisahome/.nvm/versions/node/v20.20.2/bin:/home/parisahome/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/bash /home/parisahome/uzum/scripts/miniapp-tunnel.sh
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=default.target
