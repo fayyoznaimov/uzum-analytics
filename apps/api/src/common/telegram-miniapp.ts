@@ -92,6 +92,17 @@ export function normalizeMiniAppPeriod(value: unknown): MiniAppPeriodKey {
   return key === 'yesterday' || key === 'week' || key === 'month' ? key : 'today';
 }
 
+export type MiniAppRisk = {
+  title: string; sku: string | null; stock: number;
+  daysLeft: number | null; recommendedSupply: number | null; status: string;
+};
+export type MiniAppTopProduct = { title: string; units: number; revenue: number; profit: number | null };
+export type MiniAppGoal = { metric: string; current: number; target: number; progress: number };
+/** Строка разложения денег. value = null, когда итог прятать нельзя подменять нулём. */
+export type MiniAppWaterfallRow = { key: string; label: string; value: number | null; percent: number; kind: string };
+export type MiniAppChartPoint = { label: string; revenue: number };
+export type MiniAppInsight = { tone: string; title: string; text: string };
+
 export type MiniAppSummary = {
   period: { key: MiniAppPeriodKey; from: string; to: string; title: string };
   shop: string | null;
@@ -121,7 +132,34 @@ export type MiniAppSummary = {
     logistics: number; advertising: number; advertisingPercent: number;
     tax: number; otherFees: number; total: number;
   };
-  returns: { units: number; amount: number };
+  returns: { units: number; amount: number; orders: number };
+  /** Движение заказов периода: заказы и выкупы — независимые потоки. */
+  orders: { created: number; paid: number; waiting: number; waitingUnits: number; waitingRevenue: number };
+  /** Кошелёк: когда деньги попадут в корзину вывода. null — прогноз не посчитан. */
+  wallet: {
+    availableToWithdraw: number; inReturnHold: number; dueToday: number;
+    next7Days: number; needsReconcile: number;
+    overallBalance: number | null; holdDays: number | null; schedule: string | null;
+  } | null;
+  advertising: {
+    expense: number; percent: number; orderBoost: number; topPromotion: number;
+    /** Модельная оценка свежих списаний: в факт и прибыль не входит. */
+    estimate: number; hasEstimate: boolean; mayBeIncomplete: boolean;
+  };
+  stock: {
+    skus: number; endingSoon: number; recommendedSupply: number;
+    marketplaceUnits: number; availableForSale: number; value: number;
+    potentialPayout: number | null; reportAsOf: string | null;
+  };
+  risks: MiniAppRisk[];
+  topProducts: MiniAppTopProduct[];
+  goals: MiniAppGoal[];
+  /** Заказы, которые висят без выкупа дольше порога: деньги под риском. */
+  stale: { cutoffDays: number; count: number; units: number; amount: number };
+  waterfall: MiniAppWaterfallRow[];
+  chart: { granularity: string; points: MiniAppChartPoint[] };
+  insights: MiniAppInsight[];
+  catalog: { products: number; skus: number; supplies: number };
   notes: string[];
   generatedAt: string;
 };
@@ -130,7 +168,9 @@ const num = (value: unknown) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
 };
+const maybe = (value: unknown) => (value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Number(value));
 const known = (flag: unknown, value: unknown) => flag === true && value !== null && value !== undefined && Number.isFinite(Number(value));
+const text = (value: unknown, limit = 220) => String(value ?? '').slice(0, limit);
 
 /**
  * Сводка для мини-приложения из ответа DashboardService.overview.
@@ -168,6 +208,26 @@ export function buildMiniAppSummary(
   else if (currentProfit === null) notes.push('Чистая прибыль не рассчитана: нет фактических данных по периоду.');
   else notes.push(`Прибыль «на сейчас» — по фактическим данным. Уточнится: ${pending.join('; ')}.`);
   if (!orderedProfitKnown) notes.push('Прибыль по заказам — ожидаемая: пока известны не все расходы по заказанному.');
+
+  const ads = overview?.advertising || {};
+  const forecast = overview?.payoutForecast || null;
+  const walletSummary = forecast?.summary || null;
+  const inventory = overview?.inventorySummary || null;
+  const stale = overview?.staleWaitingOrders || {};
+  // Себестоимость и неизвестные входы прячут только итог, а не известные части:
+  // те же правила, что на основном экране «Разложение денег».
+  const partialKeys = new Set(['payout', 'productCost', 'warehouseLogistics', 'packagingAdditional']);
+  const inputsKnown = payoutPendingOrders === 0 && missingCostItems === 0;
+  const waterfall: MiniAppWaterfallRow[] = Array.isArray(overview?.waterfall)
+    ? overview.waterfall.map((row: any) => ({
+      key: String(row?.key || ''),
+      label: text(row?.label, 90),
+      value: String(row?.key) === 'profit' && !profitKnown ? null : maybe(row?.value),
+      percent: num(row?.percent),
+      kind: !inputsKnown && partialKeys.has(String(row?.key)) ? 'partial' : String(row?.type || 'expense'),
+    }))
+    : [];
+
   return {
     period,
     shop: overview?.shop?.name ? String(overview.shop.name) : null,
@@ -197,7 +257,88 @@ export function buildMiniAppSummary(
       tax, otherFees,
       total: cogs + commission + logistics + advertising + tax + otherFees,
     },
-    returns: { units: num(m.returnedTodayUnits), amount: num(m.returnedTodayAmount) },
+    returns: { units: num(m.returnedTodayUnits), amount: num(m.returnedTodayAmount), orders: num(m.returnedTodayOrders) },
+    orders: {
+      created: num(m.orders),
+      paid: num(m.paidOrders),
+      waiting: num(m.waitingOrders),
+      waitingUnits: num(m.waitingUnits),
+      waitingRevenue: num(m.waitingRevenue),
+    },
+    wallet: walletSummary ? {
+      availableToWithdraw: num(walletSummary.availableToWithdraw),
+      inReturnHold: num(walletSummary.inReturnHold),
+      dueToday: num(walletSummary.dueToday),
+      next7Days: num(walletSummary.next7Days),
+      needsReconcile: num(walletSummary.needsReconcile),
+      overallBalance: maybe(walletSummary.overallBalance),
+      holdDays: maybe(forecast?.holdDays),
+      schedule: forecast?.schedule ? text(forecast.schedule, 80) : null,
+    } : null,
+    advertising: {
+      expense: num(ads.totalExpense ?? m.advertisingExpense),
+      percent: Number.isFinite(Number(ads.effectivePercent)) ? num(ads.effectivePercent) : revenue > 0 ? advertising / revenue * 100 : 0,
+      orderBoost: num(ads.orderBoostExpense ?? m.orderBoostExpense),
+      topPromotion: num(ads.topPromotionExpense ?? m.topPromotionExpense),
+      estimate: num(ads.provisionalOrderBoostExpense),
+      hasEstimate: Boolean(ads.hasEstimate) || num(ads.provisionalOrderBoostExpense) > 0,
+      mayBeIncomplete: Boolean(ads.freshExpenseMayBeIncomplete || ads.orderBoostExpensePending || ads.topExpensePending),
+    },
+    stock: {
+      skus: num(inventory?.skuCount ?? m.skus),
+      endingSoon: num(inventory?.endingSoonSkus),
+      recommendedSupply: num(inventory?.recommendedSupply),
+      marketplaceUnits: num(inventory?.marketplaceTotal),
+      availableForSale: num(inventory?.availableForSale),
+      value: num(m.stockValue),
+      potentialPayout: maybe(inventory?.potentialPayout),
+      reportAsOf: inventory?.reportAsOf ? new Date(inventory.reportAsOf).toISOString() : null,
+    },
+    risks: (Array.isArray(overview?.risks) ? overview.risks : []).slice(0, 6).map((row: any) => ({
+      title: text(row?.title, 80),
+      sku: row?.sku ? text(row.sku, 40) : null,
+      stock: num(row?.stock),
+      daysLeft: maybe(row?.daysLeft),
+      recommendedSupply: maybe(row?.recommendedSupply),
+      status: text(row?.status, 30),
+    })),
+    topProducts: (Array.isArray(overview?.topProducts) ? overview.topProducts : []).slice(0, 5).map((row: any) => ({
+      title: text(row?.title, 80),
+      units: Math.round(num(row?.units)),
+      revenue: num(row?.revenue),
+      // Прибыль по товару отдаём числом только когда она известна целиком.
+      profit: row?.profitKnown === true ? num(row?.profit) : null,
+    })),
+    goals: (Array.isArray(overview?.goals) ? overview.goals : [])
+      .filter((goal: any) => maybe(goal?.current) !== null && maybe(goal?.progress) !== null && maybe(goal?.targetValue ?? goal?.target) !== null)
+      .slice(0, 6)
+      .map((goal: any) => ({
+        metric: text(goal?.metric, 40),
+        current: num(goal.current),
+        target: num(goal.targetValue ?? goal.target),
+        progress: num(goal.progress),
+      })),
+    stale: {
+      cutoffDays: num(stale?.cutoffDays),
+      count: num(stale?.count),
+      units: num(stale?.units),
+      amount: num(stale?.amount),
+    },
+    waterfall,
+    chart: {
+      granularity: text(overview?.chartGranularity || 'day', 10),
+      // Хвост периода: на телефоне больше 14 столбиков не читается.
+      points: (Array.isArray(overview?.chart) ? overview.chart : []).slice(-14).map((point: any) => ({
+        label: text(point?.label, 20),
+        revenue: num(point?.revenue),
+      })),
+    },
+    insights: (Array.isArray(overview?.insights) ? overview.insights : []).slice(0, 6).map((row: any) => ({
+      tone: text(row?.tone, 12) || 'info',
+      title: text(row?.title, 60),
+      text: text(row?.text, 240),
+    })),
+    catalog: { products: num(m.products), skus: num(m.skus), supplies: num(m.supplies) },
     notes,
     generatedAt: now.toISOString(),
   };

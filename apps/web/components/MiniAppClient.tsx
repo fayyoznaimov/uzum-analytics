@@ -2,15 +2,29 @@
 import { useCallback, useEffect, useState } from 'react';
 import '../app/miniapp.css';
 
-// Мини-приложение Telegram: «сколько купили сегодня и сколько на этом заработали».
+// Мини-приложение Telegram: те же метрики, что на основном экране «Обзор», —
+// продажи, выкупы, прибыль, расходы, кошелёк, реклама, склад, цели и подсказки.
 // Авторизации по паролю здесь нет — бэкенд проверяет подпись initData токеном
 // бота, поэтому экран открывается только из бота и только у владельца.
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api';
 const PERIODS: Array<[string, string]> = [['today', 'Сегодня'], ['yesterday', 'Вчера'], ['week', '7 дней'], ['month', 'Месяц']];
 const money = (value: number) => `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Math.round(value))} сум`;
+const short = (value: number) => {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)} млн`;
+  if (abs >= 1_000) return `${Math.round(value / 1_000)} тыс`;
+  return String(Math.round(value));
+};
 const units = (value: number) => `${new Intl.NumberFormat('ru-RU').format(value)} шт.`;
 const percent = (value: number) => `${value.toFixed(1)}%`;
+const GOALS: Record<string, string> = {
+  ORDERED_REVENUE: 'Сумма заказов', REVENUE: 'Оплаченные продажи', PROFIT: 'Чистая прибыль',
+  ORDERS: 'Оплаченные заказы', UNITS: 'Продано единиц', ROAS: 'Выручка / реклама',
+};
+const goalValue = (metric: string, value: number) => metric === 'ORDERS' || metric === 'UNITS'
+  ? units(value)
+  : metric === 'ROAS' ? `${value.toFixed(2)}x` : money(value);
 
 type Summary = {
   period: { key: string; from: string; to: string; title: string };
@@ -19,7 +33,19 @@ type Summary = {
   bought: { units: number; revenue: number; payout: number };
   profit: { net: number | null; marginPercent: number | null; current: number | null; currentMarginPercent: number | null; final: boolean; pending: string[] };
   expenses: { cogs: number; commission: number; commissionPercent: number; logistics: number; advertising: number; advertisingPercent: number; tax: number; otherFees: number; total: number };
-  returns: { units: number; amount: number };
+  returns: { units: number; amount: number; orders: number };
+  orders: { created: number; paid: number; waiting: number; waitingUnits: number; waitingRevenue: number };
+  wallet: { availableToWithdraw: number; inReturnHold: number; dueToday: number; next7Days: number; needsReconcile: number; overallBalance: number | null; holdDays: number | null; schedule: string | null } | null;
+  advertising: { expense: number; percent: number; orderBoost: number; topPromotion: number; estimate: number; hasEstimate: boolean; mayBeIncomplete: boolean };
+  stock: { skus: number; endingSoon: number; recommendedSupply: number; marketplaceUnits: number; availableForSale: number; value: number; potentialPayout: number | null; reportAsOf: string | null };
+  risks: Array<{ title: string; sku: string | null; stock: number; daysLeft: number | null; recommendedSupply: number | null; status: string }>;
+  topProducts: Array<{ title: string; units: number; revenue: number; profit: number | null }>;
+  goals: Array<{ metric: string; current: number; target: number; progress: number }>;
+  stale: { cutoffDays: number; count: number; units: number; amount: number };
+  waterfall: Array<{ key: string; label: string; value: number | null; percent: number; kind: string }>;
+  chart: { granularity: string; points: Array<{ label: string; revenue: number }> };
+  insights: Array<{ tone: string; title: string; text: string }>;
+  catalog: { products: number; skus: number; supplies: number };
   notes: string[];
   generatedAt: string;
 };
@@ -90,6 +116,26 @@ function Profit({ value, current, final }: { value: number | null; current?: num
     {money(shown)}
     {value === null && final !== true ? <span className="tg-tag">на сейчас</span> : null}
   </b>;
+}
+
+/** Плитка «подпись — число» для блоков с четырьмя-пятью показателями. */
+function Cell({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: 'green' | 'red' | 'amber' }) {
+  return <div className="tg-cell">
+    <span>{label}</span>
+    <b className={tone ? `tg-${tone}` : ''}>{value}</b>
+    {hint ? <small>{hint}</small> : null}
+  </div>;
+}
+
+/** Столбики выручки: без библиотек, чтобы мини-приложение грузилось мгновенно. */
+function Bars({ points, granularity }: { points: Array<{ label: string; revenue: number }>; granularity: string }) {
+  const max = points.reduce((top, point) => Math.max(top, point.revenue), 0);
+  if (!points.length || max <= 0) return <p className="tg-sub">За период нет выкупов для графика.</p>;
+  const label = (value: string) => granularity === 'day' || granularity === 'week' ? value.slice(5) : value;
+  return <div className="tg-bars">{points.map((point, index) => <div className="tg-bar" key={`${point.label}-${index}`} title={`${point.label}: ${money(point.revenue)}`}>
+    <i style={{ height: `${Math.max(3, point.revenue / max * 100)}%` }}/>
+    <u>{label(point.label)}</u>
+  </div>)}</div>;
 }
 
 export default function MiniAppClient() {
@@ -169,6 +215,31 @@ export default function MiniAppClient() {
         {data.ordered.potentialProfit === null && data.ordered.potentialProfitEstimate !== null
           && <p className="tg-sub">Это оценка: часть расходов по заказанному ещё не пришла от Uzum.</p>}
       </section>
+
+      {data.wallet && <section className="tg-card">
+        <h2>Кошелёк</h2>
+        <div className="tg-cells">
+          <Cell label="МОЖНО ВЫВЕСТИ" value={money(data.wallet.availableToWithdraw)} tone="green"/>
+          <Cell label={`В УДЕРЖАНИИ ${data.wallet.holdDays ?? '—'} ДН.`} value={money(data.wallet.inReturnHold)}/>
+          <Cell label="ПО ГРАФИКУ СЕГОДНЯ" value={money(data.wallet.dueToday)}/>
+          <Cell label="БЛИЖАЙШИЕ 7 ДНЕЙ" value={money(data.wallet.next7Days)}/>
+        </div>
+        {data.wallet.needsReconcile > 0 && <div className="tg-row"><span>Нужно сверить (прошлые даты)</span><b className="tg-red">{money(data.wallet.needsReconcile)}</b></div>}
+        {data.wallet.overallBalance !== null && <div className="tg-row"><span>Общий баланс магазина</span><b>{money(data.wallet.overallBalance)}</b></div>}
+        {data.wallet.schedule && <p className="tg-sub">График выплат: {data.wallet.schedule}.</p>}
+      </section>}
+
+      <section className="tg-card">
+        <h2>Движение заказов</h2>
+        <div className="tg-cells">
+          <Cell label="СОЗДАНО ЗАКАЗОВ" value={units(data.orders.created)} hint={`${units(data.ordered.units)} в заказах`}/>
+          <Cell label="ВЫКУПИЛИ" value={units(data.bought.units)} hint={`${data.orders.paid} заказов`}/>
+          <Cell label="ЖДУТ ВЫКУПА" value={units(data.orders.waitingUnits)} hint={money(data.orders.waitingRevenue)} tone={data.orders.waitingUnits > 0 ? 'amber' : undefined}/>
+          <Cell label="ВОЗВРАТЫ" value={units(data.returns.units)} hint={money(data.returns.amount)} tone={data.returns.units > 0 ? 'red' : undefined}/>
+        </div>
+        {data.stale.count > 0 && <p className="tg-sub">Висят без выкупа дольше {data.stale.cutoffDays} дн.: {data.stale.count} заказов • {units(data.stale.units)} • {money(data.stale.amount)}. На 8-й день Uzum обычно снимает бронь.</p>}
+      </section>
+
       <section className="tg-card">
         <h2>Расходы по выкупленному</h2>
         <div className="tg-row"><span>Себестоимость</span><b>{money(data.expenses.cogs)}</b></div>
@@ -179,11 +250,81 @@ export default function MiniAppClient() {
         {data.expenses.otherFees > 0 && <div className="tg-row"><span>Прочие сборы Uzum</span><b>{money(data.expenses.otherFees)}</b></div>}
         <div className="tg-row big"><span>Всего расходов</span><b>{money(data.expenses.total)}</b></div>
       </section>
-      {data.returns.units > 0 && <section className="tg-card">
-        <h2>Возвраты за день</h2>
-        <div className="tg-row"><span>Вернули</span><b>{units(data.returns.units)} • {money(data.returns.amount)}</b></div>
+
+      <section className="tg-card">
+        <h2>Реклама • ДРР {percent(data.advertising.percent)}</h2>
+        <div className="tg-row"><span>Буст заказов (факт Uzum)</span><b>{money(data.advertising.orderBoost)}</b></div>
+        <div className="tg-row"><span>Буст в ТОП (факт Uzum)</span><b>{money(data.advertising.topPromotion)}</b></div>
+        <div className="tg-row big"><span>Всего списано</span><b>{money(data.advertising.expense)}</b></div>
+        {data.advertising.hasEstimate && <p className="tg-sub">Отдельно модельная оценка свежих списаний {money(data.advertising.estimate)} — в факт и прибыль не включена.</p>}
+        {data.advertising.mayBeIncomplete && <p className="tg-sub">Свежие дни ещё не финальны: Uzum списывает рекламу на следующий день.</p>}
+      </section>
+
+      <section className="tg-card">
+        <h2>Динамика выкупов</h2>
+        <Bars points={data.chart.points} granularity={data.chart.granularity}/>
+      </section>
+
+      {data.topProducts.length > 0 && <section className="tg-card">
+        <h2>Топ товаров</h2>
+        <div className="tg-list">{data.topProducts.map((row, index) => <div className="tg-item" key={`${row.title}-${index}`}>
+          <i>{index + 1}</i>
+          <div><strong>{row.title}</strong><span>{units(row.units)} • прибыль {row.profit === null ? 'не рассчитана' : money(row.profit)}</span></div>
+          <b>{short(row.revenue)}</b>
+        </div>)}</div>
       </section>}
-      <div className="tg-notes">{data.notes.map((note) => <p key={note}>{note}</p>)}</div>
+
+      <section className="tg-card">
+        <h2>Склад</h2>
+        {/* Покрытие в днях и «довезти» есть только в отчёте Uzum по складу: без него
+            не подставляем нули, а показываем то, что действительно известно. */}
+        {data.stock.reportAsOf
+          ? <div className="tg-cells">
+            <Cell label="НА МАРКЕТПЛЕЙСЕ" value={units(data.stock.marketplaceUnits)} hint={`${data.stock.skus} SKU`}/>
+            <Cell label="ЗАКАНЧИВАЮТСЯ" value={`${data.stock.endingSoon} SKU`} tone={data.stock.endingSoon > 0 ? 'amber' : undefined}/>
+            <Cell label="ДОВЕЗТИ" value={units(data.stock.recommendedSupply)}/>
+            <Cell label="СТОИМОСТЬ ЗАПАСА" value={money(data.stock.value)}/>
+          </div>
+          : <div className="tg-cells">
+            <Cell label="SKU В КАТАЛОГЕ" value={String(data.stock.skus)}/>
+            <Cell label="СТОИМОСТЬ ЗАПАСА" value={money(data.stock.value)}/>
+          </div>}
+        {!data.stock.reportAsOf && <p className="tg-sub">Отчёт Uzum по складу не загружен: покрытие в днях и «сколько довезти» считать нечем. Остатки ниже — из карточек товаров.</p>}
+        {data.risks.length > 0 && <div className="tg-list">{data.risks.map((row, index) => <div className="tg-item" key={`${row.sku || row.title}-${index}`}>
+          <i className={row.stock <= 5 ? 'bad' : 'warn'}>{row.stock}</i>
+          <div><strong>{row.title}</strong><span>{row.sku || '—'} • {row.daysLeft === null ? 'нет отчёта по покрытию' : `запас на ${row.daysLeft} дн.`}{row.recommendedSupply ? ` • довезти ${row.recommendedSupply} шт.` : ''}</span></div>
+          <b>{row.status}</b>
+        </div>)}</div>}
+      </section>
+
+      {data.goals.length > 0 && <section className="tg-card">
+        <h2>Цели</h2>
+        <div className="tg-list">{data.goals.map((goal, index) => <div className="tg-goal" key={`${goal.metric}-${index}`}>
+          <div className="tg-goal-head"><strong>{GOALS[goal.metric] || goal.metric}</strong><em>{Math.round(goal.progress)}%</em></div>
+          <span>{goalValue(goal.metric, goal.current)} / {goalValue(goal.metric, goal.target)}</span>
+          <div className="tg-progress"><i style={{ width: `${Math.max(0, Math.min(100, goal.progress))}%` }}/></div>
+        </div>)}</div>
+      </section>}
+
+      {data.waterfall.length > 0 && <details className="tg-card tg-fold">
+        <summary><h2>Разложение денег: от заказа до прибыли</h2></summary>
+        <div className="tg-flow">{data.waterfall.map((row) => <div className={`tg-flow-row ${row.kind}`} key={row.key}>
+          <div><span>{row.label}</span><small>{row.value === null ? 'прибыль не финальна или нет исходных данных' : row.kind === 'partial' ? 'показана только известная часть' : `${Math.abs(row.percent).toFixed(1)}% от продаж`}</small></div>
+          <b>{row.value === null ? '—' : `${row.value < 0 ? '− ' : row.kind === 'subtotal' || row.kind === 'profit' || row.kind === 'loss' ? '= ' : '+ '}${money(Math.abs(row.value))}`}</b>
+        </div>)}</div>
+      </details>}
+
+      {data.insights.length > 0 && <details className="tg-card tg-fold">
+        <summary><h2>Умные подсказки</h2></summary>
+        <div className="tg-list">{data.insights.map((row, index) => <div className={`tg-insight ${row.tone}`} key={`${row.title}-${index}`}>
+          <strong>{row.title}</strong><span>{row.text}</span>
+        </div>)}</div>
+      </details>}
+
+      <div className="tg-notes">
+        {data.notes.map((note) => <p key={note}>{note}</p>)}
+        <p>Каталог: {data.catalog.products} товаров • {data.catalog.skus} SKU • поставок за период: {data.catalog.supplies}.</p>
+      </div>
     </>}
     <button className="tg-refresh" disabled={loading} onClick={() => void load(period, initData, source)}>{loading ? 'Обновляю…' : 'Обновить'}</button>
     <p className="tg-diag">подпись: {source || '—'}</p>
