@@ -47,8 +47,9 @@ if [ "$CURRENT" != "$URL" ]; then
     printf '\nTELEGRAM_MINIAPP_URL="%s"\n' "$URL" >>"$APP/.env"
   fi
   systemctl --user restart uzum-api.service || echo "не удалось перезапустить uzum-api" >&2
+  timeout 60 npx --no-install tsx apps/api/scripts/set-miniapp-menu.ts "$URL" || true
   timeout 60 npx --no-install tsx apps/api/scripts/notify-telegram.ts \
-    "📱 Новый адрес мини-приложения: $URL — нажмите /start, чтобы обновить кнопку в меню." >/dev/null 2>&1 || true
+    "📱 Мини-приложение доступно по новому адресу, кнопка в меню обновлена: $URL" >/dev/null 2>&1 || true
 fi
 
 wait "$TUNNEL_PID"

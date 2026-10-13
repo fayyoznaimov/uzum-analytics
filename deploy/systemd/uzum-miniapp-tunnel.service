@@ -10,6 +10,8 @@ Wants=uzum-miniapp-gateway.service
 [Service]
 Type=simple
 WorkingDirectory=/home/parisahome/uzum
+# .env нужен скриптам обновления кнопки и уведомления: там DATABASE_URL и ключ шифрования.
+EnvironmentFile=/home/parisahome/uzum/.env
 Environment=MINIAPP_GATEWAY_PORT=3250
 Environment=PATH=/home/parisahome/.nvm/versions/node/v20.20.2/bin:/home/parisahome/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/bash /home/parisahome/uzum/scripts/miniapp-tunnel.sh
