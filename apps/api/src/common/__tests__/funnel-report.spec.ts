@@ -177,6 +177,9 @@ describe('цвет SKU', () => {
     expect(skuColor({ titles: ['HAVANA-ЗЕЛХАКИ-70 x140'] })).toBe('Зелёный хаки');
     expect(skuColor({ titles: ['J471-СИРЕН-50X85/70X135'] })).toBe('Сиреневый');
     expect(skuColor({ titles: ['HAVANA-ПРИГХАК-КОМПЛЕКТ'] })).toBe('Приглушённый хаки');
+    // реальные названия из базы: модель внутри цвета и «небесно-голубой» сокращением
+    expect(skuColor({ titles: ['J475-ХРОМ HAVANA-50X90'] })).toBe('Хром');
+    expect(skuColor({ titles: ['J471-НГОЛУБ-50X85'] })).toBe('Небесно-голубой');
   });
   it('нет цвета — null, а не мусор', () => {
     expect(skuColor({ titles: ['HAVANA-50X90'] })).toBeNull();

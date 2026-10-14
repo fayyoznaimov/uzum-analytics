@@ -139,12 +139,14 @@ export type SkuInfo = {
 
 /** Сокращения цветов в названиях SKU магазина → названия цветов на Uzum. */
 const COLOR_ABBR: Array<[string, string]> = [
-  ['ЗЕЛХАК', 'Зелёный хаки'], ['СВЕТКОР', 'Светло-коричневый'], ['ПАСТКОР', 'Пастельно-коралловый'], ['ПРИГХАК', 'Приглушённый хаки'],
+  ['НГОЛУБ', 'Небесно-голубой'], ['ЗЕЛХАК', 'Зелёный хаки'], ['СВЕТКОР', 'Светло-коричневый'], ['ПАСТКОР', 'Пастельно-коралловый'], ['ПРИГХАК', 'Приглушённый хаки'],
   ['БЕЖЕВ', 'Бежевый'], ['ШОКОЛ', 'Шоколадный'], ['МОЛОЧ', 'Молочный'], ['КРЕМОВ', 'Кремовый'], ['ПРОЗР', 'Прозрачный'],
   ['РОЗОВ', 'Розовый'], ['СИРЕН', 'Сиреневый'], ['МЯТН', 'Мятный'], ['ГОЛУБ', 'Голубой'], ['ПЕРСИК', 'Персиковый'], ['КОРИЧН', 'Коричневый'],
 ];
 const SIZE_TOKEN = /^\d+\s*[XХ×*]\s*\d+(?:\s*[/+]\s*\d+\s*[XХ×*]\s*\d+)*$/i;
 const TYPE_TOKEN = /^(?:ЛИЦ|БАН|САУН|КОМПЛ|НАБОР|МИКС|MIX|SET|ДЛЯ)/i;
+/** Названия моделей и продавца, которые встречаются внутри названия SKU рядом с цветом («ХРОМ HAVANA»). */
+const MODEL_WORD = /^(?:HAVANA|HAVANASAUNA|J\d{3}[A-Z0-9]*|YD|PARISA|FAYYOZ)$/i;
 
 export const cleanSkuTitle = (value: unknown) => String(value ?? '').replace(/^FAYYOZ-/i, '').replace(/\s+/g, ' ').trim();
 
@@ -167,7 +169,8 @@ export function skuColor(input: { color?: string | null; characteristics?: unkno
     const tokens = cleanSkuTitle(title).toUpperCase().replace(/[‐‑‒–—−]/g, '-').split('-').map((token) => token.trim()).filter(Boolean);
     const rest = (tokens.length > 1 ? tokens.slice(1) : tokens).filter((token) => !SIZE_TOKEN.test(token) && !TYPE_TOKEN.test(token) && !/^\d+$/.test(token) && /[А-ЯЁA-Z]/.test(token));
     if (!rest.length) continue;
-    const word = rest.join(' ');
+    const word = rest.join(' ').split(/\s+/).filter((part) => part && !MODEL_WORD.test(part)).join(' ');
+    if (!word) continue;
     const known = COLOR_ABBR.find(([abbr]) => word.startsWith(abbr));
     if (known) return known[1];
     return word.charAt(0) + word.slice(1).toLowerCase();
