@@ -54,7 +54,8 @@ export class ReturnsWatchService {
       where: { product: { shopId } },
       select: { id: true, externalId: true, sellerSku: true },
     });
-    const byExternal = new Map(skus.map((sku) => [String(sku.externalId), sku]));
+    type OurSku = { id: string; externalId: string; sellerSku: string | null };
+    const byExternal = new Map<string, OurSku>(skus.map((sku: OurSku) => [String(sku.externalId), sku]));
     const shopExternalId = await this.cabinet.cabinetShopId();
     const rows: WarehouseRow[] = [];
     for (let page = 0; page < MAX_PAGES; page++) {

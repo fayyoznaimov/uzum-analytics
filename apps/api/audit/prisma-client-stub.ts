@@ -17,6 +17,7 @@ export namespace Prisma {
   export type OrderUpdateInput = any;
   export type OrderGetPayload<T> = any;
   export type OrderItemGetPayload<T> = any;
+  export type NotificationLogCreateManyInput = any;
 }
 
 export class PrismaClient {
