@@ -1,8 +1,8 @@
 # Воронка продаж — ручной запуск из GitHub (Actions → «Воронка» → Run workflow).
 # Выполняется на сервере ParisaUbuntu в рабочей копии ~/uzum с её .env: токен кабинета и БД есть только там.
 # Только чтение: показы → открытия → корзина → заказ → выкуп из аналитики Uzum (Cube) по товарам, цветам и SKU.
-# Репозиторий публичный: логи и артефакты Actions видят все. Поэтому цифры в лог не выводятся (--quiet),
-# а HTML-отчёт уходит файлом в Telegram владельца (--telegram) — открыть его в браузере.
+# Текст воронки — в логе шага (репозиторий публичный: владелец решил, что это допустимо — продажи и так
+# видны в ZoomSelling). HTML-отчёт уходит файлом в Telegram владельца (--telegram) — открыть его в браузере.
 name: Воронка
 
 on:
@@ -30,4 +30,4 @@ jobs:
           cd ~/uzum
           echo "Версия на сервере: $(git log --oneline -1)"
           set -a && . ./.env && set +a
-          npx tsx apps/api/scripts/funnel-report.ts --days "${DAYS:-28}" --telegram --quiet
+          npx tsx apps/api/scripts/funnel-report.ts --days "${DAYS:-28}" --telegram

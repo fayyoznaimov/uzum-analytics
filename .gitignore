@@ -12,3 +12,4 @@ backups/
 .DS_Store
 apps/api/prisma/dev.db
 apps/api/tmp/
+*.tsbuildinfo
