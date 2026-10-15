@@ -252,6 +252,36 @@ describe('ручной посев фраз', () => {
     expect(words).not.toContain('oshxona');
     expect(rows[0].reason).toContain('58 → 58');
   });
+  it('cloneGroups и phrases не добавляют фразу в цвет дважды; dedupe останавливает дубли, оставляя наименьший id', () => {
+    const keywords = [
+      kw({ adId: '10', skuGroupId: '4160950', query: 'полотенце для сауны', cpm: 20_000, stopWords: [] }),
+      kw({ adId: '11', skuGroupId: '4160950', query: 'sauna sochiq', cpm: 9_500, stopWords: [] }),
+      kw({ adId: '12', skuGroupId: '999', query: 'katta sochiq', cpm: 9_500, stopWords: [] }),
+    ];
+    // 15.10.2026, j471: копия из голубого и список phrases дали серому одну фразу дважды — теперь одно объявление, ставка из phrases
+    const both = seedKeywordActions(keywords, [{ campaignId: '332097', cloneGroups: { '999': '4160950' }, phrases: [{ query: 'полотенце для сауны', cpm: 25_000 }] }]);
+    expect(both.map((row) => [row.skuGroupId, row.kind, row.query, row.newCpm])).toEqual([
+      ['999', 'ADD', 'полотенце для сауны', 25_000],
+      ['999', 'ADD', 'sauna sochiq', 9_500],
+      ['4160950', 'RAISE', 'полотенце для сауны', 25_000],
+    ]);
+    expect(both[0].reason).toContain('скопировано из цвета 4160950');
+    expect(both[0].reason).toContain('из phrases');
+    const dupes = [
+      kw({ adId: '21', skuGroupId: '4160950', query: 'полотенце для лица', cpm: 20_000, stopWords: [] }),
+      kw({ adId: '20', skuGroupId: '4160950', query: 'Полотенце для лица', cpm: 20_000, stopWords: [] }),
+      kw({ adId: '22', skuGroupId: '999', query: 'полотенце для лица', cpm: 20_000, stopWords: [] }),
+    ];
+    const cleaned = seedKeywordActions(dupes, [{ campaignId: '332097', dedupe: true, phrases: [{ query: 'полотенце для лица', cpm: 22_000 }] }]);
+    // лишняя копия остановлена, ставка меняется у оставшейся (наименьший id), одиночная фраза другого цвета — как обычно
+    expect(cleaned.map((row) => [row.skuGroupId, row.kind, row.adId, row.newCpm])).toEqual([
+      ['4160950', 'SUSPEND', '21', 20_000],
+      ['4160950', 'RAISE', '20', 22_000],
+      ['999', 'RAISE', '22', 22_000],
+    ]);
+    expect(cleaned[0].reason).toContain('остаётся объявление 20');
+    expect(seedKeywordActions(dupes, [{ campaignId: '332097', dedupe: true }]).map((row) => row.adId)).toEqual(['21']);
+  });
 });
 
 describe('минус-слова', () => {

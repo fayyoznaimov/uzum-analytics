@@ -505,13 +505,24 @@ export class AdBotService {
       if (!campaign) continue;
       const body = buildCampaignUpdate(campaign, rows, budgets?.get(campaignId));
       try {
+        // Снимок до PUT: остановка одной из двух копий фразы (dedupe) оставляет вторую,
+        // поэтому для SUSPEND сверяем число объявлений «цвет + запрос», а не их отсутствие.
+        const before = await this.verify(campaignId);
+        const keyOf = (skuGroupId: string, query: string) => `${skuGroupId}|${normalizeQuery(query)}`;
+        const sameKey = (list: Array<{ skuGroupId: string; query: string }>, key: string) => list.filter((ad) => keyOf(ad.skuGroupId, ad.query) === key);
         await this.cabinet.cabinet('PUT', `${CABINET}/advertising/management/ad-campaign/${campaignId}`, undefined, body);
         const isApplied = (check: Array<{ id: string; skuGroupId: string; query: string; cpm: number }>, row: AdBotAction) => {
           // Uzum при любой правке удаляет объявление и создаёт новое с НОВЫМ id
           // (04.10.2026: 39 из 39 правок). Поэтому ищем по «цвет + запрос»,
           // а не по старому id, которого после сохранения уже нет.
-          const found = check.find((ad) => ad.skuGroupId === row.skuGroupId && normalizeQuery(ad.query) === normalizeQuery(row.query));
-          return { found, ok: row.kind === 'SUSPEND' ? !found : Boolean(found) && found!.cpm === row.newCpm };
+          const key = keyOf(row.skuGroupId, row.query);
+          const matches = sameKey(check, key) as Array<{ id: string; skuGroupId: string; query: string; cpm: number }>;
+          const found = matches.find((ad) => ad.cpm === row.newCpm) ?? matches[0];
+          if (row.kind === 'SUSPEND') {
+            const suspends = rows.filter((item) => item.kind === 'SUSPEND' && keyOf(item.skuGroupId, item.query) === key).length;
+            return { found, ok: matches.length <= Math.max(0, sameKey(before, key).length - suspends) };
+          }
+          return { found, ok: matches.some((ad) => ad.cpm === row.newCpm) };
         };
         // Кабинет применяет PUT с задержкой: первый боевой прогон 04.10.2026
         // перечитал ставки сразу и пометил все 39 правок FAILED, хотя через

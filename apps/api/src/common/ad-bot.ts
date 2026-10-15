@@ -407,6 +407,8 @@ export type SeedSpec = {
   /** Скопировать объявления цвета-источника в цвет-цель (цель → источник): так возобновляют группу,
    * чьи объявления остановлены (кабинет их не отдаёт), или добавляют новый цвет в кампанию. */
   cloneGroups?: Record<string, string>;
+  /** Остановить дубли фразы внутри цвета (один запрос дважды): остаётся объявление с наименьшим id. */
+  dedupe?: boolean;
 };
 
 function mergeStopWords(current: string[], rule: SeedStopWords, limit: number): string[] | null {
@@ -461,12 +463,33 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
       }
     }
     if (spec.campaignId === '*') continue;
+    if (spec.dedupe) {
+      // Один запрос в цвете дважды (15.10.2026, j471: cloneGroups и phrases добавили серому и кремовому одни и те же
+      // фразы) — лишние копии остановить, оставив самое старое объявление: у него история показов.
+      const copies = new Map<string, AdBotKeyword[]>();
+      for (const row of own) {
+        if (suspended.has(row.skuGroupId)) continue;
+        const key = `${row.skuGroupId}|${normalizeQuery(row.query)}`;
+        copies.set(key, [...(copies.get(key) ?? []), row]);
+      }
+      for (const rows of copies.values()) {
+        if (rows.length < 2) continue;
+        const [keep, ...extra] = [...rows].sort((a, b) => Number(a.adId) - Number(b.adId));
+        for (const row of extra) actions.push({ kind: 'SUSPEND', campaignId: row.campaignId, campaignName: row.campaignName, skuGroupId: row.skuGroupId, groupTitle: row.skuGroupId, adId: row.adId, query: row.query, oldCpm: row.cpm, newCpm: row.cpm, stopWords: row.stopWords, reason: `дубль фразы в цвете: остаётся объявление ${keep.adId}` });
+      }
+    }
+    const suspendedAds = new Set(actions.filter((row) => row.kind === 'SUSPEND').map((row) => row.adId));
+    // Новые объявления этого прогона по «цвет|запрос»: cloneGroups и phrases не должны добавить одну фразу дважды.
+    const planned = new Map<string, AdBotAction>();
     for (const [target, source] of Object.entries(spec.cloneGroups ?? {})) {
       const from = own.filter((row) => row.skuGroupId === source);
       const have = new Set(own.filter((row) => row.skuGroupId === target).map((row) => normalizeQuery(row.query)));
       for (const row of from) {
-        if (have.has(normalizeQuery(row.query))) continue;
-        actions.push({ kind: 'ADD', campaignId: spec.campaignId, campaignName: row.campaignName, skuGroupId: target, groupTitle: target, adId: null, query: row.query, oldCpm: null, newCpm: clampBid(row.cpm, 'down', cfg), stopWords: row.stopWords, reason: `скопировано из цвета ${source}` });
+        const key = `${target}|${normalizeQuery(row.query)}`;
+        if (have.has(normalizeQuery(row.query)) || planned.has(key)) continue;
+        const action: AdBotAction = { kind: 'ADD', campaignId: spec.campaignId, campaignName: row.campaignName, skuGroupId: target, groupTitle: target, adId: null, query: row.query, oldCpm: null, newCpm: clampBid(row.cpm, 'down', cfg), stopWords: row.stopWords, reason: `скопировано из цвета ${source}` };
+        planned.set(key, action);
+        actions.push(action);
       }
     }
     for (const skuGroupId of [...new Set(own.map((row) => row.skuGroupId))]) {
@@ -478,18 +501,27 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
         const query = normalizeQuery(phrase.query);
         if (!query || phrase.exceptGroups?.includes(skuGroupId)) continue;
         const cpm = clampBid(phrase.cpm, 'down', cfg);
-        const existing = inGroup.find((row) => normalizeQuery(row.query) === query);
+        const existing = inGroup.find((row) => normalizeQuery(row.query) === query && !suspendedAds.has(row.adId));
         if (existing) {
           if (existing.cpm === cpm) continue;
           actions.push({ ...common, kind: existing.cpm > cpm ? 'LOWER' : 'RAISE', adId: existing.adId, query: existing.query, oldCpm: existing.cpm, newCpm: cpm, stopWords: existing.stopWords, reason: `ручная ставка ${fmt(cpm)} (было ${fmt(existing.cpm)})` });
           continue;
         }
         if (phrase.onlyExisting) continue;
+        const key = `${skuGroupId}|${query}`;
+        const copied = planned.get(key);
+        if (copied) {
+          // Фраза уже идёт из cloneGroups — ставка из phrases важнее ставки источника.
+          if (copied.newCpm !== cpm) { copied.newCpm = cpm; copied.reason += `; ставка ${fmt(cpm)} из phrases`; }
+          continue;
+        }
         let stopWords = baseStop;
         if (isLatinQuery(query) && baseStop.some((word) => normalizeQuery(word) === 'soch')) {
           stopWords = [...baseStop.filter((word) => normalizeQuery(word) !== 'soch'), 'soch uchun', 'sochlar uchun'].slice(0, cfg.maxStopWords);
         }
-        actions.push({ ...common, kind: 'ADD', adId: null, query: phrase.query.trim(), oldCpm: null, newCpm: cpm, stopWords, reason: 'ручной посев фразы' });
+        const action: AdBotAction = { ...common, kind: 'ADD', adId: null, query: phrase.query.trim(), oldCpm: null, newCpm: cpm, stopWords, reason: 'ручной посев фразы' };
+        planned.set(key, action);
+        actions.push(action);
       }
     }
   }
