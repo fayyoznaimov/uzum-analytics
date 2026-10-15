@@ -1,0 +1,56 @@
+# Объявления кампании «Буст в ТОП», как их отдаёт кабинет — ручной запуск из GitHub (Actions → «Объявления кампании»).
+# Выполняется на сервере ParisaUbuntu в рабочей копии ~/uzum с её .env: токен кабинета есть только там.
+# Только чтение: группы цветов (skuGroupId), фразы, ставки, число минус-слов. «probe» — какие SKU стоят
+# за id групп из диапазона: так находят группы других цветов товара перед cloneGroups в посеве фраз
+# (группы одного товара обычно идут подряд). Токен в лог не попадает.
+name: Объявления кампании
+
+on:
+  workflow_dispatch:
+    inputs:
+      campaign:
+        description: 'ID кампании (305122 — j471, 305324 — J403, 286528 — HAVANA)'
+        type: string
+        required: true
+        default: '305122'
+      ads:
+        description: 'Каждое объявление строкой: id, группа, фраза, ставка'
+        type: boolean
+        default: true
+      probe:
+        description: 'Диапазоны id групп через запятую, например 5856530-5856560: какие SKU в них'
+        type: string
+        default: ''
+      groups:
+        description: 'ID товара — прощупать пути списка групп товара (разведка API)'
+        type: string
+        default: ''
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  campaign-ads:
+    runs-on: [self-hosted, uzum-server]
+    timeout-minutes: 10
+    steps:
+      - name: Объявления кампании
+        env:
+          CAMPAIGN: ${{ inputs.campaign }}
+          ADS: ${{ inputs.ads }}
+          PROBE: ${{ inputs.probe }}
+          GROUPS: ${{ inputs.groups }}
+        run: |
+          set -euo pipefail
+          [[ "$CAMPAIGN" =~ ^[0-9]+$ ]] || { echo "::error::campaign должно быть числом"; exit 1; }
+          [ -z "$PROBE" ] || [[ "$PROBE" =~ ^[0-9,-]+$ ]] || { echo "::error::probe — диапазоны вида 100-120,130"; exit 1; }
+          [ -z "$GROUPS" ] || [[ "$GROUPS" =~ ^[0-9]+$ ]] || { echo "::error::groups должно быть числом"; exit 1; }
+          args=(--campaign "$CAMPAIGN")
+          [ "$ADS" = "true" ] && args+=(--ads)
+          [ -n "$PROBE" ] && args+=(--probe "$PROBE")
+          [ -n "$GROUPS" ] && args+=(--groups "$GROUPS")
+          cd ~/uzum
+          set -a && . ./.env && set +a
+          echo "dump-campaign-ads.ts ${args[*]}"
+          npx tsx apps/api/scripts/dump-campaign-ads.ts "${args[@]}"

@@ -1,0 +1,58 @@
+# Посев фраз в кампании «Буст в ТОП» по файлу спецификации — ручной запуск из GitHub (Actions → «Посев фраз» → Run workflow).
+# Выполняется на сервере ParisaUbuntu в рабочей копии ~/uzum с её .env: БД и токен кабинета есть только там.
+# Без галочки «apply» — только план, в кабинете ничего не меняется. Формат файла — в заголовке
+# apps/api/scripts/seed-keywords.ts, готовые спецификации — deploy/ads/*.json (файл должен быть уже в main:
+# runner читает рабочую копию сервера). «skus» — вместо посева напечатать SKU кабинета по подстроке
+# названия (id, цена, остаток): так узнают id SKU перед изменением цен. Токены в лог не попадают.
+name: Посев фраз
+
+on:
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: 'Файл спецификации в репозитории'
+        type: string
+        default: 'deploy/ads/seed-j471.json'
+      skus:
+        description: 'Только список SKU по подстроке названия (например J471); посев не выполняется'
+        type: string
+        default: ''
+      list:
+        description: 'Показать все слова кампаний из спецификации'
+        type: boolean
+        default: false
+      apply:
+        description: 'Реально добавить фразы, поставить ставки и минус-слова'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  seed-keywords:
+    runs-on: [self-hosted, uzum-server]
+    timeout-minutes: 20
+    steps:
+      - name: Посев фраз
+        env:
+          SPEC: ${{ inputs.spec }}
+          SKUS: ${{ inputs.skus }}
+          LIST: ${{ inputs.list }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          set -euo pipefail
+          cd ~/uzum
+          echo "Версия на сервере: $(git log --oneline -1)"
+          set -a && . ./.env && set +a
+          if [ -n "$SKUS" ]; then
+            npx tsx apps/api/scripts/seed-keywords.ts --skus "$SKUS"
+            exit 0
+          fi
+          [ -f "$SPEC" ] || { echo "::error::нет файла $SPEC в рабочей копии сервера — он уже в main и деплой прошёл?"; exit 1; }
+          args=(--spec "$SPEC")
+          [ "$LIST" = "true" ] && args+=(--list --all)
+          [ "$APPLY" = "true" ] && args+=(--apply)
+          echo "seed-keywords.ts ${args[*]}"
+          npx tsx apps/api/scripts/seed-keywords.ts "${args[@]}"
