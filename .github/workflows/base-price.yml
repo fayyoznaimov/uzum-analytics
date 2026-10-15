@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       sku:
-        description: 'SKU ID (например 11100529)'
+        description: 'SKU ID или несколько через запятую (например 11100529,11100531) — одна цена для всех'
         required: true
         default: ''
       price:
@@ -53,14 +53,20 @@ jobs:
         run: |
           set -euo pipefail
           num() { [ -z "$2" ] || [[ "$2" =~ ^[0-9]+$ ]] || { echo "::error::$1 должно быть целым числом"; exit 1; }; }
-          num SKU "$SKU"; num PRICE "$PRICE"; num MIN "$MIN"; num MAX_STEP "$MAX_STEP"
-          [ -n "$SKU" ] && [ -n "$PRICE" ] || { echo "::error::нужны SKU и цена"; exit 1; }
-          args=(--sku "$SKU" --price "$PRICE")
+          num PRICE "$PRICE"; num MIN "$MIN"; num MAX_STEP "$MAX_STEP"
+          [[ "$SKU" =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo "::error::SKU — число или числа через запятую"; exit 1; }
+          [ -n "$PRICE" ] || { echo "::error::нужна цена"; exit 1; }
+          args=(--price "$PRICE")
           [ -n "$MIN" ] && args+=(--min "$MIN")
           [ -n "$MAX_STEP" ] && args+=(--max-step "$MAX_STEP")
           [ -n "$REASON" ] && args+=(--reason "$REASON")
           [ "$APPLY" = "true" ] && args+=(--apply)
           cd ~/uzum
           set -a && . ./.env && set +a
-          echo "send-price.ts ${args[*]}"
-          npx tsx apps/api/scripts/send-price.ts "${args[@]}"
+          # Несколько SKU — по очереди, одна ошибка не останавливает остальные; итог — в конце.
+          failed=()
+          for sku in ${SKU//,/ }; do
+            echo "=== SKU $sku: send-price.ts --sku $sku ${args[*]}"
+            npx tsx apps/api/scripts/send-price.ts --sku "$sku" "${args[@]}" || failed+=("$sku")
+          done
+          [ ${#failed[@]} -eq 0 ] || { echo "::error::не выполнено для SKU: ${failed[*]}"; exit 1; }
