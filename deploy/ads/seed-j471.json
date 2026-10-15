@@ -14,9 +14,8 @@
       { "query": "полотенца набор", "cpm": 15000 },
       { "query": "комплект полотенец", "cpm": 16500 },
       { "query": "полотенце махровое", "cpm": 16500 },
-      { "query": "sochiq nabor", "cpm": 9500 },
       { "query": "sochiq", "cpm": 9500 }
     ],
-    "suspend": ["banyo sochiq", "dush uchun sochiq", "sochiq dush uchun", "dush uchun sochiqlar", "hammom sochiqlari to plami"]
+    "suspend": ["banyo sochiq", "dush uchun sochiq", "sochiq dush uchun", "dush uchun sochiqlar", "hammom sochiqlari to plami", "sochiq nabor chaqaloqlar uchun"]
   }
 ]
