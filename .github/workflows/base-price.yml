@@ -1,0 +1,66 @@
+# Базовая цена SKU (OpenAPI sendPriceData) — ручной запуск из GitHub (Actions → «Базовая цена» → Run workflow).
+# Выполняется на сервере ParisaUbuntu в рабочей копии ~/uzum с её .env: БД и токен Uzum есть только там.
+# Без галочки «apply» — только dry-run: план с проверками (шаг, порог, себестоимость, акция) и без отправки.
+# Каждая попытка пишется в PriceChange (source = cli). SKU в акции Uzum отклоняется кабинетом (sku-price-001):
+# для акционной цены есть «Цена в акции». Токен в лог не попадает — send-price.ts его не печатает.
+name: Базовая цена
+
+on:
+  workflow_dispatch:
+    inputs:
+      sku:
+        description: 'SKU ID (например 11100529)'
+        required: true
+        default: ''
+      price:
+        description: 'Новая базовая цена, сум'
+        required: true
+        default: ''
+      min:
+        description: 'Минимальная цена (порог), сум — без него и без себестоимости цена не меняется'
+        required: false
+        default: ''
+      max_step:
+        description: 'Допустимый шаг изменения, % (по умолчанию 5)'
+        required: false
+        default: ''
+      reason:
+        description: 'Причина (для журнала)'
+        required: false
+        default: ''
+      apply:
+        description: 'Реально отправить в Uzum (без галочки — dry-run)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  base-price:
+    runs-on: [self-hosted, uzum-server]
+    timeout-minutes: 10
+    steps:
+      - name: Базовая цена
+        env:
+          SKU: ${{ inputs.sku }}
+          PRICE: ${{ inputs.price }}
+          MIN: ${{ inputs.min }}
+          MAX_STEP: ${{ inputs.max_step }}
+          REASON: ${{ inputs.reason }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          set -euo pipefail
+          num() { [ -z "$2" ] || [[ "$2" =~ ^[0-9]+$ ]] || { echo "::error::$1 должно быть целым числом"; exit 1; }; }
+          num SKU "$SKU"; num PRICE "$PRICE"; num MIN "$MIN"; num MAX_STEP "$MAX_STEP"
+          [ -n "$SKU" ] && [ -n "$PRICE" ] || { echo "::error::нужны SKU и цена"; exit 1; }
+          args=(--sku "$SKU" --price "$PRICE")
+          [ -n "$MIN" ] && args+=(--min "$MIN")
+          [ -n "$MAX_STEP" ] && args+=(--max-step "$MAX_STEP")
+          [ -n "$REASON" ] && args+=(--reason "$REASON")
+          [ "$APPLY" = "true" ] && args+=(--apply)
+          cd ~/uzum
+          set -a && . ./.env && set +a
+          echo "send-price.ts ${args[*]}"
+          npx tsx apps/api/scripts/send-price.ts "${args[@]}"
