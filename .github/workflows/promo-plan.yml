@@ -49,4 +49,4 @@ jobs:
           [ "$SEND" = "true" ] && [ "$APPLY" = "true" ] && args+=(--apply)
           cd ~/uzum
           set -a && . ./.env && set +a
-          npx tsx apps/api/scripts/promo-plan.ts "${args[@]}"
+          npx tsx --tsconfig apps/api/tsconfig.json apps/api/scripts/promo-plan.ts "${args[@]}"

@@ -48,4 +48,4 @@ jobs:
           cd ~/uzum
           set -a && . ./.env && set +a
           echo "auto-pricing.ts ${args[*]:-}"
-          npx tsx apps/api/scripts/auto-pricing.ts "${args[@]}"
+          npx tsx --tsconfig apps/api/tsconfig.json apps/api/scripts/auto-pricing.ts "${args[@]}"
