@@ -17,6 +17,10 @@ on:
         description: 'Каждое объявление строкой: id, группа, фраза, ставка'
         type: boolean
         default: true
+      ladder:
+        description: 'Лестница охвата по каждому объявлению: позиция и охват ставки, цена топ-10 и 100 %'
+        type: boolean
+        default: false
       probe:
         description: 'Диапазоны id групп через запятую, например 5856530-5856560: какие SKU в них'
         type: string
@@ -39,6 +43,7 @@ jobs:
         env:
           CAMPAIGN: ${{ inputs.campaign }}
           ADS: ${{ inputs.ads }}
+          LADDER: ${{ inputs.ladder }}
           PROBE: ${{ inputs.probe }}
           GROUPS: ${{ inputs.groups }}
         run: |
@@ -48,6 +53,7 @@ jobs:
           [ -z "$GROUPS" ] || [[ "$GROUPS" =~ ^[0-9]+$ ]] || { echo "::error::groups должно быть числом"; exit 1; }
           args=(--campaign "$CAMPAIGN")
           [ "$ADS" = "true" ] && args+=(--ads)
+          [ "$LADDER" = "true" ] && args+=(--ladder)
           [ -n "$PROBE" ] && args+=(--probe "$PROBE")
           [ -n "$GROUPS" ] && args+=(--groups "$GROUPS")
           cd ~/uzum

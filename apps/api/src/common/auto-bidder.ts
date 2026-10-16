@@ -93,12 +93,32 @@ export type AutoBidContext = {
 const EMPTY: AdBotStats = { impressions: 0, clicks: 0, sold: 0, revenue: 0, spend: 0, position: null };
 const fmt = (value: number) => Math.round(value).toLocaleString('ru-RU');
 
-/** Лестница из ответа кабинета: принимаем массив или объект с payload/data/ladder; поля — в разных написаниях. */
+/**
+ * Лестница охвата кабинета (значок-график у ставки «Буст в ТОП»), найдена 16.10.2026 во вкладке Network:
+ * GET …/advertising/leaderboard/sku-group/{skuGroupId}?query=…&cpm=… → ступени { position, cpm, impressionPercent,
+ * isRecommended }. AD_BID_LADDER_URL переопределяет шаблон, «off» — выключает лестницу.
+ */
+export const DEFAULT_BID_LADDER_URL = 'https://api-seller.uzum.uz/api/seller/advertising/leaderboard/sku-group/{skuGroupId}?query={query}&cpm={cpm}';
+
+/** Адрес лестницы для слова: подстановки {campaignId}, {adId}, {skuGroupId}, {query}, {cpm}. */
+export function ladderUrl(template: string, keyword: { campaignId: string; adId: string; skuGroupId: string; query: string; cpm: number }): string {
+  return template
+    .replace('{campaignId}', encodeURIComponent(keyword.campaignId))
+    .replace('{adId}', encodeURIComponent(keyword.adId))
+    .replace('{skuGroupId}', encodeURIComponent(keyword.skuGroupId))
+    .replace('{query}', encodeURIComponent(keyword.query))
+    .replace('{cpm}', encodeURIComponent(String(Math.round(keyword.cpm))));
+}
+
+/** Лестница из ответа кабинета: принимаем массив или объект с payload/data/ladder/ranking (в том числе строкой JSON); поля — в разных написаниях. */
 export function parseLadder(raw: unknown): BidLadderStep[] {
   const pick = (value: any): any[] | null => {
+    if (typeof value === 'string' && /^\s*[[{]/.test(value)) {
+      try { return pick(JSON.parse(value)); } catch { return null; }
+    }
     if (Array.isArray(value)) return value;
     if (!value || typeof value !== 'object') return null;
-    for (const key of ['ladder', 'steps', 'positions', 'bids', 'items', 'content', 'payload', 'data']) {
+    for (const key of ['ladder', 'ranking', 'leaderboard', 'steps', 'positions', 'bids', 'items', 'content', 'payload', 'data']) {
       const inner = pick(value[key]);
       if (inner) return inner;
     }
@@ -122,6 +142,18 @@ export function bidForReach(ladder: BidLadderStep[], targetReach: number): BidLa
   if (!ladder.length) return null;
   const sorted = [...ladder].sort((a, b) => a.impressionPercent - b.impressionPercent || a.cpm - b.cpm);
   return sorted.find((step) => step.impressionPercent >= targetReach) ?? sorted[sorted.length - 1];
+}
+
+/** Самая дешёвая ступень с позицией не ниже maxPosition (1 — верх выдачи); таких нет — null. */
+export function bidForPosition(ladder: BidLadderStep[], maxPosition: number): BidLadderStep | null {
+  const fit = ladder.filter((step) => step.position !== null && step.position <= maxPosition);
+  return fit.length ? fit.reduce((best, step) => (step.cpm < best.cpm ? step : best)) : null;
+}
+
+/** Позиция, которую покупает ставка cpm: лучшая позиция среди ступеней с ценой ≤ cpm; ниже всех ступеней — null. */
+export function positionForBid(ladder: BidLadderStep[], cpm: number): number | null {
+  const positions = ladder.filter((step) => step.cpm <= cpm && step.position !== null).map((step) => step.position as number);
+  return positions.length ? Math.min(...positions) : null;
 }
 
 /** Какой охват покупает ставка cpm: самая высокая ступень с ценой ≤ cpm; ниже первой ступени — 0. */

@@ -3,10 +3,13 @@
  *
  *   npx tsx apps/api/scripts/dump-campaign-ads.ts --campaign 286528 [--raw]
  *   ... --ads                                   каждое объявление строкой: id, фраза, ставка
+ *   ... --ladder                                лестница охвата кабинета по каждому активному объявлению:
+ *                                               позиция и охват текущей ставки, цена топ-10 и 100 % показов
  *
  * Токен кабинета берётся из БД (UZUM_INTERNAL) и нигде не печатается.
  */
 import { IntegrationType } from '@prisma/client';
+import { DEFAULT_BID_LADDER_URL, bidForPosition, bidForReach, ladderUrl, parseLadder, positionForBid, reachForBid } from '../src/common/auto-bidder';
 import { CryptoService } from '../src/common/crypto.service';
 import { PrismaService } from '../src/common/prisma.service';
 import { IntegrationsService } from '../src/modules/integrations/integrations.service';
@@ -18,6 +21,7 @@ const option = (name: string) => {
   return index >= 0 ? process.argv[index + 1] : undefined;
 };
 const flag = (name: string) => process.argv.includes(`--${name}`);
+const fmt = (value: number) => Math.round(value).toLocaleString('ru-RU');
 
 async function main() {
   const campaignId = option('campaign');
@@ -92,6 +96,25 @@ async function main() {
         if (flag('raw')) console.log(JSON.stringify(group).slice(0, 1500));
         // --ads: каждое объявление строкой — id, фраза, ставка, число минус-слов (новые объявления — с наибольшим id).
         if (flag('ads')) for (const ad of ads) console.log(`объявление ${ad.id} | группа ${group.skuGroupId} | «${ad.query}» | ${ad.cpm} | минус-слов ${Array.isArray(ad.stopWords) ? ad.stopWords.length : 0}`);
+        // --ladder: что покупает текущая ставка и сколько стоят топ-10 и 100 % показов (кнопка-график у ставки в кабинете).
+        if (flag('ladder')) {
+          for (const ad of ads) {
+            if (/SUSPEND|STOP|ARCHIV|DELET/i.test(String(ad.status ?? ''))) continue;
+            const cpm = Number(ad.cpm) || 0;
+            const keyword = { campaignId, adId: String(ad.id), skuGroupId: String(group.skuGroupId), query: String(ad.query ?? ''), cpm };
+            try {
+              const steps = parseLadder((await cabinet.cabinet('GET', ladderUrl(process.env.AD_BID_LADDER_URL && process.env.AD_BID_LADDER_URL !== 'off' ? process.env.AD_BID_LADDER_URL : DEFAULT_BID_LADDER_URL, keyword))).body);
+              if (!steps.length) { console.log(`лестница | ${group.skuGroupId} | «${ad.query}» | ставка ${fmt(cpm)} | лестница пуста`); continue; }
+              const top10 = bidForPosition(steps, 10);
+              const full = bidForReach(steps, 100);
+              const pos = positionForBid(steps, cpm);
+              const flagText = full && cpm > full.cpm + 500 ? '  ⚠ переплата: выше цены 100 %' : top10 && cpm < top10.cpm ? '  ⚠ ниже топ-10' : '';
+              console.log(`лестница | ${group.skuGroupId} | «${ad.query}» | ставка ${fmt(cpm)} → позиция ${pos ?? '>' + Math.max(...steps.map((s) => s.position ?? 0))}, охват ${reachForBid(steps, cpm)}% | топ-10: ${top10 ? `${fmt(top10.cpm)} (поз. ${top10.position}, ${top10.impressionPercent}%)` : '—'} | 100%: ${full ? `${fmt(full.cpm)} (поз. ${full.position ?? '—'})` : '—'}${flagText}`);
+            } catch (error: any) {
+              console.log(`лестница | ${group.skuGroupId} | «${ad.query}» | ошибка: ${String(error?.message || error).slice(0, 120)}`);
+            }
+          }
+        }
       }
       if (groups.length < 10) break;
     }

@@ -7,8 +7,10 @@ import {
   AutoBidderConfig,
   AutoBidderPlan,
   BidLadderStep,
+  DEFAULT_BID_LADDER_URL,
   bidForReach,
   formatAutoBidderReport,
+  ladderUrl,
   parseLadder,
   planAutoBidder,
   policyKey,
@@ -34,9 +36,9 @@ export type AutoBidderRunResult = { apply: boolean; today: string; plan: AutoBid
  * (reason с «авто-ставка»). Uzum при каждой правке пересоздаёт объявление с новым id, поэтому слово опознаётся по ключу,
  * а статистика Cube суммируется по всем id ключа (AdBotService.keywordStatsByKey).
  *
- * AD_BID_LADDER_URL — шаблон GET-запроса кабинета с подстановками {campaignId}, {adId}, {skuGroupId}, {query}; ответ —
- * ступени { position, cpm, impressionPercent } в любой из принимаемых parseLadder форм. Пока не задан — лестницы нет,
- * и автобид только держит ставку в пределах потолка и ДРР.
+ * Лестница — GET кабинета DEFAULT_BID_LADDER_URL (leaderboard/sku-group, найден 16.10.2026); AD_BID_LADDER_URL
+ * переопределяет шаблон (подстановки {campaignId}, {adId}, {skuGroupId}, {query}, {cpm}), «off» — без лестницы:
+ * тогда автобид только держит ставку в пределах потолка и ДРР.
  */
 @Injectable()
 export class AutoBidderService {
@@ -67,7 +69,7 @@ export class AutoBidderService {
   }
 
   applyEnabled() { return process.env.AUTO_BIDDER_APPLY === 'true'; }
-  ladderConfigured() { return Boolean(process.env.AD_BID_LADDER_URL); }
+  ladderConfigured() { return process.env.AD_BID_LADDER_URL !== 'off'; }
 
   config(): AutoBidderConfig {
     const env = (name: string) => {
@@ -181,15 +183,10 @@ export class AutoBidderService {
     };
   }
 
-  /** Лестница охвата из кабинета по шаблону AD_BID_LADDER_URL; не настроен — null. Кэш 1 минута. */
-  async ladder(keyword: Pick<AdBotKeyword, 'campaignId' | 'adId' | 'skuGroupId' | 'query'>): Promise<BidLadderStep[] | null> {
-    const template = process.env.AD_BID_LADDER_URL;
-    if (!template) return null;
-    const url = template
-      .replace('{campaignId}', encodeURIComponent(keyword.campaignId))
-      .replace('{adId}', encodeURIComponent(keyword.adId))
-      .replace('{skuGroupId}', encodeURIComponent(keyword.skuGroupId))
-      .replace('{query}', encodeURIComponent(keyword.query));
+  /** Лестница охвата из кабинета (DEFAULT_BID_LADDER_URL или AD_BID_LADDER_URL); выключена — null. Кэш 1 минута. */
+  async ladder(keyword: Pick<AdBotKeyword, 'campaignId' | 'adId' | 'skuGroupId' | 'query' | 'cpm'>): Promise<BidLadderStep[] | null> {
+    if (!this.ladderConfigured()) return null;
+    const url = ladderUrl(process.env.AD_BID_LADDER_URL || DEFAULT_BID_LADDER_URL, keyword);
     return this.cached(`ladder:${url}`, async () => parseLadder((await this.cabinet.cabinet('GET', url)).body));
   }
 
@@ -232,7 +229,7 @@ export class AutoBidderService {
       const notes: string[] = [];
       const apply = options.apply && this.applyEnabled();
       if (options.apply && !apply) notes.push('AUTO_BIDDER_APPLY не включён — ставки не меняются, только предложения');
-      if (!this.ladderConfigured()) notes.push('AD_BID_LADDER_URL не задан — лестницы охвата нет, автобид держит ставки в пределах потолка и ДРР');
+      if (!this.ladderConfigured()) notes.push('лестница охвата выключена (AD_BID_LADDER_URL=off) — автобид держит ставки в пределах потолка и ДРР');
 
       const policyRows: any[] = await this.prisma.adAutoBidPolicy.findMany({ where: { enabled: true } });
       const policies: AutoBidPolicy[] = policyRows.map((row) => ({

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AdBotStats } from '../ad-bot';
-import { AUTO_BIDDER_DEFAULTS, AutoBidContext, AutoBidKeyword, AutoBidPolicy, BidLadderStep, bidForReach, decideAutoBid, formatAutoBidderReport, parseLadder, planAutoBidder, policyKey, reachForBid } from '../auto-bidder';
+import { AUTO_BIDDER_DEFAULTS, AutoBidContext, AutoBidKeyword, AutoBidPolicy, BidLadderStep, DEFAULT_BID_LADDER_URL, bidForPosition, bidForReach, decideAutoBid, formatAutoBidderReport, ladderUrl, parseLadder, planAutoBidder, policyKey, positionForBid, reachForBid } from '../auto-bidder';
 
 const now = new Date('2026-10-06T12:00:00+05:00');
 const ladder: BidLadderStep[] = [
@@ -20,6 +20,25 @@ describe('лестница ставок', () => {
     expect(steps).toEqual([{ position: 13, cpm: 25_281, impressionPercent: 60 }, { position: 4, cpm: 36_844, impressionPercent: 100 }]);
     expect(parseLadder(null)).toEqual([]);
     expect(parseLadder({ payload: [] })).toEqual([]);
+  });
+  it('лестница кабинета leaderboard: массив, ranking строкой JSON, адрес с ценой', () => {
+    // Ответ кабинета 16.10.2026 для HAVANA хаки по «sochiq» (так его логирует фронт кабинета).
+    const ranking = [
+      { position: 4, cpm: 24073, impressionPercent: 100, isRecommended: false }, { position: 5, cpm: 20100, impressionPercent: 90, isRecommended: false },
+      { position: 7, cpm: 16815, impressionPercent: 80, isRecommended: false }, { position: 9, cpm: 16038, impressionPercent: 70, isRecommended: false },
+      { position: 13, cpm: 13015, impressionPercent: 60, isRecommended: true }, { position: 19, cpm: 11443, impressionPercent: 50, isRecommended: false },
+    ];
+    const steps = parseLadder(ranking);
+    expect(steps).toHaveLength(6);
+    expect(parseLadder({ ranking: JSON.stringify(ranking) })).toEqual(steps);
+    expect(parseLadder({ payload: ranking })).toEqual(steps);
+    expect(bidForPosition(steps, 10)).toEqual({ position: 9, cpm: 16_038, impressionPercent: 70 });
+    expect(bidForPosition(steps, 3)).toBeNull();
+    expect(positionForBid(steps, 15_000)).toBe(13);
+    expect(positionForBid(steps, 51_000)).toBe(4);
+    expect(positionForBid(steps, 9_500)).toBeNull();
+    expect(ladderUrl(DEFAULT_BID_LADDER_URL, { campaignId: '286528', adId: '1', skuGroupId: '4038330', query: 'yuz sochiq', cpm: 15_000 }))
+      .toBe('https://api-seller.uzum.uz/api/seller/advertising/leaderboard/sku-group/4038330?query=yuz%20sochiq&cpm=15000');
   });
   it('цена охвата — минимальная ступень не ниже цели; недостижимый охват — верхняя ступень', () => {
     expect(bidForReach(ladder, 60)?.cpm).toBe(25_281);
