@@ -447,7 +447,7 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
         const byQuery = targets.has(normalizeQuery(row.query));
         const byGroup = groups.has(row.skuGroupId);
         if (!byQuery && !byGroup) continue;
-        actions.push({ kind: 'SUSPEND', campaignId: row.campaignId, campaignName: row.campaignName, skuGroupId: row.skuGroupId, groupTitle: row.skuGroupId, adId: row.adId, query: row.query, oldCpm: row.cpm, newCpm: row.cpm, stopWords: row.stopWords, reason: byGroup ? 'ручная остановка цвета: нет остатка до дозаказа' : 'ручная остановка: запрос не про товар' });
+        actions.push({ kind: 'SUSPEND', campaignId: row.campaignId, campaignName: row.campaignName, skuGroupId: row.skuGroupId, groupTitle: row.skuGroupId, adId: row.adId, query: row.query, oldCpm: row.cpm, newCpm: row.cpm, stopWords: row.stopWords, reason: byGroup ? 'ручная остановка цвета: не рекламируем (не боевой цвет или нет остатка)' : 'ручная остановка: запрос не про товар' });
       }
     }
     const suspended = new Set(spec.suspendGroups ?? []);
