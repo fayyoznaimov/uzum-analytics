@@ -8,14 +8,18 @@
     "dedupe": true,
     "suspendGroups": ["5374109", "5374107", "5374110", "5374112"],
     "phrases": [
-      { "query": "набор полотенец", "cpm": 65000 },
-      { "query": "полотенце банное", "cpm": 50000 },
-      { "query": "полотенце для лица", "cpm": 35000 },
-      { "query": "набор полотенца", "cpm": 15000 },
-      { "query": "полотенца набор", "cpm": 15000 },
-      { "query": "комплект полотенец", "cpm": 16500 },
-      { "query": "полотенце махровое", "cpm": 16500 },
-      { "query": "sochiq", "cpm": 9500 }
-    ]
+      { "query": "набор полотенец", "cpm": 48500, "onlyExisting": true, "exceptGroups": ["5374111"] },
+      { "query": "набор полотенец", "cpm": 54500, "onlyExisting": true, "exceptGroups": ["5374108"] },
+      { "query": "полотенце банное", "cpm": 58500, "onlyExisting": true, "exceptGroups": ["5374111"] },
+      { "query": "полотенце для лица", "cpm": 38000, "onlyExisting": true, "exceptGroups": ["5374111"] },
+      { "query": "комплект полотенец", "cpm": 25000, "onlyExisting": true, "exceptGroups": ["5374108"] },
+      { "query": "полотенца набор", "cpm": 22000, "onlyExisting": true, "exceptGroups": ["5374108"] },
+      { "query": "сочиклар", "cpm": 12000, "onlyExisting": true, "exceptGroups": ["5374111"] },
+      { "query": "сочиклар", "cpm": 12000, "onlyExisting": true, "exceptGroups": ["5374108"] },
+      { "query": "sochiq to'plami", "cpm": 13500, "onlyExisting": true, "exceptGroups": ["5374111"] },
+      { "query": "sochiq", "cpm": 20500, "onlyExisting": true, "exceptGroups": ["5374108"] },
+      { "query": "sochiq nabor", "cpm": 20000, "onlyExisting": true, "exceptGroups": ["5374111"] }
+    ],
+    "_лестница_16_10": "По лестнице кабинета 16.10 вечером (Actions «Объявления кампании» с галочкой ladder): цена топ-10 у каждого цвета своя. Правило: на каждом запросе в топ-10 — один-два самых дешёвых для этого запроса цвета (ставка = цена позиции 9 + 3 %, округление вверх до 500), остальные цвета — не выше их цены топ-10 («по серединке»); ставка выше цены 100 % снята везде. Фразы здесь только правят существующие объявления (onlyExisting). «набор полотенец» стоял 65 000 — это позиция 4–5 и 90–100 % показов, топ-10 стоит 46 707 (серый) и 52 729 (голубой)."
   }
 ]
