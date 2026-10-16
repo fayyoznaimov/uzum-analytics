@@ -64,7 +64,12 @@ async function main() {
     const { actions, outcomes, keywords, groupTitles, budgetNotes } = await service.seed(specs, apply);
     console.log(`${apply ? 'ПРИМЕНЕНО' : 'ПЛАН'}: слов в активных кампаниях ${keywords.length}, действий ${actions.length}\n`);
     for (const note of budgetNotes) console.log(`💰 ${note}`);
-    const title = (groupId: string) => groupTitles.get(groupId) ?? groupId;
+    // Ставка выше потолка молча режется до него (clampBid) — без этой строки «действий 0» выглядит как «уже стоит».
+    const cap = service.config().maxBid;
+    const raw = process.env.AD_BOT_MAX_BID;
+    const capped = specs.flatMap((spec) => (spec.phrases ?? []).filter((phrase) => phrase.cpm > cap).map((phrase) => `«${phrase.query}» ${fmt(phrase.cpm)}`));
+    if (capped.length) console.log(`⚠ потолок ставки ${fmt(cap)} (AD_BOT_MAX_BID ${raw === undefined ? 'не задан' : `= «${raw}»`}) — до него срезаны: ${capped.join(', ')}\n`);
+    const title =(groupId: string) => groupTitles.get(groupId) ?? groupId;
     const campaignIds = specs.some((spec) => spec.campaignId === '*') ? [...new Set(keywords.map((row) => row.campaignId))] : specs.map((spec) => spec.campaignId);
     for (const campaignId of campaignIds) {
       const spec = specs.find((row) => row.campaignId === campaignId) ?? { campaignId };
