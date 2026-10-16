@@ -44,6 +44,7 @@ import { PromoPricingService } from './modules/pricing/promo-pricing.service';
 import { AutoPricingService } from './modules/pricing/auto-pricing.service';
 import { AdAgentService } from './modules/ads/ad-agent.service';
 import { AdBotService } from './modules/ads/ad-bot.service';
+import { AdLadderService } from './modules/ads/ad-ladder.service';
 import { MarketingController } from './modules/pricing/marketing.controller';
 import { PriceExperimentService } from './modules/pricing/price-experiment.service';
 import { AutoBidderService } from './modules/ads/auto-bidder.service';
@@ -76,7 +77,7 @@ import { MiniAppService } from './modules/miniapp/miniapp.service';
     CompetitorsService,
     PrismaService, CryptoService, TelegramClient, OpenclawClient, AuthService, AuthGuard, IntegrationsService, CabinetAuthService,
     CostsService, GoalsService, DashboardService, ProductsService, SyncService, SuppliesService,
-    WarehouseService, DigestService, ReturnsWatchService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService, AdAgentService, AdBotService, PriceExperimentService, AutoBidderService, MiniAppService,
+    WarehouseService, DigestService, ReturnsWatchService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService, AdAgentService, AdBotService, PriceExperimentService, AutoBidderService, AdLadderService, MiniAppService,
   ],
 })
 export class AppModule {}

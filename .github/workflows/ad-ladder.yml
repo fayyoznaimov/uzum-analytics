@@ -1,0 +1,49 @@
+# «Лестница ставок» «Буст в ТОП» — ручной запуск из GitHub (Actions → «Лестница ставок» → Run workflow).
+# По расписанию то же самое делает API раз в день (AD_LADDER_CRON, 10:30 Ташкент) и шлёт итог в Telegram.
+# Выполняется на сервере ParisaUbuntu в рабочей копии ~/uzum с её .env: БД и токен кабинета есть только там.
+# Без галочки «apply» — только предложения; с ней — ставки меняются (если в .env не стоит AD_LADDER_APPLY=false).
+name: Лестница ставок
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Реально поставить ставки в кабинете'
+        type: boolean
+        default: false
+      telegram:
+        description: 'Отправить отчёт в Telegram'
+        type: boolean
+        default: false
+      campaign:
+        description: 'Только эти кампании (id через запятую); пусто — HAVANA, j471, J403'
+        type: string
+        default: ''
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  ad-ladder:
+    runs-on: [self-hosted, uzum-server]
+    timeout-minutes: 20
+    steps:
+      - name: Лестница ставок
+        env:
+          APPLY: ${{ inputs.apply }}
+          TELEGRAM: ${{ inputs.telegram }}
+          CAMPAIGN: ${{ inputs.campaign }}
+        run: |
+          set -euo pipefail
+          [ -z "$CAMPAIGN" ] || [[ "$CAMPAIGN" =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo "::error::campaign — id через запятую"; exit 1; }
+          cd ~/uzum
+          set -a && . ./.env && set +a
+          args=()
+          if [ "$APPLY" = "true" ]; then
+            [ "${AD_LADDER_APPLY:-true}" != "false" ] || { echo "::error::в .env AD_LADDER_APPLY=false — применение выключено"; exit 1; }
+            args+=(--apply)
+          fi
+          [ "$TELEGRAM" = "true" ] && args+=(--telegram)
+          [ -n "$CAMPAIGN" ] && args+=(--campaign "$CAMPAIGN")
+          npx tsx --tsconfig apps/api/tsconfig.json apps/api/scripts/ad-ladder.ts "${args[@]}"

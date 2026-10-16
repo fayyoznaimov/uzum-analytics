@@ -1,0 +1,153 @@
+/**
+ * «Лестница ставок» — ежедневная сверка ставок «Буст в ТОП» с лестницей охвата кабинета (решение владельца 16.10.2026).
+ *
+ * Цель владельца: по каждому релевантному запросу карточка в топ-10 одним-двумя цветами, остальные цвета «по серединке»,
+ * без переплаты. Лестница кабинета (common/auto-bidder.ts → parseLadder) у каждого цвета своя: на «наборе полотенец»
+ * у HAVANA топ-10 хаки стоил 12 029, молочного — 45 910. Поэтому правило работает по запросу целиком:
+ *
+ *   1. Для каждой пары «кампания + запрос» берём цвета с непустой лестницей и цену топ-10 (самая дешёвая ступень
+ *      с позицией ≤ topPosition, у кабинета это позиция 9 = 70 % показов).
+ *   2. Боевые цвета запроса — до `colors` самых дешёвых, чья цена топ-10 с запасом укладывается в потолок класса
+ *      запроса; плюс любой цвет, чей топ-10 дешевле `cheapTop` (такой топ почти ничего не стоит).
+ *      Ставка боевого цвета = цена топ-10 + `marginPercent` %, округление вверх до `rounding`.
+ *   3. Остальные цвета не поднимаем; если ставка у них сама дотягивает до топ-10 или выше цены 100 % —
+ *      снижаем до ступени ниже топ-10.
+ *   4. Правим, только если ставка вне топ-10, переплачивает больше `overpayTolerance` или вышла за 100 %:
+ *      каждая правка в Uzum пересоздаёт объявление, дёргать его ради 500 сум незачем.
+ *
+ * Модуль чистый — без сети и БД. Сервис: modules/ads/ad-ladder.service.ts.
+ */
+import { AdBotAction, AdBotKeyword, normalizeQuery } from './ad-bot';
+import { BidLadderStep, bidForPosition, bidForReach, positionForBid } from './auto-bidder';
+
+/** Кампании полотенец (HAVANA, j471, J403) — по умолчанию; AD_LADDER_CAMPAIGNS переопределяет списком id через запятую. */
+export const AD_LADDER_DEFAULT_CAMPAIGNS = ['286528', '305122', '305324'];
+
+export function ladderCampaigns(): string[] {
+  const raw = String(process.env.AD_LADDER_CAMPAIGNS ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+  return raw.length ? raw : AD_LADDER_DEFAULT_CAMPAIGNS;
+}
+export const ladderEnabled = () => process.env.AD_LADDER_ENABLED !== 'false';
+
+export type LadderQueryClass = { name: string; match: (query: string) => boolean; cap: number; colors: number };
+
+export const AD_LADDER_DEFAULTS = {
+  topPosition: 10,
+  /** Запас сверх цены ступени: лестница за день сдвигается. */
+  marginPercent: 3,
+  rounding: 500,
+  minBid: 9_500,
+  maxBid: 70_000,
+  /** Топ-10 дешевле этого — берём для любого цвета запроса. */
+  cheapTop: 15_000,
+  /** Ставка боевого цвета выше нужной больше чем на столько — снижаем. */
+  overpayTolerance: 2_000,
+  /** Классы запросов (первое совпадение): потолок цены топ-10 и сколько цветов держать в топе. */
+  classes: [
+    { name: 'банные и наборы', match: (q: string) => /^(полотенце банное|банное полотенце|набор полотенец)$/.test(q), cap: 60_000, colors: 2 },
+    { name: 'лицевые', match: (q: string) => /^полотенце для лица$/.test(q), cap: 40_000, colors: 2 },
+    { name: 'остальные', match: () => true, cap: 25_000, colors: 1 },
+  ] as LadderQueryClass[],
+};
+export type AdLadderConfig = typeof AD_LADDER_DEFAULTS;
+
+export type LadderKeyword = AdBotKeyword & { ladder: BidLadderStep[] | null };
+export type LadderDecision = {
+  keyword: LadderKeyword;
+  role: 'top' | 'other' | 'no-ladder';
+  top10: BidLadderStep | null;
+  full: BidLadderStep | null;
+  target: number | null;
+  positionBefore: number | null;
+  positionAfter: number | null;
+  action: AdBotAction | null;
+};
+
+const roundUp = (value: number, step: number) => Math.ceil(value / Math.max(1, step)) * Math.max(1, step);
+const roundDown = (value: number, step: number) => Math.floor(value / Math.max(1, step)) * Math.max(1, step);
+const fmt = (value: number) => Math.round(value).toLocaleString('ru-RU');
+
+export function ladderQueryClass(query: string, cfg: Pick<AdLadderConfig, 'classes'> = AD_LADDER_DEFAULTS): LadderQueryClass {
+  const q = normalizeQuery(query);
+  return cfg.classes.find((row) => row.match(q)) ?? cfg.classes[cfg.classes.length - 1];
+}
+
+/** Решения по всем словам: какие цвета держать в топ-10 и какие ставки поставить. */
+export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = AD_LADDER_DEFAULTS): LadderDecision[] {
+  const decisions: LadderDecision[] = [];
+  const byQuery = new Map<string, LadderKeyword[]>();
+  for (const keyword of keywords) {
+    const key = `${keyword.campaignId}|${normalizeQuery(keyword.query)}`;
+    byQuery.set(key, [...(byQuery.get(key) ?? []), keyword]);
+  }
+  for (const rows of byQuery.values()) {
+    const cls = ladderQueryClass(rows[0].query, cfg);
+    const priced = rows
+      .map((keyword) => {
+        const steps = keyword.ladder ?? [];
+        const top10 = steps.length ? bidForPosition(steps, cfg.topPosition) : null;
+        const target = top10 ? Math.min(cfg.maxBid, Math.max(cfg.minBid, roundUp(top10.cpm * (1 + cfg.marginPercent / 100), cfg.rounding))) : null;
+        return { keyword, steps, top10, full: steps.length ? bidForReach(steps, 100) : null, target };
+      })
+      .sort((a, b) => (a.top10?.cpm ?? Infinity) - (b.top10?.cpm ?? Infinity));
+    let chosen = 0;
+    for (const row of priced) {
+      const { keyword, steps, top10, full, target } = row;
+      const base = { keyword, top10, full, positionBefore: steps.length ? positionForBid(steps, keyword.cpm) : null };
+      if (!top10 || target === null) {
+        decisions.push({ ...base, role: 'no-ladder', target: null, positionAfter: base.positionBefore, action: null });
+        continue;
+      }
+      const isTop = target <= cls.cap && (chosen < cls.colors || top10.cpm <= cfg.cheapTop);
+      if (isTop) chosen++;
+      const common = { campaignId: keyword.campaignId, campaignName: keyword.campaignName, skuGroupId: keyword.skuGroupId, groupTitle: keyword.skuGroupId, adId: keyword.adId, query: keyword.query, oldCpm: keyword.cpm, stopWords: keyword.stopWords };
+      let next: number | null = null;
+      let reason = '';
+      if (isTop) {
+        const outOfTop = keyword.cpm < top10.cpm;
+        const overpay = keyword.cpm > target + cfg.overpayTolerance || (full !== null && keyword.cpm > full.cpm);
+        if (outOfTop || overpay) {
+          next = target;
+          reason = `лестница: топ-10 (${cls.name}) стоит ${fmt(top10.cpm)}, позиция ${top10.position}; ${outOfTop ? 'ставка была ниже топ-10' : 'была переплата'}`;
+        }
+      } else {
+        const belowTop = top10.cpm - cfg.rounding;
+        const inTop = keyword.cpm >= top10.cpm;
+        const overFull = full !== null && keyword.cpm > full.cpm;
+        if ((inTop || overFull) && belowTop >= cfg.minBid) {
+          next = Math.max(cfg.minBid, roundDown(belowTop, cfg.rounding));
+          reason = `лестница: цвет не боевой для «${keyword.query}» — ниже топ-10 (${fmt(top10.cpm)})${overFull ? ', была ставка выше цены 100 %' : ''}`;
+        }
+      }
+      const action: AdBotAction | null = next !== null && next !== keyword.cpm ? { ...common, kind: next > keyword.cpm ? 'RAISE' : 'LOWER', newCpm: next, reason } : null;
+      const finalCpm = action?.newCpm ?? keyword.cpm;
+      decisions.push({ ...base, role: isTop ? 'top' : 'other', target: isTop ? target : null, positionAfter: positionForBid(steps, finalCpm), action });
+    }
+  }
+  return decisions;
+}
+
+/** Отчёт владельцу: что поменяли и где боевые цвета не попадают в топ-10. */
+export function formatLadderReport(decisions: LadderDecision[], opts: { apply: boolean; failed?: number; titles?: Map<string, string>; notes?: string[] }): string {
+  const title = (id: string) => opts.titles?.get(id) ?? id;
+  const changed = decisions.filter((row) => row.action);
+  const lines = [`📶 Лестница ставок «Буст в ТОП» — ${opts.apply ? 'применено' : 'только предложения'}`];
+  const tops = decisions.filter((row) => row.role === 'top');
+  const inTop = tops.filter((row) => row.positionAfter !== null && row.positionAfter <= 10).length;
+  lines.push(`Боевых пар «цвет + запрос»: ${tops.length}, в топ-10 после правок: ${inTop}. Правок: ${changed.length}${opts.failed ? `, не прошло: ${opts.failed}` : ''}.`);
+  const byCampaign = new Map<string, LadderDecision[]>();
+  for (const row of changed) byCampaign.set(row.keyword.campaignName, [...(byCampaign.get(row.keyword.campaignName) ?? []), row]);
+  for (const [name, rows] of byCampaign) {
+    lines.push('', `«${name}»`);
+    for (const row of rows) {
+      const a = row.action as AdBotAction;
+      lines.push(`${a.kind === 'RAISE' ? '⬆️' : '⬇️'} ${title(a.skuGroupId)} «${a.query}» ${fmt(a.oldCpm ?? 0)} → ${fmt(a.newCpm)} (позиция ${row.positionBefore ?? '—'} → ${row.positionAfter ?? '—'})`);
+    }
+  }
+  const missing = decisions.filter((row) => row.role === 'other' && row.top10 && ladderQueryClass(row.keyword.query).colors > 0)
+    .filter((row) => !decisions.some((other) => other.role === 'top' && other.keyword.campaignId === row.keyword.campaignId && normalizeQuery(other.keyword.query) === normalizeQuery(row.keyword.query)));
+  const queries = [...new Set(missing.map((row) => `«${row.keyword.query}» (топ-10 от ${fmt(Math.min(...missing.filter((m) => m.keyword.query === row.keyword.query).map((m) => m.top10?.cpm ?? Infinity)))})`))];
+  if (queries.length) lines.push('', `Дороже потолка, ни один цвет не в топ-10: ${queries.slice(0, 15).join(', ')}`);
+  for (const note of opts.notes ?? []) lines.push(`⚠ ${note}`);
+  return lines.join('\n');
+}

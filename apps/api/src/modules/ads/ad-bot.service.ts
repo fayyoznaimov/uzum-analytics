@@ -18,6 +18,7 @@ import {
   seedKeywordActions,
   SeedSpec,
 } from '../../common/ad-bot';
+import { ladderCampaigns, ladderEnabled } from '../../common/ad-ladder';
 import { cubeUrl, isCubeContinueWait } from '../../common/ad-agent';
 import { shiftDay, tashkentDay } from '../../common/auto-pricing';
 import { PrismaService } from '../../common/prisma.service';
@@ -412,7 +413,9 @@ export class AdBotService {
     // Слова на авто-ставке (AdAutoBidPolicy, ключ «кампания|цвет|запрос»): их ставки меняет автобиддер, бот добавляет им только минус-слова.
     const managedRows = await this.prisma.adAutoBidPolicy.findMany({ where: { enabled: true }, select: { key: true } }).catch(() => [] as Array<{ key: string }>);
     const managedKeys = new Set<string>((managedRows as Array<{ key: string }>).map((row) => row.key));
-    const managed = new Set<string>(keywords.filter((keyword) => managedKeys.has(`${keyword.campaignId}|${keyOf(keyword.skuGroupId, keyword.query)}`)).map((keyword) => keyword.adId));
+    // Кампании «лестницы ставок» (common/ad-ladder.ts): их ставки раз в день ставит AdLadderService по лестнице охвата.
+    const ladderManaged = ladderEnabled() ? new Set(ladderCampaigns()) : new Set<string>();
+    const managed = new Set<string>(keywords.filter((keyword) => ladderManaged.has(keyword.campaignId) || managedKeys.has(`${keyword.campaignId}|${keyOf(keyword.skuGroupId, keyword.query)}`)).map((keyword) => keyword.adId));
 
     return { campaigns, notes, input: { keywords, stats14, stats7, groups, feed, lastChange, now, managed } };
   }
