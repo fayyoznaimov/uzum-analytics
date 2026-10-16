@@ -20,7 +20,9 @@ describe('лестница ставок', () => {
   it('классы запросов: банные и наборы, лицевые, остальные', () => {
     expect(ladderQueryClass('Набор полотенец').name).toBe('банные и наборы');
     expect(ladderQueryClass('полотенце для лица').cap).toBe(40_000);
-    expect(ladderQueryClass('sochiq').colors).toBe(1);
+    expect(ladderQueryClass('sochiq').colors).toBe(2);
+    expect(ladderQueryClass('полотенце банное для тела').name).toBe('банные и наборы');
+    expect(ladderQueryClass("sochiq to'plami").cap).toBe(20_000);
   });
 
   it('два самых дешёвых цвета — в топ-10 с запасом 3 %, переплата снимается, остальные не поднимаются', () => {
@@ -37,8 +39,10 @@ describe('лестница ставок', () => {
 
   it('потолок класса: дорогой топ-10 не покупаем; дешёвый топ — любому цвету; без лестницы — без правок', () => {
     expect(actions([kw('blue', 'полотенце банное', 50_000, 63_363)])).toEqual([]);
-    expect(actions([kw('a', 'sochiq', 9_500, 11_965), kw('b', 'sochiq', 9_500, 14_000), kw('c', 'sochiq', 9_500, 22_000)]))
+    expect(actions([kw('a', 'vanna sochiq', 9_500, 11_965), kw('b', 'vanna sochiq', 9_500, 14_000), kw('c', 'vanna sochiq', 9_500, 19_000)]))
       .toEqual([['a', 'RAISE', 12_500], ['b', 'RAISE', 14_500]]);
+    expect(actions([kw('a', 'sochiq', 9_500, 11_965), kw('b', 'sochiq', 17_000, 16_038), kw('c', 'sochiq', 15_000, 22_099)]))
+      .toEqual([['a', 'RAISE', 12_500]]);
     expect(actions([kw('a', 'yuz sochiqlar', 9_500, 29_958)])).toEqual([]);
     expect(actions([kw('a', 'sochiqlar', 15_000, null)])).toEqual([]);
   });

@@ -44,9 +44,11 @@ export const AD_LADDER_DEFAULTS = {
   overpayTolerance: 2_000,
   /** Классы запросов (первое совпадение): потолок цены топ-10 и сколько цветов держать в топе. */
   classes: [
-    { name: 'банные и наборы', match: (q: string) => /^(полотенце банное|банное полотенце|набор полотенец)$/.test(q), cap: 60_000, colors: 2 },
+    { name: 'банные и наборы', match: (q: string) => /^(полотенце банное|банное полотенце|набор полотенец|большое полотенце)( |$)/.test(q), cap: 60_000, colors: 2 },
     { name: 'лицевые', match: (q: string) => /^полотенце для лица$/.test(q), cap: 40_000, colors: 2 },
-    { name: 'остальные', match: () => true, cap: 25_000, colors: 1 },
+    // sochiq / sochiqlar — самые объёмные запросы (прогноз кабинета 16.10: ≈ 5 100 и 7 100 показов против 3 900 у «полотенце банное»).
+    { name: 'узбекские основные', match: (q: string) => /^(sochiq|sochiqlar|yuz sochiq)$/.test(q), cap: 25_000, colors: 2 },
+    { name: 'остальные', match: () => true, cap: 20_000, colors: 1 },
   ] as LadderQueryClass[],
 };
 export type AdLadderConfig = typeof AD_LADDER_DEFAULTS;
