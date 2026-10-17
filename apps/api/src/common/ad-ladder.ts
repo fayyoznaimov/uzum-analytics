@@ -20,8 +20,9 @@
 import { AdBotAction, AdBotKeyword, normalizeQuery } from './ad-bot';
 import { BidLadderStep, bidForPosition, bidForReach, policyKey, positionForBid } from './auto-bidder';
 
-/** Кампании полотенец (HAVANA, j471, J403) — по умолчанию; AD_LADDER_CAMPAIGNS переопределяет списком id через запятую. */
-export const AD_LADDER_DEFAULT_CAMPAIGNS = ['286528', '305122', '305324'];
+/** Кампании полотенец (HAVANA, j471, J403, сауна 2263224 — с 17.10.2026) — по умолчанию; AD_LADDER_CAMPAIGNS переопределяет
+ * списком id через запятую. Неактивная (на паузе) кампания пропускается с пометкой в отчёте. */
+export const AD_LADDER_DEFAULT_CAMPAIGNS = ['286528', '305122', '305324', '299724'];
 
 export function ladderCampaigns(): string[] {
   const raw = String(process.env.AD_LADDER_CAMPAIGNS ?? '').split(',').map((id) => id.trim()).filter(Boolean);
