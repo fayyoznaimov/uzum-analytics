@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatLadderReport, ladderKey, ladderQueryClass, LadderKeyword, planLadderBids } from '../ad-ladder';
+import { formatCampaignSummary, formatLadderReport, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, planLadderBids } from '../ad-ladder';
 import { BidLadderStep } from '../auto-bidder';
 
 /** Лестница кабинета: позиции 4…51 ↔ 100…20 % показов, цена топ-10 (позиция 9) = top10. */
@@ -65,6 +65,25 @@ describe('лестница ставок', () => {
     const recent = new Set([ladderKey(over), ladderKey(out)]);
     expect(planLadderBids([over, out], undefined, recent).filter((row) => row.action).map((row) => [row.keyword.skuGroupId, row.action?.newCpm])).toEqual([['b', 48_500]]);
     expect(actions([over, out])).toEqual([['a', 'LOWER', 47_500], ['b', 'RAISE', 48_500]]);
+  });
+
+  it('ДРР за 7 дней: мало данных — не судим; выше потолка — не в топе; вдвое выше или без продаж — на минимум', () => {
+    const st = (spend: number, revenue: number, sold: number, clicks = 10) => ({ impressions: 1000, clicks, sold, revenue, spend, position: null });
+    expect(ladderDrrVerdict(st(20_000, 100_000, 1), 10).blocked).toBeNull(); // мало данных
+    expect(ladderDrrVerdict(st(40_000, 300_000, 2), 10).blocked).toMatch(/ДРР 13\.3/);
+    expect(ladderDrrVerdict(st(40_000, 300_000, 2), 15).blocked).toBeNull(); // наборы и сауна — потолок 15 %
+    expect(ladderDrrVerdict(st(60_000, 0, 0), 10)).toMatchObject({ severe: true });
+    const rich = { ...kw('a', 'полотенце банное', 48_000, 45_760), stats7: st(40_000, 160_000, 1) }; // ДРР 25 % — вдвое выше 10 %
+    const ok = { ...kw('b', 'полотенце банное', 40_000, 47_000), stats7: st(40_000, 800_000, 5) };
+    const decisions = planLadderBids([rich, ok]);
+    expect(decisions.map((row) => [row.keyword.skuGroupId, row.role, row.action?.newCpm ?? null])).toEqual([['a', 'other', 9_500], ['b', 'top', 48_500]]);
+    expect(formatLadderReport(decisions, { apply: true })).toContain('Не окупаются, из топ-10 убраны (1)');
+  });
+
+  it('сводка кампании: ДРР, расход с понедельника и предупреждение о бюджете', () => {
+    expect(formatCampaignSummary({ name: 'Сауна', spend7: 140_000, revenue7: 1_000_000, sold7: 6, weekSpend: 120_000, weeklyBudget: 150_000, daysPassed: 3 }))
+      .toBe('«Сауна»: реклама за 7 дней 140\u00a0000, выручка 1\u00a0000\u00a0000, продаж 6, ДРР 14.0 % · с понедельника 120\u00a0000 из 150\u00a0000 (80 %) — ⚠ при таком темпе кончится раньше воскресенья');
+    expect(formatCampaignSummary({ name: 'J403', spend7: 0, revenue7: 0, sold7: 0, weekSpend: 160_000, weeklyBudget: 150_000, daysPassed: 5 })).toContain('бюджет кончился');
   });
 
   it('ставка не выше потолка 70 000 и не ниже минимума', () => {

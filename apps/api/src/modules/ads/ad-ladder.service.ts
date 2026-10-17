@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { AdBotAction, AdBotStats } from '../../common/ad-bot';
-import { AD_LADDER_DEFAULTS, AdLadderConfig, formatLadderReport, LadderDecision, LadderKeyword, ladderCampaigns, ladderEnabled, ladderKey, planLadderBids } from '../../common/ad-ladder';
-import { tashkentDay } from '../../common/auto-pricing';
+import { AdBotAction, AdBotStats, normalizeQuery } from '../../common/ad-bot';
+import { AD_LADDER_DEFAULTS, AdLadderConfig, formatLadderReport, LadderCampaignSummary, LadderDecision, LadderKeyword, ladderCampaigns, ladderEnabled, ladderKey, planLadderBids } from '../../common/ad-ladder';
+import { shiftDay, tashkentDay } from '../../common/auto-pricing';
 import { PrismaService } from '../../common/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { AdBotService } from './ad-bot.service';
@@ -43,7 +43,12 @@ export class AdLadderService {
 
   config(): AdLadderConfig {
     const max = Number(process.env.AD_BOT_MAX_BID);
-    return { ...AD_LADDER_DEFAULTS, maxBid: Number.isFinite(max) && max > 0 ? max : AD_LADDER_DEFAULTS.maxBid };
+    const drr = Number(process.env.AD_AGENT_MAX_DRR_PERCENT);
+    return {
+      ...AD_LADDER_DEFAULTS,
+      maxBid: Number.isFinite(max) && max > 0 ? max : AD_LADDER_DEFAULTS.maxBid,
+      maxDrrPercent: Number.isFinite(drr) && drr > 0 ? drr : AD_LADDER_DEFAULTS.maxDrrPercent,
+    };
   }
 
   @Cron(process.env.AD_LADDER_CRON || '30 * * * *', { name: 'ad-ladder', timeZone: 'Asia/Tashkent' })
@@ -89,15 +94,38 @@ export class AdLadderService {
       const notes: string[] = [];
       for (const id of ids) if (!campaigns.some((row) => row.id === id)) notes.push(`кампания ${id} не активна — пропущена`);
       const keywords: LadderKeyword[] = [];
+      const byCampaign = new Map<string, LadderKeyword[]>();
       for (const campaign of campaigns) {
         for (const keyword of await this.adBot.loadKeywords(campaign)) {
           const ladder = await this.autoBidder.ladder(keyword).catch((error: any) => {
             notes.push(`«${keyword.query}»: лестница не получена — ${String(error?.message || error).slice(0, 100)}`);
             return null;
           });
-          keywords.push({ ...keyword, ladder });
+          const row: LadderKeyword = { ...keyword, ladder };
+          keywords.push(row);
+          byCampaign.set(campaign.id, [...(byCampaign.get(campaign.id) ?? []), row]);
         }
       }
+      // Статистика слов из Cube (ключ «цвет|запрос», все id объявления — Uzum пересоздаёт его при каждой правке):
+      // 7 дней — для ДРР слова и кампании, с понедельника — для недельного бюджета. Нет данных — правила ДРР молчат.
+      const statKey = (row: { skuGroupId: string; query: string }) => `${row.skuGroupId}|${normalizeQuery(row.query)}`;
+      const dow = new Date(`${today}T12:00:00Z`).getUTCDay();
+      const monday = shiftDay(today, -((dow + 6) % 7));
+      const stats7 = await this.adBot.keywordStatsByKey(sellerId, keywords, shiftDay(today, -6), today).catch((error: any) => {
+        notes.push(`статистика слов не получена — ДРР не проверялся (${String(error?.message || error).slice(0, 100)})`);
+        return null;
+      });
+      const statsWeek = await this.adBot.keywordStatsByKey(sellerId, keywords, monday, today).catch(() => null);
+      for (const row of keywords) row.stats7 = stats7?.get(statKey(row)) ?? null;
+      const summaries: LadderCampaignSummary[] = campaigns.map((campaign) => {
+        const rows = byCampaign.get(campaign.id) ?? [];
+        const keys = [...new Set(rows.map(statKey))];
+        const sum = (map: Map<string, AdBotStats> | null, field: 'spend' | 'revenue' | 'sold') => keys.reduce((total, key) => total + (map?.get(key)?.[field] ?? 0), 0);
+        return {
+          name: campaign.name, spend7: sum(stats7, 'spend'), revenue7: sum(stats7, 'revenue'), sold7: sum(stats7, 'sold'),
+          weekSpend: sum(statsWeek, 'spend'), weeklyBudget: Number(campaign.budgetConfig?.weeklyAmount) || null, daysPassed: ((dow + 6) % 7) + 1,
+        };
+      });
       const cfg = this.config();
       const recent = await this.recentKeys([...ids], cfg.cooldownHours);
       const decisions = planLadderBids(keywords, cfg, recent.keys);
@@ -109,7 +137,7 @@ export class AdLadderService {
         failed = outcomes.filter((row) => !row.ok).length;
       }
       if (options.since) notes.unshift(`с прошлого отчёта (${options.since} ч) правок лестницы: ${(await this.recentKeys([...ids], options.since)).count}`);
-      const report = formatLadderReport(decisions, { apply: options.apply, failed, notes: notes.slice(0, 10) });
+      const report = formatLadderReport(decisions, { apply: options.apply, failed, notes: notes.slice(0, 10), campaigns: summaries });
       if (options.notify || failed) {
         await this.integrations.notifyTelegram(report, 'notifyAgents').catch((error: any) => this.logger.warn(`Лестница ставок: Telegram — ${error?.message || error}`));
       }
