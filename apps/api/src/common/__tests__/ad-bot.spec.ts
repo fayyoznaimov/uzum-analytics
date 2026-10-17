@@ -207,6 +207,9 @@ describe('ручной посев фраз', () => {
     // onlyExisting — в цвета без фразы не добавляем; exceptGroups — цвет не трогаем
     const only = seedKeywordActions(keywords, [{ campaignId: '332097', phrases: [{ query: 'полотенце для сауны', cpm: 9_500, onlyExisting: true, exceptGroups: ['777'] }, { query: 'sauna sochiq', cpm: 9_500, onlyExisting: true }] }]);
     expect(only.map((row) => [row.skuGroupId, row.kind, row.newCpm])).toEqual([['4160950', 'LOWER', 9_500]]);
+    // onlyNew — только добавить, где фразы нет; ставку существующей (её ведёт лестница) не трогаем
+    const fresh = seedKeywordActions(keywords, [{ campaignId: '332097', phrases: [{ query: 'полотенце для сауны', cpm: 15_000, onlyNew: true }, { query: 'sauna sochiq', cpm: 15_000, onlyNew: true }] }]);
+    expect(fresh.map((row) => [row.skuGroupId, row.kind, row.query])).toEqual([['4160950', 'ADD', 'sauna sochiq'], ['777', 'ADD', 'sauna sochiq']]);
   });
   it('правка минус-слов: убрать, добавить, при полном списке выбросить бесполезные; только узбекские фразы', () => {
     const full = Array.from({ length: 56 }, (_, index) => `слово${index}`).concat(['soch', 'майнкрафт']);

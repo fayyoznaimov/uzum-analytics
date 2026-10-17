@@ -389,8 +389,9 @@ export function buildCampaignUpdate(campaign: { name: string; budgetConfig: any;
   };
 }
 
-/** onlyExisting — только ставка существующим, в цвета без фразы не добавлять; exceptGroups — эти цвета не трогать. */
-export type SeedPhrase = { query: string; cpm: number; onlyExisting?: boolean; exceptGroups?: string[] };
+/** onlyExisting — только ставка существующим, в цвета без фразы не добавлять; onlyNew — только добавить, где фразы нет,
+ * ставку существующих не трогать (их ведёт лестница ставок); exceptGroups — эти цвета не трогать. */
+export type SeedPhrase = { query: string; cpm: number; onlyExisting?: boolean; onlyNew?: boolean; exceptGroups?: string[] };
 /** Правка минус-слов существующих фраз кампании: убрать remove, добавить add; если список упёрся в 58 —
  * сначала выбросить dropIfFull (бесполезные слова), что не влезло — не добавлять. onlyLatin — только узбекские фразы. */
 export type SeedStopWords = { add?: string[]; remove?: string[]; dropIfFull?: string[]; onlyLatin?: boolean };
@@ -503,7 +504,7 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
         const cpm = clampBid(phrase.cpm, 'down', cfg);
         const existing = inGroup.find((row) => normalizeQuery(row.query) === query && !suspendedAds.has(row.adId));
         if (existing) {
-          if (existing.cpm === cpm) continue;
+          if (existing.cpm === cpm || phrase.onlyNew) continue;
           actions.push({ ...common, kind: existing.cpm > cpm ? 'LOWER' : 'RAISE', adId: existing.adId, query: existing.query, oldCpm: existing.cpm, newCpm: cpm, stopWords: existing.stopWords, reason: `ручная ставка ${fmt(cpm)} (было ${fmt(existing.cpm)})` });
           continue;
         }

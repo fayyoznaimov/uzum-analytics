@@ -18,11 +18,15 @@ const actions = (rows: LadderKeyword[]) => planLadderBids(rows).filter((row) => 
 
 describe('лестница ставок', () => {
   it('классы запросов: банные и наборы, лицевые, остальные', () => {
-    expect(ladderQueryClass('Набор полотенец').name).toBe('банные и наборы');
+    expect(ladderQueryClass('Набор полотенец').name).toBe('наборы, комплекты, сауна');
+    expect(ladderQueryClass('комплект полотенец').cap).toBe(70_000);
+    expect(ladderQueryClass('полотенце для сауны').name).toBe('наборы, комплекты, сауна');
+    expect(ladderQueryClass("sochiq to'plami").name).toBe('наборы, комплекты, сауна');
+    expect(ladderQueryClass('sochiq nabor').name).toBe('наборы, комплекты, сауна');
     expect(ladderQueryClass('полотенце для лица').cap).toBe(40_000);
     expect(ladderQueryClass('sochiq').colors).toBe(2);
-    expect(ladderQueryClass('полотенце банное для тела').name).toBe('банные и наборы');
-    expect(ladderQueryClass("sochiq to'plami").cap).toBe(20_000);
+    expect(ladderQueryClass('полотенце банное для тела').name).toBe('банные');
+    expect(ladderQueryClass('vanna sochiq').cap).toBe(20_000);
   });
 
   it('два самых дешёвых цвета — в топ-10 с запасом 3 %, переплата снимается, остальные не поднимаются', () => {
@@ -65,6 +69,8 @@ describe('лестница ставок', () => {
     const [cheap] = planLadderBids([kw('a', 'набор полотенец', 9_500, 9_000)]);
     expect(cheap.target).toBe(9_500);
     expect(cheap.action).toBeNull();
-    expect(actions([kw('a', 'набор полотенец', 40_000, 69_000), kw('b', 'набор полотенец', 9_500, 58_000)])).toEqual([['b', 'RAISE', 60_000]]);
+    expect(actions([kw('a', 'полотенце банное', 40_000, 69_000), kw('b', 'полотенце банное', 9_500, 58_000)])).toEqual([['b', 'RAISE', 60_000]]);
+    // наборы: потолок класса = общий потолок ставки 70 000
+    expect(actions([kw('a', 'набор полотенец', 40_000, 69_000), kw('b', 'набор полотенец', 9_500, 58_000)])).toEqual([['b', 'RAISE', 60_000], ['a', 'RAISE', 70_000]]);
   });
 });
