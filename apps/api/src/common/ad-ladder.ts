@@ -20,9 +20,9 @@
 import { AdBotAction, AdBotKeyword, normalizeQuery } from './ad-bot';
 import { BidLadderStep, bidForPosition, bidForReach, policyKey, positionForBid } from './auto-bidder';
 
-/** Кампании полотенец (HAVANA, j471, J403, сауна 2263224 — с 17.10.2026) — по умолчанию; AD_LADDER_CAMPAIGNS переопределяет
+/** Кампании полотенец (HAVANA, j471, J403, «Банное 100×150» 332097 — сауна 2263224, с 17.10.2026) — по умолчанию; AD_LADDER_CAMPAIGNS переопределяет
  * списком id через запятую. Неактивная (на паузе) кампания пропускается с пометкой в отчёте. */
-export const AD_LADDER_DEFAULT_CAMPAIGNS = ['286528', '305122', '305324', '299724'];
+export const AD_LADDER_DEFAULT_CAMPAIGNS = ['286528', '305122', '305324', '332097'];
 
 export function ladderCampaigns(): string[] {
   const raw = String(process.env.AD_LADDER_CAMPAIGNS ?? '').split(',').map((id) => id.trim()).filter(Boolean);
@@ -52,7 +52,7 @@ export const AD_LADDER_DEFAULTS = {
   classes: [
     // Владелец 17.10.2026: «набор полотенец, комплект, сауна — там вся маржа»: чек комплекта 160–250 тыс., сауны 160 тыс.,
     // поэтому топ-10 по этим запросам покупаем до общего потолка ставки (AD_BOT_MAX_BID, 70 000).
-    { name: 'наборы, комплекты, сауна', match: (q: string) => /(набор|комплект|саун|бан[яи]|sauna|to ?plam|nabor|komplekt|katta sochiq|большое полотенце)/.test(q), cap: 70_000, colors: 2 },
+    { name: 'наборы, комплекты, сауна', match: (q: string) => /(набор|комплект|саун|бан[яи]|бассейн|sauna|basseyn|to ?plam|nabor|komplekt|katta|100 ?[xх] ?150|большое полотенце)/.test(q), cap: 70_000, colors: 2 },
     { name: 'банные', match: (q: string) => /^(полотенце банное|банное полотенце)( |$)/.test(q), cap: 60_000, colors: 2 },
     { name: 'лицевые', match: (q: string) => /^полотенце для лица$/.test(q), cap: 40_000, colors: 2 },
     // sochiq / sochiqlar — самые объёмные запросы (прогноз кабинета 16.10: ≈ 5 100 и 7 100 показов против 3 900 у «полотенце банное»).

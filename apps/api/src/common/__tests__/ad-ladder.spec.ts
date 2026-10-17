@@ -23,6 +23,8 @@ describe('лестница ставок', () => {
     expect(ladderQueryClass('полотенце для сауны').name).toBe('наборы, комплекты, сауна');
     expect(ladderQueryClass("sochiq to'plami").name).toBe('наборы, комплекты, сауна');
     expect(ladderQueryClass('sochiq nabor').name).toBe('наборы, комплекты, сауна');
+    for (const q of ['полотенце для бани', 'katta hammom sochiq', 'sochiq 100x150', 'полотенце 100х150', 'полотенце для бассейна', 'basseyn sochiq']) expect(ladderQueryClass(q).name).toBe('наборы, комплекты, сауна');
+    expect(ladderQueryClass('sochiq yuz va hammom').name).toBe('остальные');
     expect(ladderQueryClass('полотенце для лица').cap).toBe(40_000);
     expect(ladderQueryClass('sochiq').colors).toBe(2);
     expect(ladderQueryClass('полотенце банное для тела').name).toBe('банные');
