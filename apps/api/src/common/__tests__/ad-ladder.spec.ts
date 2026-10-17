@@ -71,7 +71,8 @@ describe('лестница ставок', () => {
     const st = (spend: number, revenue: number, sold: number, clicks = 10) => ({ impressions: 1000, clicks, sold, revenue, spend, position: null });
     expect(ladderDrrVerdict(st(20_000, 100_000, 1), 10).blocked).toBeNull(); // мало данных
     expect(ladderDrrVerdict(st(40_000, 300_000, 2), 10).blocked).toMatch(/ДРР 13\.3/);
-    expect(ladderDrrVerdict(st(40_000, 300_000, 2), 15).blocked).toBeNull(); // наборы и сауна — потолок 15 %
+    expect(ladderDrrVerdict(st(40_000, 300_000, 2), 15).blocked).toBeNull(); // потолок выше ДРР — слово в порядке
+    expect(ladderQueryClass('комплект полотенец').maxDrr).toBe(10); // наборы, комплекты, сауна — 10 % (владелец 17.10)
     expect(ladderDrrVerdict(st(60_000, 0, 0), 10)).toMatchObject({ severe: true });
     const rich = { ...kw('a', 'полотенце банное', 48_000, 45_760), stats7: st(40_000, 160_000, 1) }; // ДРР 25 % — вдвое выше 10 %
     const ok = { ...kw('b', 'полотенце банное', 40_000, 47_000), stats7: st(40_000, 800_000, 5) };
