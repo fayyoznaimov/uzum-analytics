@@ -27,7 +27,7 @@ jobs:
           echo "--- конец лога деплоя ---"
           tail -n 15 ~/.local/state/uzum-deploy/deploy.log 2>/dev/null || echo "лог деплоя не найден"
           echo "--- журнал API: агенты за сутки ---"
-          journalctl --user -u uzum-api --since "-1 day" --no-pager -o short-iso 2>/dev/null | grep -E "Автоцены|Агент рекламы|AutoPricing|AdAgent" | tail -n 60 || echo "записей нет или журнал недоступен"
+          journalctl --user -u uzum-api --since "-1 day" --no-pager -o short-iso 2>/dev/null | grep -E "Автоцены|Агент рекламы|Рекламный бот|Лестница ставок|Авто-ставка|AutoPricing|AdAgent|AdBot|AdLadder" | tail -n 60 || echo "записей нет или журнал недоступен"
       - name: Агент по рекламе (советы)
         env:
           TELEGRAM: ${{ inputs.telegram }}
