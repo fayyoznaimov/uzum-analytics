@@ -18,7 +18,7 @@
  * Модуль чистый — без сети и БД. Сервис: modules/ads/ad-ladder.service.ts.
  */
 import { AdBotAction, AdBotKeyword, normalizeQuery } from './ad-bot';
-import { BidLadderStep, bidForPosition, bidForReach, positionForBid } from './auto-bidder';
+import { BidLadderStep, bidForPosition, bidForReach, policyKey, positionForBid } from './auto-bidder';
 
 /** Кампании полотенец (HAVANA, j471, J403) — по умолчанию; AD_LADDER_CAMPAIGNS переопределяет списком id через запятую. */
 export const AD_LADDER_DEFAULT_CAMPAIGNS = ['286528', '305122', '305324'];
@@ -40,8 +40,13 @@ export const AD_LADDER_DEFAULTS = {
   maxBid: 70_000,
   /** Топ-10 дешевле этого — берём для любого цвета запроса. */
   cheapTop: 15_000,
-  /** Ставка боевого цвета выше нужной больше чем на столько — снижаем. */
+  /** Ставка боевого цвета выше нужной больше чем на столько (сум и % от нужной, берётся большее) — снижаем.
+   * Сверка идёт каждый час, а лестница гуляет за день (16–17.10: топ-10 одного слова 43 тыс. утром и 26 тыс. днём) —
+   * запас не даёт дёргать объявление на каждом колебании. */
   overpayTolerance: 2_000,
+  overpayPercent: 10,
+  /** Слово, которое лестница уже правила за столько часов, не трогаем — кроме подъёма боевого цвета, выпавшего из топ-10. */
+  cooldownHours: 2,
   /** Классы запросов (первое совпадение): потолок цены топ-10 и сколько цветов держать в топе. */
   classes: [
     { name: 'банные и наборы', match: (q: string) => /^(полотенце банное|банное полотенце|набор полотенец|большое полотенце)( |$)/.test(q), cap: 60_000, colors: 2 },
@@ -74,8 +79,11 @@ export function ladderQueryClass(query: string, cfg: Pick<AdLadderConfig, 'class
   return cfg.classes.find((row) => row.match(q)) ?? cfg.classes[cfg.classes.length - 1];
 }
 
-/** Решения по всем словам: какие цвета держать в топ-10 и какие ставки поставить. */
-export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = AD_LADDER_DEFAULTS): LadderDecision[] {
+/** Ключ слова для паузы после правки: «кампания|цвет|запрос», как у авто-ставки (id объявления Uzum меняет при каждой правке). */
+export const ladderKey = (keyword: Pick<AdBotKeyword, 'campaignId' | 'skuGroupId' | 'query'>) => policyKey(keyword.campaignId, keyword.skuGroupId, keyword.query);
+
+/** Решения по всем словам: какие цвета держать в топ-10 и какие ставки поставить. recent — слова, правленные за cooldownHours. */
+export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = AD_LADDER_DEFAULTS, recent: Set<string> = new Set()): LadderDecision[] {
   const decisions: LadderDecision[] = [];
   const byQuery = new Map<string, LadderKeyword[]>();
   for (const keyword of keywords) {
@@ -105,10 +113,11 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
       const common = { campaignId: keyword.campaignId, campaignName: keyword.campaignName, skuGroupId: keyword.skuGroupId, groupTitle: keyword.skuGroupId, adId: keyword.adId, query: keyword.query, oldCpm: keyword.cpm, stopWords: keyword.stopWords };
       let next: number | null = null;
       let reason = '';
+      const cooling = recent.has(ladderKey(keyword));
       if (isTop) {
         const outOfTop = keyword.cpm < top10.cpm;
-        const overpay = keyword.cpm > target + cfg.overpayTolerance || (full !== null && keyword.cpm > full.cpm);
-        if (outOfTop || overpay) {
+        const overpay = keyword.cpm > target + Math.max(cfg.overpayTolerance, (target * cfg.overpayPercent) / 100) || (full !== null && keyword.cpm > full.cpm);
+        if (outOfTop || (overpay && !cooling)) {
           next = target;
           reason = `лестница: топ-10 (${cls.name}) стоит ${fmt(top10.cpm)}, позиция ${top10.position}; ${outOfTop ? 'ставка была ниже топ-10' : 'была переплата'}`;
         }
@@ -116,7 +125,7 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
         const belowTop = top10.cpm - cfg.rounding;
         const inTop = keyword.cpm >= top10.cpm;
         const overFull = full !== null && keyword.cpm > full.cpm;
-        if ((inTop || overFull) && belowTop >= cfg.minBid) {
+        if ((inTop || overFull) && belowTop >= cfg.minBid && !cooling) {
           next = Math.max(cfg.minBid, roundDown(belowTop, cfg.rounding));
           reason = `лестница: цвет не боевой для «${keyword.query}» — ниже топ-10 (${fmt(top10.cpm)})${overFull ? ', была ставка выше цены 100 %' : ''}`;
         }

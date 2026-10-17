@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatLadderReport, ladderQueryClass, LadderKeyword, planLadderBids } from '../ad-ladder';
+import { formatLadderReport, ladderKey, ladderQueryClass, LadderKeyword, planLadderBids } from '../ad-ladder';
 import { BidLadderStep } from '../auto-bidder';
 
 /** Лестница кабинета: позиции 4…51 ↔ 100…20 % показов, цена топ-10 (позиция 9) = top10. */
@@ -27,7 +27,7 @@ describe('лестница ставок', () => {
 
   it('два самых дешёвых цвета — в топ-10 с запасом 3 %, переплата снимается, остальные не поднимаются', () => {
     const rows = [
-      kw('khaki', 'полотенце банное', 51_000, 45_760), // переплата → 47 500
+      kw('khaki', 'полотенце банное', 55_000, 45_760), // переплата больше 10 % → 47 500
       kw('white', 'полотенце банное', 51_000, 54_576), // вне топ-10 → 56 500
       kw('chrome', 'полотенце банное', 51_000, 57_181), // третий цвет, ниже топ-10 — не трогаем
       kw('milk', 'полотенце банное', 62_000, 61_435), // третий… четвёртый цвет в топ-10 сам — опустить ниже топ-10
@@ -50,6 +50,15 @@ describe('лестница ставок', () => {
   it('мелкая разница не дёргает объявление; ставка в топ-10 без переплаты остаётся', () => {
     expect(actions([kw('a', 'набор полотенец', 13_000, 12_029)])).toEqual([]);
     expect(actions([kw('a', 'набор полотенец', 35_000, 12_029)])).toEqual([['a', 'LOWER', 12_500]]);
+  });
+
+  it('сверка каждый час: переплата до 10 % не трогается, после правки слово 2 часа не дёргаем — кроме выпадения из топ-10', () => {
+    expect(actions([kw('a', 'полотенце банное', 51_000, 45_760)])).toEqual([]);
+    const over = kw('a', 'полотенце банное', 60_000, 45_760);
+    const out = kw('b', 'полотенце банное', 40_000, 47_000);
+    const recent = new Set([ladderKey(over), ladderKey(out)]);
+    expect(planLadderBids([over, out], undefined, recent).filter((row) => row.action).map((row) => [row.keyword.skuGroupId, row.action?.newCpm])).toEqual([['b', 48_500]]);
+    expect(actions([over, out])).toEqual([['a', 'LOWER', 47_500], ['b', 'RAISE', 48_500]]);
   });
 
   it('ставка не выше потолка 70 000 и не ниже минимума', () => {

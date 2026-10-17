@@ -46,7 +46,7 @@ async function main() {
   } as unknown as IntegrationsService;
   const promo = new PromoPricingService(prisma, integrations, new PricingService(prisma, integrations));
   const adBot = new AdBotService(prisma, integrations, promo);
-  const service = new AdLadderService(integrations, adBot, new AutoBidderService(prisma, integrations, promo, adBot));
+  const service = new AdLadderService(prisma, integrations, adBot, new AutoBidderService(prisma, integrations, promo, adBot));
   try {
     const campaign = option('campaign');
     const result = await service.run({ apply: flag('apply'), notify: flag('telegram'), campaignIds: campaign ? campaign.split(',') : undefined });
