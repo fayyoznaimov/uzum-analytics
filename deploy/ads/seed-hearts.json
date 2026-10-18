@@ -1,8 +1,10 @@
 [
   {
     "_что": "Новинка 3480224 «Полотенце махровое жаккард с сердечками», кампания 337334 «Сердечки 3480224 новинка» (создана 18.10.2026, 5 цветов: 6472965 голубой, 6472966 пудровый, 6472967 мятный, 6472968 светло-коричневый, 6472969 розовый). Фразы добавляются только туда, где их нет (onlyNew); ставки ведёт «Лестница ставок», до 01.11 без проверки ДРР (льгота запуска).",
+    "_узбекские": "Владелец 18.10.2026: «на узб давай акцент на узких словах, sochiq или sochiqlar дорогое» — широкие sochiq и sochiqlar остановлены (suspend), вместо них узкие: сердечки, жаккард, махра, ванна, руки, лицо, подарок. Остановленную фразу не держать в phrases — иначе посев добавит её заново.",
     "campaignId": "337334",
     "dedupe": true,
+    "suspend": ["sochiq", "sochiqlar"],
     "phrases": [
       { "query": "полотенце с сердечками", "cpm": 15000, "onlyNew": true },
       { "query": "полотенце жаккард", "cpm": 15000, "onlyNew": true },
@@ -13,11 +15,23 @@
       { "query": "набор полотенец", "cpm": 15000, "onlyNew": true },
       { "query": "полотенце для рук", "cpm": 15000, "onlyNew": true },
       { "query": "полотенце в подарок", "cpm": 15000, "onlyNew": true },
-      { "query": "sochiq", "cpm": 15000, "onlyNew": true },
-      { "query": "sochiqlar", "cpm": 15000, "onlyNew": true },
       { "query": "yuz sochiq", "cpm": 15000, "onlyNew": true },
       { "query": "sochiq to'plami", "cpm": 15000, "onlyNew": true },
-      { "query": "sovg'a uchun sochiq", "cpm": 15000, "onlyNew": true }
+      { "query": "sovg'a uchun sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "yurakli sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "yurakchali sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "jakkard sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "jakard sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "mahrovoy sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "maxrovoy sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "vanna sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "vanna uchun sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "qo'l sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "qo'l uchun sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "yuz uchun sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "sovg'a sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "chiroyli sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "paxta sochiq", "cpm": 15000, "onlyNew": true }
     ]
   }
 ]
