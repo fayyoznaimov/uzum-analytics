@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { AdBotAction, AdBotStats, normalizeQuery } from '../../common/ad-bot';
-import { AD_LADDER_DEFAULTS, AdLadderConfig, formatLadderReport, LadderCampaignSummary, LadderDecision, LadderKeyword, ladderCampaigns, ladderEnabled, ladderKey, planLadderBids } from '../../common/ad-ladder';
+import { AD_LADDER_DEFAULTS, AdLadderConfig, formatLadderReport, launchCampaigns, LadderCampaignSummary, LadderDecision, LadderKeyword, ladderCampaigns, ladderEnabled, ladderKey, planLadderBids } from '../../common/ad-ladder';
 import { shiftDay, tashkentDay } from '../../common/auto-pricing';
 import { PrismaService } from '../../common/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
@@ -128,7 +128,9 @@ export class AdLadderService {
       });
       const cfg = this.config();
       const recent = await this.recentKeys([...ids], cfg.cooldownHours);
-      const decisions = planLadderBids(keywords, cfg, recent.keys);
+      const launch = launchCampaigns(today);
+      for (const id of launch) if (ids.has(id)) notes.push(`кампания ${campaigns.find((row) => row.id === id)?.name ?? id}: льгота запуска — ДРР не проверяется`);
+      const decisions = planLadderBids(keywords, cfg, recent.keys, launch);
       const actions = decisions.map((row) => row.action).filter((row): row is AdBotAction => Boolean(row));
       let failed = 0;
       if (options.apply && actions.length) {

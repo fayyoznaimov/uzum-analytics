@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatCampaignSummary, formatLadderReport, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, planLadderBids } from '../ad-ladder';
+import { formatCampaignSummary, formatLadderReport, launchCampaigns, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, planLadderBids } from '../ad-ladder';
 import { BidLadderStep } from '../auto-bidder';
 
 /** Лестница кабинета: позиции 4…51 ↔ 100…20 % показов, цена топ-10 (позиция 9) = top10. */
@@ -79,6 +79,15 @@ describe('лестница ставок', () => {
     const decisions = planLadderBids([rich, ok]);
     expect(decisions.map((row) => [row.keyword.skuGroupId, row.role, row.action?.newCpm ?? null])).toEqual([['a', 'other', 9_500], ['b', 'top', 48_500]]);
     expect(formatLadderReport(decisions, { apply: true })).toContain('Не окупаются, из топ-10 убраны (1)');
+  });
+
+  it('льгота запуска новинки: ДРР не проверяется до конца срока', () => {
+    const st = { impressions: 1000, clicks: 30, sold: 0, revenue: 0, spend: 60_000, position: null };
+    const fresh = { ...kw('a', 'полотенце банное', 48_000, 45_760), campaignId: '337334', stats7: st };
+    expect(planLadderBids([fresh], undefined, new Set(), new Set(['337334']))[0]).toMatchObject({ role: 'top', blocked: null });
+    expect(planLadderBids([fresh])[0]).toMatchObject({ role: 'other' });
+    expect([...launchCampaigns('2026-10-20', { '337334': '2026-11-01' })]).toEqual(['337334']);
+    expect([...launchCampaigns('2026-11-02', { '337334': '2026-11-01' })]).toEqual([]);
   });
 
   it('сводка кампании: ДРР, расход с понедельника и предупреждение о бюджете', () => {

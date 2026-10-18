@@ -1,0 +1,23 @@
+[
+  {
+    "_что": "Новинка 3480224 «Полотенце махровое жаккард с сердечками», кампания 337334 «Сердечки 3480224 новинка» (создана 18.10.2026, 5 цветов: 6472965 голубой, 6472966 пудровый, 6472967 мятный, 6472968 светло-коричневый, 6472969 розовый). Фразы добавляются только туда, где их нет (onlyNew); ставки ведёт «Лестница ставок», до 01.11 без проверки ДРР (льгота запуска).",
+    "campaignId": "337334",
+    "dedupe": true,
+    "phrases": [
+      { "query": "полотенце с сердечками", "cpm": 15000, "onlyNew": true },
+      { "query": "полотенце жаккард", "cpm": 15000, "onlyNew": true },
+      { "query": "полотенце махровое", "cpm": 15000, "onlyNew": true },
+      { "query": "банное полотенце", "cpm": 15000, "onlyNew": true },
+      { "query": "полотенце банное", "cpm": 15000, "onlyNew": true },
+      { "query": "полотенце для лица", "cpm": 15000, "onlyNew": true },
+      { "query": "набор полотенец", "cpm": 15000, "onlyNew": true },
+      { "query": "полотенце для рук", "cpm": 15000, "onlyNew": true },
+      { "query": "полотенце в подарок", "cpm": 15000, "onlyNew": true },
+      { "query": "sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "sochiqlar", "cpm": 15000, "onlyNew": true },
+      { "query": "yuz sochiq", "cpm": 15000, "onlyNew": true },
+      { "query": "sochiq to'plami", "cpm": 15000, "onlyNew": true },
+      { "query": "sovg'a uchun sochiq", "cpm": 15000, "onlyNew": true }
+    ]
+  }
+]

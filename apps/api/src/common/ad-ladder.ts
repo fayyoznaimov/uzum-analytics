@@ -22,7 +22,17 @@ import { BidLadderStep, bidForPosition, bidForReach, policyKey, positionForBid }
 
 /** Кампании полотенец (HAVANA, j471, J403, «Банное 100×150» 332097 — сауна 2263224, с 17.10.2026) — по умолчанию; AD_LADDER_CAMPAIGNS переопределяет
  * списком id через запятую. Неактивная (на паузе) кампания пропускается с пометкой в отчёте. */
-export const AD_LADDER_DEFAULT_CAMPAIGNS = ['286528', '305122', '305324', '332097'];
+export const AD_LADDER_DEFAULT_CAMPAIGNS = ['286528', '305122', '305324', '332097', '337334'];
+
+/**
+ * Запуск новинки: до указанного дня (включительно, Ташкент) проверка ДРР кампании не действует — у товара без
+ * отзывов первые продажи дорогие, и потолок 6 % задушил бы его в первые дни. Топ-10 и потолки ставок работают как обычно.
+ * 337334 — «Сердечки 3480224 новинка» (жаккард с сердечками), создана 18.10.2026, льгота 14 дней.
+ */
+export const AD_LADDER_LAUNCH_UNTIL: Record<string, string> = { '337334': '2026-11-01' };
+export function launchCampaigns(today: string, table: Record<string, string> = AD_LADDER_LAUNCH_UNTIL): Set<string> {
+  return new Set(Object.entries(table).filter(([, until]) => today <= until).map(([id]) => id));
+}
 
 export function ladderCampaigns(): string[] {
   const raw = String(process.env.AD_LADDER_CAMPAIGNS ?? '').split(',').map((id) => id.trim()).filter(Boolean);
@@ -107,8 +117,9 @@ export function ladderQueryClass(query: string, cfg: Pick<AdLadderConfig, 'class
 /** Ключ слова для паузы после правки: «кампания|цвет|запрос», как у авто-ставки (id объявления Uzum меняет при каждой правке). */
 export const ladderKey = (keyword: Pick<AdBotKeyword, 'campaignId' | 'skuGroupId' | 'query'>) => policyKey(keyword.campaignId, keyword.skuGroupId, keyword.query);
 
-/** Решения по всем словам: какие цвета держать в топ-10 и какие ставки поставить. recent — слова, правленные за cooldownHours. */
-export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = AD_LADDER_DEFAULTS, recent: Set<string> = new Set()): LadderDecision[] {
+/** Решения по всем словам: какие цвета держать в топ-10 и какие ставки поставить. recent — слова, правленные за cooldownHours;
+ * launch — кампании на льготе запуска (ДРР не проверяется). */
+export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = AD_LADDER_DEFAULTS, recent: Set<string> = new Set(), launch: Set<string> = new Set()): LadderDecision[] {
   const decisions: LadderDecision[] = [];
   const byQuery = new Map<string, LadderKeyword[]>();
   for (const keyword of keywords) {
@@ -122,7 +133,7 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
         const steps = keyword.ladder ?? [];
         const top10 = steps.length ? bidForPosition(steps, cfg.topPosition) : null;
         const target = top10 ? Math.min(cfg.maxBid, Math.max(cfg.minBid, roundUp(top10.cpm * (1 + cfg.marginPercent / 100), cfg.rounding))) : null;
-        const verdict = ladderDrrVerdict(keyword.stats7, cls.maxDrr ?? cfg.maxDrrPercent, cfg);
+        const verdict = launch.has(keyword.campaignId) ? { drr: null, blocked: null, severe: false } : ladderDrrVerdict(keyword.stats7, cls.maxDrr ?? cfg.maxDrrPercent, cfg);
         return { keyword, steps, top10, full: steps.length ? bidForReach(steps, 100) : null, target, verdict };
       })
       .sort((a, b) => (a.top10?.cpm ?? Infinity) - (b.top10?.cpm ?? Infinity));
