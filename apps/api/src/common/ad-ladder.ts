@@ -30,6 +30,13 @@ export const AD_LADDER_DEFAULT_CAMPAIGNS = ['286528', '305122', '305324', '33209
  * 337334 — «Сердечки 3480224 новинка» (жаккард с сердечками), создана 18.10.2026, льгота 14 дней.
  */
 export const AD_LADDER_LAUNCH_UNTIL: Record<string, string> = { '337334': '2026-11-01' };
+/**
+ * Кампании, где каждый активный цвет держим в топ-10 по каждой фразе — потолок класса не действует, только общий потолок
+ * ставки maxBid (AD_BOT_MAX_BID). Значение — сколько цветов держать. 337334 «Сердечки»: владелец 18.10.2026 — «рекламируй
+ * только 2 цвета и нужно держать их в топ-10» (розовый 6472969 и голубой 6472965, остальные цвета остановлены посевом).
+ */
+export const AD_LADDER_HOLD_TOP: Record<string, number> = { '337334': 2 };
+
 export function launchCampaigns(today: string, table: Record<string, string> = AD_LADDER_LAUNCH_UNTIL): Set<string> {
   return new Set(Object.entries(table).filter(([, until]) => today <= until).map(([id]) => id));
 }
@@ -119,7 +126,7 @@ export const ladderKey = (keyword: Pick<AdBotKeyword, 'campaignId' | 'skuGroupId
 
 /** Решения по всем словам: какие цвета держать в топ-10 и какие ставки поставить. recent — слова, правленные за cooldownHours;
  * launch — кампании на льготе запуска (ДРР не проверяется). */
-export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = AD_LADDER_DEFAULTS, recent: Set<string> = new Set(), launch: Set<string> = new Set()): LadderDecision[] {
+export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = AD_LADDER_DEFAULTS, recent: Set<string> = new Set(), launch: Set<string> = new Set(), hold: Record<string, number> = AD_LADDER_HOLD_TOP): LadderDecision[] {
   const decisions: LadderDecision[] = [];
   const byQuery = new Map<string, LadderKeyword[]>();
   for (const keyword of keywords) {
@@ -127,7 +134,9 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
     byQuery.set(key, [...(byQuery.get(key) ?? []), keyword]);
   }
   for (const rows of byQuery.values()) {
-    const cls = ladderQueryClass(rows[0].query, cfg);
+    const base = ladderQueryClass(rows[0].query, cfg);
+    const held = hold[rows[0].campaignId];
+    const cls = held ? { ...base, name: `${base.name}, держим в топ-10`, cap: cfg.maxBid, colors: held } : base;
     const priced = rows
       .map((keyword) => {
         const steps = keyword.ladder ?? [];

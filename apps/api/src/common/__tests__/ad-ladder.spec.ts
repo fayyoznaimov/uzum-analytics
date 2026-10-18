@@ -81,6 +81,14 @@ describe('лестница ставок', () => {
     expect(formatLadderReport(decisions, { apply: true })).toContain('Не окупаются, из топ-10 убраны (1)');
   });
 
+  it('кампания «держим в топ-10»: оба цвета в топе по любой фразе до общего потолка ставки', () => {
+    const pink = { ...kw('pink', 'полотенце для рук', 15_000, 41_546), campaignId: '337334' };
+    const blue = { ...kw('blue', 'полотенце для рук', 15_000, 45_000), campaignId: '337334' };
+    expect(planLadderBids([pink, blue], undefined, new Set(), new Set(), {}).map((row) => row.role)).toEqual(['other', 'other']); // потолок «остальных» 20 000
+    const held = planLadderBids([pink, blue], undefined, new Set(), new Set(), { '337334': 2 });
+    expect(held.map((row) => [row.keyword.skuGroupId, row.role, row.action?.newCpm])).toEqual([['pink', 'top', 43_000], ['blue', 'top', 46_500]]);
+  });
+
   it('льгота запуска новинки: ДРР не проверяется до конца срока', () => {
     const st = { impressions: 1000, clicks: 30, sold: 0, revenue: 0, spend: 60_000, position: null };
     const fresh = { ...kw('a', 'полотенце банное', 48_000, 45_760), campaignId: '337334', stats7: st };
