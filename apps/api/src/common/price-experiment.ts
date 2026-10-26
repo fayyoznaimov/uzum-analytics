@@ -127,8 +127,14 @@ const sum = (a: FunnelTotals, b: FunnelTotals): FunnelTotals => ({
 });
 const pct = (value: number | null) => (value === null ? '—' : `${value > 0 ? '+' : ''}${Math.round(value)}%`);
 
+/**
+ * uncontrolledSkus — сколько других SKU товара с заказами в окне не годятся в контроль (их цена тоже
+ * менялась). Без контроля при таких SKU «товар целиком» — на деле только изменённая часть, и
+ * перетягивание с других цветов не видно: HAVANA 29.09 (−4,5% на 12 SKU) без этого правила вышла
+ * бы «помогло» +144%, хотя разбор 04.10 показал каннибализацию (базовая цена 28.09 менялась у всех 36 SKU).
+ */
 export function evaluateExperiment(
-  input: { changed: { before: FunnelTotals; after: FunnelTotals }; control: { before: FunnelTotals; after: FunnelTotals } | null; priceChangePercent: number },
+  input: { changed: { before: FunnelTotals; after: FunnelTotals }; control: { before: FunnelTotals; after: FunnelTotals } | null; priceChangePercent: number; uncontrolledSkus?: number },
   cfg = EXPERIMENT_DEFAULTS,
 ): ExperimentResult {
   const { changed, control, priceChangePercent } = input;
@@ -142,6 +148,9 @@ export function evaluateExperiment(
 
   if (changed.before.orders + changed.after.orders < cfg.minOrders || productOrdersChangePercent === null) {
     return { ...base, verdict: 'INSUFFICIENT', note: `мало заказов для вывода (${changed.before.orders + changed.after.orders} за оба окна)` };
+  }
+  if (!control && (input.uncontrolledSkus ?? 0) > 0) {
+    return { ...base, productOrdersChangePercent: null, verdict: 'INSUFFICIENT', note: `нет контроля: у остальных SKU товара с заказами (${input.uncontrolledSkus}) цена в окне тоже менялась — эффект не отделить (заказы SKU ${pct(ordersChangePercent)})` };
   }
   const product = productOrdersChangePercent;
   const own = ordersChangePercent ?? 0;

@@ -128,6 +128,7 @@ export class PriceExperimentService {
           changed: { before: total(isChanged, 'before'), after: total(isChanged, 'after') },
           control: hasControl ? { before: total(isControl, 'before'), after: total(isControl, 'after') } : null,
           priceChangePercent,
+          uncontrolledSkus: [...funnel.keys()].filter((sku) => !isChanged(sku) && !isControl(sku)).length,
         });
         const evaluation = { ...result, window: { from, day, to }, skus: [...changedSkus], controlSkus: [...funnel.keys()].filter(isControl) } as unknown as Prisma.InputJsonValue;
         await this.prisma.priceChange.updateMany({ where: { id: { in: rows.map((row) => row.id) } }, data: { evaluation, evaluatedAt: now } });

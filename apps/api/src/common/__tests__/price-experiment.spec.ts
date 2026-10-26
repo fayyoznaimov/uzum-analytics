@@ -20,6 +20,15 @@ describe('оценка ценового эксперимента', () => {
     expect(evaluateExperiment({ changed: { before: t(10), after: t(16) }, control: { before: t(10), after: t(11) }, priceChangePercent: -5 }).verdict).toBe('HELPED');
     expect(evaluateExperiment({ changed: { before: t(14), after: t(6) }, control: { before: t(10), after: t(8) }, priceChangePercent: 4 }).verdict).toBe('HURT');
   });
+  it('нет контроля, а у других SKU товара цена тоже менялась → мало данных, а не «помогло» по части товара', () => {
+    // HAVANA 29.09: 12 сниженных SKU выросли на 144%, остальные 22 тоже «тронуты» (базовая цена 28.09).
+    const result = evaluateExperiment({ changed: { before: t(18), after: t(44) }, control: null, priceChangePercent: -4.5, uncontrolledSkus: 22 });
+    expect(result.verdict).toBe('INSUFFICIENT');
+    expect(result.productOrdersChangePercent).toBeNull();
+    expect(result.note).toBe('нет контроля: у остальных SKU товара с заказами (22) цена в окне тоже менялась — эффект не отделить (заказы SKU +144%)');
+    // Изменили все SKU с заказами — товар целиком и есть изменённая часть, вывод возможен.
+    expect(evaluateExperiment({ changed: { before: t(18), after: t(44) }, control: null, priceChangePercent: -4.5, uncontrolledSkus: 0 }).verdict).toBe('HELPED');
+  });
   it('в пределах ±15% по товару → без эффекта; мало заказов → мало данных', () => {
     expect(evaluateExperiment({ changed: { before: t(10), after: t(11) }, control: null, priceChangePercent: -3 }).verdict).toBe('NO_EFFECT');
     expect(evaluateExperiment({ changed: { before: t(4), after: t(5) }, control: null, priceChangePercent: -3 }).verdict).toBe('INSUFFICIENT');
