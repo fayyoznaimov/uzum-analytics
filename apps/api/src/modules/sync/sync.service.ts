@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { IntegrationType, Prisma } from '@prisma/client';
 import { advertisingRateAt, advertisingRateTimeline, latestAdvertisingRates } from '../../common/advertising';
+import { durationLabel, emptyStreak, markNotified, recordFailure, recordSuccess, runsLabel } from '../../common/failure-alert';
 import { classifyOrderState, resolveOrderReportDate } from '../../common/order-state';
 import { basketEligibleDate, scheduledPayoutDate } from '../../common/payout-basket';
 import { PrismaService } from '../../common/prisma.service';
@@ -14,8 +15,10 @@ type MoneyPick = { found: boolean; value: number };
  * Эндпоинты, на которых 403/404 от Uzum — это флап, а не отсутствие данных.
  * Продавец существует (в те же минуты те же пути отвечают 200), поэтому такие
  * коды здесь переспрашиваем вместо того, чтобы ронять весь прогон.
+ * `/v1/shops` 24–26.10.2026 трижды ответил «404 Seller with id 351945 not found»,
+ * а следующий прогон через 30 минут проходил.
  */
-const TRANSIENT_ERROR_PATHS = ['/v1/finance/orders', '/v1/finance/expenses'];
+const TRANSIENT_ERROR_PATHS = ['/v1/shops', '/v1/finance/orders', '/v1/finance/expenses'];
 
 @Injectable()
 export class SyncService {
@@ -27,6 +30,8 @@ export class SyncService {
   // runAll параллельно (гонка на транзакции пересборки adCost, двойные
   // Telegram-уведомления о новых заказах).
   private fullSyncRunning = false;
+  // Серия неудачных полных прогонов: в Telegram — со второго подряд, а не на каждый флап Uzum.
+  private failureStreak = emptyStreak();
   constructor(private readonly prisma: PrismaService, private readonly integrations: IntegrationsService) {}
 
   @Cron(process.env.SYNC_CRON || '*/15 * * * *')
@@ -130,8 +135,8 @@ export class SyncService {
         attempts: 3,
         shouldRetry: (status, requestPath) => [429, 502, 503, 504].includes(status)
           || ([403, 404].includes(status) && TRANSIENT_ERROR_PATHS.some((prefix) => requestPath.startsWith(prefix))),
-        // После 429 секунды не хватает — лимит Uzum держится дольше.
-        backoffMs: (status, attempt) => (status === 429 ? 5_000 * (attempt + 1) : 1_500 * (attempt + 1)),
+        // После 429 и флапа 403/404 секунды не хватает — Uzum приходит в себя дольше.
+        backoffMs: (status, attempt) => ([502, 503, 504].includes(status) ? 1_500 : 5_000) * (attempt + 1),
         warn: (message) => this.logger.warn(message),
       },
     });
@@ -257,11 +262,26 @@ export class SyncService {
             + (orderResult.financialEventErrors ? ` ⚠️ не записано финансовых событий: ${orderResult.financialEventErrors} (см. лог API)` : ''),
         },
       });
+      const success = recordSuccess(this.failureStreak, Date.now());
+      this.failureStreak = success.streak;
+      if (success.recovered) {
+        await this.integrations.notifyTelegram(`✅ Синхронизация Uzum Analytics снова работает${success.failedForMs !== null ? ` — сбой длился ${durationLabel(success.failedForMs)}` : ''}`, 'notifyErrors').catch(() => false);
+      }
       return { ok: true, shop: shop.name, ...productResult, orders: orderResult.rows, expenses: expenseResult.rows, newOrders: orderResult.newOrders };
     } catch (error: any) {
       const message = String(error?.message || error);
       await this.prisma.syncRun.update({ where: { id: run.id }, data: { status: 'ERROR', finishedAt: new Date(), message } });
-      await this.integrations.notifyTelegram(`⚠️ Ошибка синхронизации Uzum Analytics\n${message}`, 'notifyErrors').catch(() => false);
+      const now = Date.now();
+      const failure = recordFailure(this.failureStreak, now);
+      this.failureStreak = failure.streak;
+      if (failure.notify) {
+        const { failures, since } = failure.streak;
+        const lasting = failures > 1 && since !== null ? ` (${runsLabel(failures)} подряд, ${durationLabel(now - since)})` : '';
+        const sent = await this.integrations.notifyTelegram(`⚠️ Ошибка синхронизации Uzum Analytics${lasting}\n${message}`, 'notifyErrors').catch(() => false);
+        if (sent) this.failureStreak = markNotified(this.failureStreak, now);
+      } else {
+        this.logger.warn(`Синхронизация не прошла (${runsLabel(failure.streak.failures)} подряд) — в Telegram не пишем: ${failure.streak.notifiedAt === null ? 'сообщим, если сбой повторится' : 'напоминание было недавно'}. ${message}`);
+      }
       throw new BadRequestException(message);
     }
   }

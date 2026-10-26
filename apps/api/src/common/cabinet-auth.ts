@@ -20,6 +20,15 @@ export const CABINET_OAUTH_URL = 'https://api-seller.uzum.uz/api/oauth/token';
 export const CABINET_CLIENT_BASIC = 'YjJiLWZyb250OmNsaWVudFNlY3JldA==';
 /** Продлеваем заранее: если до истечения меньше этого — пора. */
 export const CABINET_REFRESH_MARGIN_MS = 60 * 60_000;
+/**
+ * Продлеваем ещё раньше — за неделю до конца сессии (токен живёт 30 дней), а при неудаче повторяем
+ * не чаще раза в 6 часов. 13.10.2026 Cloudflare не пускал сервер к oauth/token (страница «Just a moment…»),
+ * к 26.10 пустил; с запасом в час такая блокировка в неудачный момент оставила бы кабинет без сессии.
+ */
+export const CABINET_EARLY_REFRESH_MS = 7 * 24 * 60 * 60_000;
+export const CABINET_EARLY_RETRY_MS = 6 * 60 * 60_000;
+/** О неудачном продлении пишем в Telegram, только когда до конца сессии осталось меньше этого. */
+export const CABINET_ALERT_MARGIN_MS = 48 * 60 * 60_000;
 
 export type CabinetTokens = { accessToken: string; refreshToken: string | null; expiresAt: Date | null };
 
@@ -66,11 +75,36 @@ export function needsRefresh(expiresAt: Date | string | null | undefined, now: D
   return at - now.getTime() <= marginMs;
 }
 
+const timeOf = (value: Date | string | null | undefined) => (value ? new Date(value).getTime() : NaN);
+
+/**
+ * Пора ли продлевать по расписанию. Срок неизвестен или до конца меньше часа — каждый запуск, как раньше.
+ * За неделю до конца — заранее, но не чаще раза в CABINET_EARLY_RETRY_MS: и после неудачи (не долбить вход),
+ * и после удачного продления, если оно почему-то не отодвинуло срок.
+ */
+export function refreshDue(meta: { accessExpiresAt?: string | null; lastAttemptAt?: string | null }, now: Date = new Date()): boolean {
+  if (needsRefresh(meta.accessExpiresAt, now)) return true;
+  if (!needsRefresh(meta.accessExpiresAt, now, CABINET_EARLY_REFRESH_MS)) return false;
+  const lastAttempt = timeOf(meta.lastAttemptAt);
+  return !(Number.isFinite(lastAttempt) && now.getTime() - lastAttempt < CABINET_EARLY_RETRY_MS);
+}
+
+/** Неудачное продление уже грозит остановкой (сессия истекает в пределах двух суток или срок неизвестен) — пора писать владельцу. */
+export function authFailureUrgent(expiresAt: Date | string | null | undefined, now: Date = new Date()): boolean {
+  return needsRefresh(expiresAt, now, CABINET_ALERT_MARGIN_MS);
+}
+
 /** Понятный текст ошибки входа; пароль и токены в текст не попадают. */
 export function cabinetAuthErrorMessage(status: number, body: any): string {
   const nested = (() => { try { return JSON.parse(body?.errors?.[0]?.detailMessage || body?.error || '{}'); } catch { return {}; } })();
   const code = nested?.error || body?.errors?.[0]?.code || '';
   const description = nested?.error_description || body?.errors?.[0]?.message || body?.message || '';
+  // Вместо JSON пришла HTML-страница: 13.10.2026 это была проверка Cloudflare «Just a moment…» — сервер ко входу не пустили.
+  if (/<!doctype html|<html/i.test(description)) {
+    return /just a moment|cloudflare|cf-chl|challenge/i.test(description)
+      ? `Cloudflare не пустил сервер ко входу в кабинет (HTTP ${status}, проверка «Just a moment…») — повторим позже`
+      : `oauth/token: HTTP ${status} — кабинет ответил HTML-страницей вместо JSON`;
+  }
   if (/invalid_grant/i.test(code) && /bad credentials|password|учетн|учётн/i.test(description)) return 'Неверный логин или пароль сотрудника';
   if (/invalid_grant/i.test(code) && /refresh/i.test(description)) return 'Refresh-токен недействителен';
   if (status === 401 || status === 403) return `Кабинет отклонил вход (HTTP ${status})${description ? ` — ${description}` : ''}`;

@@ -8,9 +8,95 @@
  * Разбор 04.10.2026 показал, почему контроль обязателен: снижение HAVANA 29.09
  * удвоило открытия сниженных SKU, но ровно на столько же уменьшило открытия
  * остальных цветов — по товару в целом прироста не было (каннибализация).
+ *
+ * С 09.10.2026 воронки Uzum нет (куб SellerReportProductFunnelSku пропал из аналитики),
+ * поэтому заказы берутся из учёта магазина (ordersByWindow — штуки совпадают с новым
+ * кубом Sales один в один). Вердикт считается только по заказам; показы, открытия и
+ * корзина в итогах — 0, «открытия карточки» у внешних кампаний — «—».
  */
 
 export type FunnelTotals = { impressions: number; views: number; carts: number; orders: number; days: number };
+
+/** Позиция заказа из учёта магазина: день заказа (Ташкент) и штуки по SKU и товару (id Uzum). */
+export type ExperimentOrderItem = { orderedAt: Date; skuId: string | null; productId: string | null; quantity: number };
+
+export type WindowTotals = Map<string, Map<'before' | 'after', FunnelTotals>>;
+
+const tashkentDayKey = (date: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tashkent' }).format(date);
+
+/**
+ * Заказанные штуки по SKU или товару в окнах «до» (from … split−1) и «после» (split … to).
+ * skipSplitDay — день изменения цены: цена в нём была и старой, и новой, в окна он не входит.
+ */
+export function ordersByWindow(
+  items: ExperimentOrderItem[],
+  opts: { key: 'sku' | 'product'; from: string; to: string; split: string; skipSplitDay: boolean; days: number },
+): WindowTotals {
+  const result: WindowTotals = new Map();
+  for (const item of items) {
+    const id = opts.key === 'sku' ? item.skuId : item.productId;
+    if (!id || !(item.quantity > 0)) continue;
+    const day = tashkentDayKey(item.orderedAt);
+    if (day < opts.from || day > opts.to || (opts.skipSplitDay && day === opts.split)) continue;
+    const window = day < opts.split ? 'before' : 'after';
+    const byWindow = result.get(id) ?? new Map<'before' | 'after', FunnelTotals>();
+    const totals = byWindow.get(window) ?? { impressions: 0, views: 0, carts: 0, orders: 0, days: opts.days };
+    totals.orders += item.quantity;
+    byWindow.set(window, totals);
+    result.set(id, byWindow);
+  }
+  return result;
+}
+
+/**
+ * Дни, по которым спрос не оценить, — окна экспериментов, которые их задевают, получают «мало данных»
+ * и в опыт магазина не идут. По умолчанию 14–21.10.2026: ~42 шт. самовыкупа 14–20.10 (владелец, 21.10)
+ * и ручное снижение цен на всех карточках вечером 20.10 (не через PriceChange, контроль его не видит).
+ * PRICE_EXPERIMENT_EXCLUDE_DAYS — свои диапазоны «ГГГГ-ММ-ДД..ГГГГ-ММ-ДД» через запятую, «off» — без исключений.
+ */
+export const EXCLUDED_DAYS_DEFAULT = '2026-10-14..2026-10-21';
+export type DayRange = { from: string; to: string };
+
+export function parseExcludedDays(value: string | undefined): DayRange[] {
+  const raw = value === undefined ? EXCLUDED_DAYS_DEFAULT : value.trim();
+  if (!raw || raw.toLowerCase() === 'off') return [];
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  return raw.split(',').map((part) => part.trim().split('..').map((item) => item.trim())).flatMap(([from, to = from]) => {
+    if (!day.test(from) || !day.test(to)) return [];
+    return [from <= to ? { from, to } : { from: to, to: from }];
+  });
+}
+
+export function overlappingRange(from: string, to: string, ranges: DayRange[]): DayRange | null {
+  return ranges.find((range) => from <= range.to && to >= range.from) ?? null;
+}
+
+const rangeLabel = (range: DayRange) => {
+  const short = (day: string) => `${day.slice(8, 10)}.${day.slice(5, 7)}`;
+  return range.from === range.to ? short(range.from) : `${short(range.from)}–${short(range.to)}`;
+};
+const excludedNote = (range: DayRange) => `окно задевает исключённые дни ${rangeLabel(range)} (самовыкупы, ручная смена цен) — спрос не оценить`;
+
+export function excludedExperiment(priceChangePercent: number, range: DayRange): ExperimentResult {
+  return { verdict: 'INSUFFICIENT', ordersChangePercent: null, controlOrdersChangePercent: null, productOrdersChangePercent: null, priceChangePercent, note: excludedNote(range) };
+}
+
+export function excludedMarketing(range: DayRange): MarketingResult {
+  return { verdict: 'INSUFFICIENT', ordersChangePercent: null, controlOrdersChangePercent: null, liftPercent: null, viewsChangePercent: null, note: excludedNote(range) };
+}
+
+/** Итоги в Telegram кусками до 3900 символов: строк экспериментов после простоя воронки может быть много. */
+export function experimentReport(lines: string[], learned: string | null): string[] {
+  const all = ['📊 Ценовые эксперименты: итоги через 7 дней', '', ...lines, ...(learned ? ['', `Опыт магазина за 90 дней: ${learned}`] : [])];
+  const chunks: string[] = [];
+  let current = '';
+  for (const text of all) {
+    const line = text.length > 3900 ? `${text.slice(0, 3899)}…` : text;
+    if (current && current.length + line.length + 1 > 3900) { chunks.push(current); current = line; } else current = current ? `${current}\n${line}` : line;
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
 
 export type ExperimentVerdict = 'HELPED' | 'NO_EFFECT' | 'HURT' | 'CANNIBALIZED' | 'INSUFFICIENT';
 

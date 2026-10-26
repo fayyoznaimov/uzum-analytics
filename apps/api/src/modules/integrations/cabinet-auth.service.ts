@@ -2,13 +2,14 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { IntegrationStatus, IntegrationType, Prisma } from '@prisma/client';
 import {
+  authFailureUrgent,
   CABINET_CLIENT_BASIC,
   CABINET_OAUTH_URL,
   CabinetTokens,
   cabinetAuthErrorMessage,
-  needsRefresh,
   parseTokenResponse,
   passwordGrantBody,
+  refreshDue,
   refreshGrantBody,
   usernameVariants,
 } from '../../common/cabinet-auth';
@@ -17,7 +18,7 @@ import { PrismaService } from '../../common/prisma.service';
 import { IntegrationsService } from './integrations.service';
 
 type LoginSecret = { password: string; refreshToken: string | null };
-type LoginMetadata = { username?: string; usernameUsed?: string; accessExpiresAt?: string | null; lastRefreshAt?: string; lastNotifiedAt?: string };
+type LoginMetadata = { username?: string; usernameUsed?: string; accessExpiresAt?: string | null; lastRefreshAt?: string; lastAttemptAt?: string; lastNotifiedAt?: string };
 
 export type CabinetAuthResult = { ok: boolean; action: 'none' | 'fresh' | 'refresh' | 'login'; expiresAt?: string | null; error?: string };
 
@@ -61,7 +62,7 @@ export class CabinetAuthService {
     return result;
   }
 
-  /** Продлевает сессию, если она истекает в пределах часа (или force). Сначала refresh-токеном, затем паролем. */
+  /** Продлевает сессию заранее — за неделю до конца (refreshDue) или по force. Сначала refresh-токеном, затем паролем. */
   async refreshIfNeeded(force = false): Promise<CabinetAuthResult> {
     if (this.running) return { ok: true, action: 'none' };
     this.running = true;
@@ -75,7 +76,7 @@ export class CabinetAuthService {
       } catch {
         return this.fail(row.id, metadata, 'Не удалось расшифровать логин сотрудника — сохраните его заново');
       }
-      if (!force && !needsRefresh(metadata.accessExpiresAt)) return { ok: true, action: 'fresh', expiresAt: metadata.accessExpiresAt ?? null };
+      if (!force && !refreshDue(metadata)) return { ok: true, action: 'fresh', expiresAt: metadata.accessExpiresAt ?? null };
 
       const errors: string[] = [];
       let tokens: CabinetTokens | null = null;
@@ -107,7 +108,8 @@ export class CabinetAuthService {
       const expiresAt = tokens.expiresAt ? tokens.expiresAt.toISOString() : null;
       await this.storeAccessToken(tokens.accessToken, expiresAt);
       const nextSecret: LoginSecret = { password: secret.password, refreshToken: tokens.refreshToken ?? secret.refreshToken ?? null };
-      const nextMetadata: LoginMetadata = { ...metadata, usernameUsed, accessExpiresAt: expiresAt, lastRefreshAt: new Date().toISOString() };
+      const refreshedAt = new Date().toISOString();
+      const nextMetadata: LoginMetadata = { ...metadata, usernameUsed, accessExpiresAt: expiresAt, lastRefreshAt: refreshedAt, lastAttemptAt: refreshedAt };
       await this.prisma.integrationCredential.update({
         where: { id: row.id },
         data: { ...this.crypto.encrypt(JSON.stringify(nextSecret)), metadata: nextMetadata as Prisma.InputJsonValue, status: IntegrationStatus.CONNECTED, lastError: null, lastTestedAt: new Date() },
@@ -157,23 +159,51 @@ export class CabinetAuthService {
     });
   }
 
+  /**
+   * Неудачная попытка. Пока до конца сессии больше двух суток (продление заранее), это не авария:
+   * статус не трогаем и владельцу не пишем — повторим через 6 часов (refreshDue). Ближе к концу —
+   * статус ERROR и сообщение в Telegram не чаще раза в 3 часа, с датой, когда всё остановится.
+   * Срок берём у токена, который реально лежит в UZUM_INTERNAL: saveLogin сбрасывает метаданные входа,
+   * а старый токен сотрудника при этом продолжает работать. Токен, вставленный вручную, — тоже рабочая
+   * сессия: тогда неудачный вход — не авария (когда он истечёт, об этом скажут сбои агентов).
+   */
   private async fail(id: string, metadata: LoginMetadata, error: string): Promise<CabinetAuthResult> {
-    this.logger.warn(`Вход в кабинет под сотрудником не удался: ${error}`);
-    const now = Date.now();
+    const now = new Date();
+    const internal = await this.prisma.integrationCredential.findUnique({ where: { type: IntegrationType.UZUM_INTERNAL } }).catch(() => null);
+    const internalMeta = (internal?.metadata || {}) as Record<string, any>;
+    const manualToken = Boolean(internal?.encryptedValue) && internalMeta.source !== 'employee';
+    const sessionExpiresAt: string | null = (internalMeta.source === 'employee' ? internalMeta.accessExpiresAt : null) ?? metadata.accessExpiresAt ?? null;
+    const urgent = !manualToken && authFailureUrgent(sessionExpiresAt, now);
+    const expiresAt = sessionExpiresAt ? new Date(sessionExpiresAt) : null;
+    const known = Boolean(expiresAt && Number.isFinite(expiresAt.getTime()));
+    const validUntil = known && (expiresAt as Date) > now
+      ? new Intl.DateTimeFormat('ru-RU', { timeZone: 'Asia/Tashkent', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(expiresAt as Date)
+      : null;
+    this.logger.warn(`Вход в кабинет под сотрудником не удался${validUntil ? ` (сессия действует до ${validUntil})` : ''}${manualToken ? ' (работает токен, вставленный вручную)' : ''}: ${error}`);
     const lastNotified = metadata.lastNotifiedAt ? new Date(metadata.lastNotifiedAt).getTime() : 0;
-    const notify = !lastNotified || now - lastNotified > NOTIFY_EVERY_MS;
+    let notified = false;
+    if (urgent && (!lastNotified || now.getTime() - lastNotified > NOTIFY_EVERY_MS)) {
+      const stops = 'отзывы, акции, реклама и лестница ставок';
+      const consequence = validUntil
+        ? `Сессия действует до ${validUntil} — после этого ${stops} остановятся.`
+        : known
+          ? `Сессия кабинета истекла — ${stops} не работают.`
+          : `Срок текущей сессии неизвестен — когда она истечёт, ${stops} остановятся.`;
+      const hint = /Cloudflare|HTML-страниц/.test(error)
+        ? 'Повторим автоматически; если не пройдёт до этого срока — вставьте токен вручную в Настройки → Отзывы Uzum.'
+        : 'Проверьте логин и пароль в Настройки → Отзывы Uzum.';
+      notified = await this.integrations.notifyTelegram(`⚠️ Не удалось продлить сессию кабинета Uzum под сотрудником: ${error}. ${consequence} ${hint}`).catch(() => false);
+    }
+    const nextMetadata: LoginMetadata = { ...metadata, lastAttemptAt: now.toISOString(), ...(notified ? { lastNotifiedAt: now.toISOString() } : {}) };
     await this.prisma.integrationCredential.update({
       where: { id },
       data: {
-        status: IntegrationStatus.ERROR,
-        lastError: error.slice(0, 500),
-        lastTestedAt: new Date(),
-        metadata: (notify ? { ...metadata, lastNotifiedAt: new Date(now).toISOString() } : metadata) as Prisma.InputJsonValue,
+        ...(urgent ? { status: IntegrationStatus.ERROR } : {}),
+        lastError: (urgent ? error : `Продление не удалось${manualToken ? ' (работает токен, вставленный вручную)' : `, сессия действует до ${validUntil ?? 'неизвестно'}`}: ${error}`).slice(0, 500),
+        lastTestedAt: now,
+        metadata: nextMetadata as Prisma.InputJsonValue,
       },
     });
-    if (notify) {
-      await this.integrations.notifyTelegram(`⚠️ Не удалось продлить сессию кабинета Uzum под сотрудником: ${error}. Проверьте логин и пароль в Настройки → Отзывы Uzum.`).catch(() => false);
-    }
     return { ok: false, action: 'none', error };
   }
 }

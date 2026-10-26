@@ -12,6 +12,12 @@
  *        кубы: SellerReportProductFunnelSku (вся воронка товара), AdvertisingCpoFunnel (реклама CPO),
  *        AdvertisingDailyFunnel (кампании «Буст в ТОП»).
  *
+ * 09.10.2026 аналитика Uzum пропала, 14.10 вернулась без куба SellerReportProductFunnelSku (к 26.10 там
+ * три рекламных куба и новые Sales — заказы — и Returns; показов, открытий и корзины ни в одном нет).
+ * Поэтому заказы и выкупы берутся из учёта магазина (orderDays — те же цифры, что в Sales), а показы,
+ * открытия и корзина — из куба, пока он есть; без него они null («неизвестно»), а не 0, и правила по CTR,
+ * корзине и падению показов молчат.
+ *
  * Модуль чистый: запросы Cube, разбор ответов, правила советов и текст отчёта. Сеть — в AdAgentService.
  */
 import { shiftDay, sumDays } from './auto-pricing';
@@ -130,9 +136,57 @@ export const FUNNEL_MEMBERS = { id: FUNNEL + 'product_id', day: FUNNEL + 'date' 
 export const CPO_MEMBERS = { id: CPO + 'product_id', day: CPO + 'day' };
 export const TOP_MEMBERS = { id: TOP + 'ad_campaign_id', day: TOP + 'date' };
 
+/** Заказ из учёта магазина: состояние — classifyStoredOrder, выкуп — только PAID, по дню выдачи, без возвратов. */
+export type AgentOrder = {
+  state: string;
+  orderedAt: Date | null;
+  issuedAt: Date | null;
+  items: Array<{ productId: string | null; quantity: number; returns: number }>;
+};
+
+const tashkentDayKey = (date: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tashkent' }).format(date);
+
+/**
+ * Заказано и выкуплено по товарам и дням (Ташкент) — в форме DailyMetrics для windowSum.
+ * ordered — все заказанные штуки по дню заказа, как generated_amount старой воронки и Sales.item_sold_number;
+ * sold — выкупленные штуки по дню выдачи за вычетом возвратов, как aggregateBuyouts автоцен.
+ */
+export function orderDays(orders: AgentOrder[]): DailyMetrics {
+  const result: DailyMetrics = new Map();
+  const add = (productId: string, day: string, metric: 'ordered' | 'sold', units: number) => {
+    if (units <= 0) return;
+    const byDay = result.get(productId) ?? {};
+    const metrics = byDay[day] ?? {};
+    metrics[metric] = (metrics[metric] ?? 0) + units;
+    byDay[day] = metrics;
+    result.set(productId, byDay);
+  };
+  for (const order of orders) {
+    for (const item of order.items) {
+      if (!item.productId) continue;
+      if (order.orderedAt) add(item.productId, tashkentDayKey(order.orderedAt), 'ordered', Math.max(0, item.quantity));
+      if (order.state === 'PAID' && order.issuedAt) add(item.productId, tashkentDayKey(order.issuedAt), 'sold', Math.max(0, item.quantity - Math.max(0, item.returns)));
+    }
+  }
+  return result;
+}
+
+/** Почему нет показов, открытий и корзины — коротко, для отчёта и ИИ (без URL запроса). */
+export function funnelUnavailableNote(errorMessage: string): string {
+  return /not found/i.test(errorMessage)
+    ? 'показы, открытия и корзина недоступны: Uzum убрал воронку товаров из аналитики (с 09–14.10.2026)'
+    : `показы, открытия и корзина не получены (${errorMessage.slice(0, 160)})`;
+}
+
+/** Ошибка запроса к Cube без огромного URL с JSON-запросом в начале. */
+export function shortCubeError(errorMessage: string): string {
+  return errorMessage.replace(/^https?:\/\/\S+?: /, '');
+}
+
 // ---------- данные для правил ----------
 
-export type Funnel = { impressions: number; views: number; atc: number; ordered: number; sold: number };
+/** Показы, открытия и корзина — null, когда Uzum их не отдаёт (неизвестно ≠ 0). */
+export type Funnel = { impressions: number | null; views: number | null; atc: number | null; ordered: number; sold: number };
 export type AdProduct = {
   productId: string;
   title: string;
@@ -163,7 +217,7 @@ export type AdCampaign = {
 
 export type AdAdvice = { priority: 1 | 2 | 3 | 4; target: string; action: string; reason: string };
 
-const pct = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : null);
+const pct = (part: number | null, whole: number | null) => (part !== null && whole !== null && whole > 0 ? (part / whole) * 100 : null);
 const fmt = (value: number) => Math.round(value).toLocaleString('ru-RU');
 const p1 = (value: number | null) => (value === null ? '—' : `${(Math.round(value * 10) / 10).toLocaleString('ru-RU')}%`);
 const median = (values: number[]) => {
@@ -204,9 +258,9 @@ export function adAdvice(products: AdProduct[], campaigns: AdCampaign[], today: 
   }
 
   // Товары: кликабельность карточки, конверсия, трафик на неидущие.
-  const withTraffic = products.filter((product) => product.funnel28.impressions >= 2_000);
+  const withTraffic = products.filter((product) => (product.funnel28.impressions ?? 0) >= 2_000 && product.funnel28.views !== null);
   const ctrMedian = median(withTraffic.map((product) => pct(product.funnel28.views, product.funnel28.impressions) as number));
-  const cartMedian = median(withTraffic.filter((product) => product.funnel28.views >= 300).map((product) => pct(product.funnel28.atc, product.funnel28.views) as number));
+  const cartMedian = median(withTraffic.filter((product) => (product.funnel28.views ?? 0) >= 300 && product.funnel28.atc !== null).map((product) => pct(product.funnel28.atc, product.funnel28.views) as number));
   const soldMedian = median(products.filter((product) => product.stockUnits > 0).map((product) => product.funnel28.sold));
 
   for (const product of products) {
@@ -223,19 +277,21 @@ export function adAdvice(products: AdProduct[], campaigns: AdCampaign[], today: 
         advice.push({ priority: 1, target, action: `снизить ставку «Буст заказов» (сейчас ${product.cpo.commission}%)`, reason: `ДРР за 7 дней ${p1(cpoDrr)} — выше ${maxDrr}%` });
       }
     }
-    if (ctr !== null && ctrMedian !== null && product.funnel28.impressions >= 2_000 && ctr < ctrMedian * cfg.weakRatio) {
+    if (ctr !== null && ctrMedian !== null && (product.funnel28.impressions ?? 0) >= 2_000 && ctr < ctrMedian * cfg.weakRatio) {
       advice.push({ priority: 2, target, action: 'улучшить карточку в выдаче: главное фото, цена, название', reason: `открывают ${p1(ctr)} показов против ${p1(ctrMedian)} по магазину — реклама купит показы, но клики будут дорогими` });
     }
-    if (cart !== null && cartMedian !== null && product.funnel28.views >= 300 && cart < cartMedian * cfg.weakRatio) {
+    if (cart !== null && cartMedian !== null && (product.funnel28.views ?? 0) >= 300 && cart < cartMedian * cfg.weakRatio) {
       advice.push({ priority: 3, target, action: 'проверить цену, отзывы, описание и размеры в карточке', reason: `в корзину кладут ${p1(cart)} открытий против ${p1(cartMedian)} по магазину` });
     }
 
     const slowSeller = soldMedian !== null && product.funnel28.sold <= soldMedian * cfg.slowSellerRatio;
-    const reachDrop = product.funnelPrev7.impressions > 0 && product.funnel7.impressions < product.funnelPrev7.impressions * 0.7;
+    const reachNow = product.funnel7.impressions;
+    const reachBefore = product.funnelPrev7.impressions;
+    const reachDrop = reachNow !== null && reachBefore !== null && reachBefore > 0 && reachNow < reachBefore * 0.7;
     if (!slowSeller && !reachDrop) continue;
     const why = slowSeller
       ? `выкуплено ${product.funnel28.sold} шт. за 28 дней при медиане магазина ${soldMedian}`
-      : `показы упали: ${fmt(product.funnel7.impressions)} за неделю против ${fmt(product.funnelPrev7.impressions)}`;
+      : `показы упали: ${fmt(reachNow ?? 0)} за неделю против ${fmt(reachBefore ?? 0)}`;
     if (lowStock) {
       advice.push({ priority: 4, target, action: 'трафик не разгонять до поставки', reason: `${why}, но запаса ~${Math.round(stockDays as number)} дн.` });
       continue;
@@ -254,7 +310,7 @@ export function adAdvice(products: AdProduct[], campaigns: AdCampaign[], today: 
 
 // ---------- ИИ и отчёт ----------
 
-export function buildAdAgentPrompt(products: AdProduct[], campaigns: AdCampaign[], advice: AdAdvice[], today: string, cfg: AdAgentConfig = AD_AGENT_DEFAULTS): string {
+export function buildAdAgentPrompt(products: AdProduct[], campaigns: AdCampaign[], advice: AdAdvice[], today: string, cfg: AdAgentConfig = AD_AGENT_DEFAULTS, funnelNote: string | null = null): string {
   const productRows = products.map((product) => ({
     товар: product.title, productId: product.productId, остаток: product.stockUnits, продажВДень: Math.round(product.avgDailySales * 10) / 10,
     воронка28дн: product.funnel28, неделя: product.funnel7, прошлаяНеделя: product.funnelPrev7,
@@ -266,6 +322,7 @@ export function buildAdAgentPrompt(products: AdProduct[], campaigns: AdCampaign[
     `Сегодня ${today}. Цели владельца: больше охвата и просмотров, дополнительный трафик на товары, которые не продаются (особенно полотенца для сауны), при ДРР не выше ${cfg.maxDrrPercent}%.`,
     '«Буст заказов» — оплата процентом только за выкупленный заказ (ДРР ≈ ставке). «Буст в ТОП» — кампании с оплатой за показы (CPM) и недельным бюджетом.',
     'Воронка: impressions — показы, views — открыли карточку, atc — добавили в корзину, ordered — заказали, sold — выкупили.',
+    ...(funnelNote ? [`Сейчас ${funnelNote}: impressions, views и atc равны null — это «неизвестно», а не ноль; не делай выводов о кликабельности карточек и корзине. ordered и sold — из учёта магазина.`] : []),
     '',
     'Данные (JSON):',
     JSON.stringify({ товары: productRows, кампанииТОП: campaignRows }, null, 1),
@@ -278,7 +335,7 @@ export function buildAdAgentPrompt(products: AdProduct[], campaigns: AdCampaign[
   ].join('\n');
 }
 
-export function formatAdReport(input: { label: string; advice: AdAdvice[]; aiPlan: string | null; aiNote: string | null; products: AdProduct[]; campaigns: AdCampaign[]; maxDrrPercent: number }): string[] {
+export function formatAdReport(input: { label: string; advice: AdAdvice[]; aiPlan: string | null; aiNote: string | null; products: AdProduct[]; campaigns: AdCampaign[]; maxDrrPercent: number; funnelNote?: string | null }): string[] {
   const shopSpend = input.campaigns.reduce((sum, row) => sum + row.week.spend, 0) + input.products.reduce((sum, row) => sum + (row.cpo?.week.spend ?? 0), 0);
   const shopRevenue = input.campaigns.reduce((sum, row) => sum + row.week.revenue, 0) + input.products.reduce((sum, row) => sum + (row.cpo?.week.revenue ?? 0), 0);
   const lines = [
@@ -294,10 +351,20 @@ export function formatAdReport(input: { label: string; advice: AdAdvice[]; aiPla
   } else {
     lines.push('По правилам всё в порядке — менять ничего не нужно.');
   }
-  lines.push('', 'Воронка товаров за 28 дней (показы → открыли → корзина → выкуп):');
-  for (const product of [...input.products].sort((a, b) => b.funnel28.impressions - a.funnel28.impressions)) {
-    const f = product.funnel28;
-    lines.push(`• ${product.title}: ${fmt(f.impressions)} → ${fmt(f.views)} (${p1(pct(f.views, f.impressions))}) → ${fmt(f.atc)} → ${fmt(f.sold)} шт.; остаток ${product.stockUnits} шт.`);
+  const topKnown = input.products.some((product) => product.funnel28.impressions !== null);
+  if (topKnown) {
+    const n = (value: number | null) => (value === null ? '—' : fmt(value));
+    lines.push('', 'Воронка товаров за 28 дней (показы → открыли → корзина → выкуп):');
+    for (const product of [...input.products].sort((a, b) => (b.funnel28.impressions ?? 0) - (a.funnel28.impressions ?? 0))) {
+      const f = product.funnel28;
+      lines.push(`• ${product.title}: ${n(f.impressions)} → ${n(f.views)} (${p1(pct(f.views, f.impressions))}) → ${n(f.atc)} → ${fmt(f.sold)} шт.; остаток ${product.stockUnits} шт.`);
+    }
+  } else if (input.products.length) {
+    lines.push('', `Товары за 28 дней, заказано → выкуплено (${input.funnelNote ?? 'показы, открытия и корзина недоступны'}):`);
+    for (const product of [...input.products].sort((a, b) => b.funnel28.ordered - a.funnel28.ordered)) {
+      const f = product.funnel28;
+      lines.push(`• ${product.title}: ${fmt(f.ordered)} → ${fmt(f.sold)} шт.; остаток ${product.stockUnits} шт.`);
+    }
   }
   const chunks: string[] = [];
   let current = '';

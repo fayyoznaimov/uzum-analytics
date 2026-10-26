@@ -36,7 +36,7 @@ async function main() {
     },
   } as unknown as IntegrationsService;
   const promo = new PromoPricingService(prisma, integrations, new PricingService(prisma, integrations));
-  const service = new AdAgentService(integrations, promo, new OpenclawClient());
+  const service = new AdAgentService(integrations, promo, new OpenclawClient(), prisma);
   try {
     const result = await service.run({ notify: process.argv.includes('--telegram') });
     console.log(result.messages.join('\n\n'));

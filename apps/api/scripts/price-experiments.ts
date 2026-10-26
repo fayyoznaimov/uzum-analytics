@@ -1,6 +1,6 @@
 /**
- * Ценовые эксперименты: оценка изменений цены через 7 дней по воронке Uzum
- * против контроля (SKU того же товара без изменений). Пишет вердикт в
+ * Ценовые эксперименты: оценка изменений цены через 7 дней по заказам из учёта
+ * магазина против контроля (SKU того же товара без изменений). Пишет вердикт в
  * PriceChange.evaluation. По расписанию — PriceExperimentService (10:20).
  *
  *   npx tsx --env-file=../../.env --tsconfig tsconfig.json scripts/price-experiments.ts [--telegram]
@@ -11,8 +11,6 @@ import { PrismaService } from '../src/common/prisma.service';
 import { TelegramClient } from '../src/common/telegram.client';
 import { PriceExperimentService } from '../src/modules/pricing/price-experiment.service';
 import { IntegrationsService } from '../src/modules/integrations/integrations.service';
-import { PricingService } from '../src/modules/pricing/pricing.service';
-import { PromoPricingService } from '../src/modules/pricing/promo-pricing.service';
 
 const flag = (name: string) => process.argv.includes(`--${name}`);
 
@@ -35,8 +33,7 @@ async function main() {
       return true;
     },
   } as unknown as IntegrationsService;
-  const promo = new PromoPricingService(prisma, integrations, new PricingService(prisma, integrations));
-  const service = new PriceExperimentService(prisma, integrations, promo);
+  const service = new PriceExperimentService(prisma, integrations);
   try {
     const result = await service.run({ notify: flag('telegram') });
     console.log(result.messages.join('\n\n') || `Созревших изменений цены нет (оценено ${result.evaluated}).`);

@@ -65,15 +65,20 @@ export class PromoPricingService {
   }
 
   private request(method: 'GET' | 'POST' | 'PUT', path: string, token: string, params?: Record<string, string | number>, body?: unknown): Promise<any> {
+    // Один повтор на 401 на запрос: разовый сбой проходит, а мёртвая сессия стоит 4 с, а не 24 с на каждый вызов.
+    let unauthorizedRetries = 0;
     // Абсолютный URL в path — другие разделы API кабинета (api-seller.uzum.uz) с тем же токеном.
     return uzumRequest(path, {
       method, base: UZUM_PROMO_API_BASE, token, bearer: true, params, body,
       headers: { 'Accept-Language': 'ru-RU' }, timeoutMs: 30_000,
-      // Как и в PricingService: повторяем только 429, после POST с 5xx решает человек.
+      // Как и в PricingService: после POST с 5xx решает человек — 5xx не повторяем.
+      // 429 — лимит. 401 — Uzum изредка отвечает так на рабочий токен (26.10.2026: 3 из 13
+      // запусков лестницы, следующий проходил с тем же токеном); запрос с 401 не исполнялся,
+      // поэтому повтор безопасен и для POST/PUT.
       retry: {
         attempts: 3,
-        shouldRetry: (status) => status === 429,
-        backoffMs: (_status, attempt) => 5_000 * (attempt + 1),
+        shouldRetry: (status) => status === 429 || (status === 401 && unauthorizedRetries++ < 1),
+        backoffMs: (status, attempt) => (status === 401 ? 4_000 : 5_000 * (attempt + 1)),
         warn: (message) => this.logger.warn(message),
       },
       buildError: async (status, parsed, _rawText, requestPath) => {

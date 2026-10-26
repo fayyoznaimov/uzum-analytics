@@ -1,33 +1,40 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
-import { cubeUrl, isCubeContinueWait } from '../../common/ad-agent';
 import {
   evaluateExperiment,
   evaluateMarketing,
+  excludedExperiment,
+  excludedMarketing,
+  ExperimentOrderItem,
+  experimentReport,
   ExperimentResult,
   ExperimentVerdict,
   FunnelTotals,
+  ordersByWindow,
+  overlappingRange,
+  parseExcludedDays,
   summarizeExperiments,
   VERDICT_LABELS,
+  WindowTotals,
 } from '../../common/price-experiment';
 import { PrismaService } from '../../common/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
-import { PromoPricingService } from './promo-pricing.service';
 
 const DAY_MS = 86_400_000;
 const WINDOW_DAYS = 7;
-const F = 'SellerReportProductFunnelSku.';
 
 const tashkentDay = (date: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tashkent' }).format(date);
 const shiftDay = (day: string, days: number) => tashkentDay(new Date(new Date(`${day}T12:00:00+05:00`).getTime() + days * DAY_MS));
 const empty = (): FunnelTotals => ({ impressions: 0, views: 0, carts: 0, orders: 0, days: WINDOW_DAYS });
 
 /**
- * Через 7 дней после каждого реального изменения цены сравнивает воронку
- * Uzum «до/после» с контролем (SKU того же товара без изменений цены) и
+ * Через 7 дней после каждого реального изменения цены сравнивает заказы
+ * «до/после» с контролем (SKU того же товара без изменений цены) и
  * записывает вердикт в PriceChange.evaluation. Опыт магазина затем видит
- * ИИ-ревью автоцен и владелец в Telegram.
+ * ИИ-ревью автоцен и владелец в Telegram. Заказы — из учёта магазина: куб воронки
+ * Uzum, из которого они брались раньше, пропал 09–14.10.2026, и с тех пор оценки
+ * копились (изменение старше 45 дней из очереди выпадает).
  */
 @Injectable()
 export class PriceExperimentService {
@@ -37,7 +44,6 @@ export class PriceExperimentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly integrations: IntegrationsService,
-    private readonly cabinet: PromoPricingService,
   ) {}
 
   @Cron(process.env.PRICE_EXPERIMENT_CRON || '20 10 * * *', { name: 'price-experiments', timeZone: 'Asia/Tashkent' })
@@ -69,19 +75,36 @@ export class PriceExperimentService {
 
       const lines: string[] = [];
       let evaluated = 0;
+      const excludedDays = parseExcludedDays(process.env.PRICE_EXPERIMENT_EXCLUDE_DAYS);
       for (const [key, rows] of groups) {
         const [productId, day] = key.split('|');
         const from = shiftDay(day, -WINDOW_DAYS);
         const to = shiftDay(day, WINDOW_DAYS);
         if (to >= today) continue;
-        let funnel: Map<string, Map<string, FunnelTotals>>;
-        try {
-          funnel = await this.funnelBySku(productId, from, to);
-        } catch (error: any) {
-          this.logger.warn(`Ценовые эксперименты: воронка ${productId} не получена — ${error?.message || error}`);
+        const priceChangePercent = rows.reduce((sumPct, row) => sumPct + (row.newPrice - (row.oldPrice as number)) / (row.oldPrice as number) * 100, 0) / rows.length;
+        const changedSkus = new Set(rows.map((row) => row.skuExternalId));
+        const excluded = overlappingRange(from, to, excludedDays);
+        if (excluded) {
+          // Самовыкупы и ручная смена цен в окне: вывод о спросе был бы ложным — «мало данных», в опыт магазина не идёт.
+          const result = excludedExperiment(priceChangePercent, excluded);
+          const evaluation = { ...result, window: { from, day, to }, skus: [...changedSkus], controlSkus: [] } as unknown as Prisma.InputJsonValue;
+          await this.prisma.priceChange.updateMany({ where: { id: { in: rows.map((row) => row.id) } }, data: { evaluation, evaluatedAt: now } });
+          evaluated += rows.length;
+          lines.push(`${VERDICT_LABELS[result.verdict]} — товар ${productId}, ${day}: ${rows.length} SKU, цена ${priceChangePercent > 0 ? '+' : ''}${priceChangePercent.toFixed(1)}%. ${result.note}`);
           continue;
         }
-        const changedSkus = new Set(rows.map((row) => row.skuExternalId));
+        // Заказы — из учёта магазина: пока синхронизация не дошла до дня после окна, «после» неполное — ждём.
+        if (!(await this.ordersSyncedAfter(to))) {
+          this.logger.warn(`Ценовые эксперименты: заказы после ${to} ещё не синхронизированы — товар ${productId} отложен`);
+          continue;
+        }
+        let funnel: WindowTotals;
+        try {
+          funnel = ordersByWindow(await this.orderItems(from, to, productId), { key: 'sku', from, to, split: day, skipSplitDay: true, days: WINDOW_DAYS });
+        } catch (error: any) {
+          this.logger.warn(`Ценовые эксперименты: заказы ${productId} не получены — ${error?.message || error}`);
+          continue;
+        }
         // Контроль — SKU того же товара, у которых цена в окне эксперимента не менялась.
         const touched = await this.prisma.priceChange.findMany({
           where: { productExternalId: productId, status: 'SENT', dryRun: false, createdAt: { gte: new Date(`${from}T00:00:00+05:00`), lte: new Date(`${to}T23:59:59+05:00`) } },
@@ -101,7 +124,6 @@ export class PriceExperimentService {
         const isChanged = (sku: string) => changedSkus.has(sku);
         const isControl = (sku: string) => !touchedSkus.has(sku);
         const hasControl = [...funnel.keys()].some(isControl);
-        const priceChangePercent = rows.reduce((sumPct, row) => sumPct + (row.newPrice - (row.oldPrice as number)) / (row.oldPrice as number) * 100, 0) / rows.length;
         const result = evaluateExperiment({
           changed: { before: total(isChanged, 'before'), after: total(isChanged, 'after') },
           control: hasControl ? { before: total(isControl, 'before'), after: total(isControl, 'after') } : null,
@@ -117,9 +139,12 @@ export class PriceExperimentService {
 
       const messages: string[] = [];
       if (lines.length) {
-        const learned = await this.learnings();
-        messages.push(['📊 Ценовые эксперименты: итоги через 7 дней', '', ...lines, ...(learned ? ['', `Опыт магазина за 90 дней: ${learned}`] : [])].join('\n'));
-        if (options.notify) await this.integrations.notifyTelegram(messages[0], 'notifyAgents').catch(() => false);
+        messages.push(...experimentReport(lines, await this.learnings()));
+        if (options.notify) {
+          for (const text of messages) {
+            if (!(await this.integrations.notifyTelegram(text, 'notifyAgents').catch(() => false))) break;
+          }
+        }
       }
       this.logger.log(`Ценовые эксперименты: оценено изменений ${evaluated}, экспериментов ${lines.length}`);
       return { evaluated, messages };
@@ -144,44 +169,36 @@ export class PriceExperimentService {
     return summarizeExperiments([...seen.values()]);
   }
 
-  /** Воронка товара по SKU: суммы за 7 дней до дня изменения и за 7 дней после. */
-  private async funnelBySku(productId: string, from: string, to: string): Promise<Map<string, Map<string, FunnelTotals>>> {
-    const query = {
-      measures: ['sum_imps', 'sum_views', 'sum_atc', 'generated_amount'].map((m) => F + m),
-      dimensions: [F + 'product_id', F + 'sku_id'],
-      timezone: 'Asia/Tashkent',
-      timeDimensions: [{ dimension: F + 'date', dateRange: [from, to], granularity: 'day' }],
-      filters: [{ member: F + 'product_id', operator: 'equals', values: [productId] }],
-      limit: 10_000,
-    };
-    let body: any = null;
-    for (let attempt = 0; attempt < 15; attempt++) {
-      body = (await this.cabinet.cabinet('GET', cubeUrl(query as any))).body;
-      if (!isCubeContinueWait(body)) break;
-      await new Promise((resolve) => setTimeout(resolve, 2_000));
-    }
-    const rows: any[] = body?.data ?? body?.results?.[0]?.data ?? [];
-    const day = to.slice(0, 10);
-    const changeDay = shiftDay(from, WINDOW_DAYS);
-    const num = (value: unknown) => { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : 0; };
-    const result = new Map<string, Map<string, FunnelTotals>>();
-    for (const row of rows) {
-      const date = String(row[F + 'date.day'] ?? row[F + 'date'] ?? '').slice(0, 10);
-      // День изменения в окна не входит: цена в нём была и старой, и новой.
-      if (!date || date === changeDay || date > day) continue;
-      const window = date < changeDay ? 'before' : 'after';
-      const sku = String(row[F + 'sku_id'] ?? '');
-      if (!sku) continue;
-      const bySku = result.get(sku) ?? new Map<string, FunnelTotals>();
-      const totals = bySku.get(window) ?? empty();
-      totals.impressions += num(row[F + 'sum_imps']);
-      totals.views += num(row[F + 'sum_views']);
-      totals.carts += num(row[F + 'sum_atc']);
-      totals.orders += num(row[F + 'generated_amount']);
-      bySku.set(window, totals);
-      result.set(sku, bySku);
-    }
-    return result;
+  /** Синхронизация заказов дошла до дня после окна — значит, заказы окна в учёте полные. */
+  private async ordersSyncedAfter(day: string): Promise<boolean> {
+    const shop = await this.prisma.shop.findFirst({ where: { isActive: true } });
+    if (!shop) return false;
+    const next = await this.prisma.order.findFirst({ where: { shopId: shop.id, orderedAt: { gte: new Date(`${shiftDay(day, 1)}T00:00:00+05:00`) } }, select: { id: true } });
+    return Boolean(next);
+  }
+
+  /**
+   * Позиции заказов активного магазина, заказанных с from по to (дни Ташкента), — для окон «до/после».
+   * С productId — только этого товара (по SKU из учёта или id товара Uzum в позиции).
+   */
+  private async orderItems(from: string, to: string, productId?: string): Promise<ExperimentOrderItem[]> {
+    const shop = await this.prisma.shop.findFirst({ where: { isActive: true } });
+    if (!shop) throw new Error('активный магазин не найден');
+    const rows = await this.prisma.orderItem.findMany({
+      where: {
+        order: { shopId: shop.id, orderedAt: { gte: new Date(`${from}T00:00:00+05:00`), lt: new Date(`${shiftDay(to, 1)}T00:00:00+05:00`) } },
+        ...(productId ? { OR: [{ marketplaceProductId: productId }, { sku: { product: { externalId: productId } } }] } : {}),
+      },
+      select: { quantity: true, marketplaceProductId: true, order: { select: { orderedAt: true } }, sku: { select: { externalId: true, product: { select: { externalId: true } } } } },
+    });
+    return rows
+      .filter((row: any) => row.order?.orderedAt)
+      .map((row: any) => ({
+        orderedAt: row.order.orderedAt as Date,
+        skuId: row.sku?.externalId ?? null,
+        productId: row.sku?.product?.externalId || row.marketplaceProductId || null,
+        quantity: Number(row.quantity) || 0,
+      }));
   }
 
   // ---------- внешние кампании ----------
@@ -222,14 +239,27 @@ export class PriceExperimentService {
   private async evaluateMarketing(today: string, now: Date): Promise<string[]> {
     const pending = await this.prisma.marketingExperiment.findMany({ where: { evaluatedAt: null } });
     const lines: string[] = [];
+    const excludedDays = parseExcludedDays(process.env.PRICE_EXPERIMENT_EXCLUDE_DAYS);
     for (const row of pending) {
       const lastAfterDay = shiftDay(row.startDate, WINDOW_DAYS - 1);
       if (lastAfterDay >= today) continue;
-      let funnel: Map<string, Map<string, FunnelTotals>>;
+      const from = shiftDay(row.startDate, -WINDOW_DAYS);
+      const excluded = overlappingRange(from, lastAfterDay, excludedDays);
+      if (excluded) {
+        const result = excludedMarketing(excluded);
+        await this.prisma.marketingExperiment.update({ where: { id: row.id }, data: { evaluation: result as unknown as Prisma.InputJsonValue, evaluatedAt: now } });
+        lines.push(`❔ мало данных — ${row.channel} с ${row.startDate}, товар ${row.productExternalId}. ${result.note}`);
+        continue;
+      }
+      if (!(await this.ordersSyncedAfter(lastAfterDay))) {
+        this.logger.warn(`Внешняя кампания ${row.id}: заказы после ${lastAfterDay} ещё не синхронизированы — отложена`);
+        continue;
+      }
+      let funnel: WindowTotals;
       try {
-        funnel = await this.funnelByProduct(shiftDay(row.startDate, -WINDOW_DAYS), lastAfterDay, row.startDate);
+        funnel = ordersByWindow(await this.orderItems(from, lastAfterDay), { key: 'product', from, to: lastAfterDay, split: row.startDate, skipSplitDay: false, days: WINDOW_DAYS });
       } catch (error: any) {
-        this.logger.warn(`Внешняя кампания ${row.id}: воронка не получена — ${error?.message || error}`);
+        this.logger.warn(`Внешняя кампания ${row.id}: заказы не получены — ${error?.message || error}`);
         continue;
       }
       const pick = (filter: (id: string) => boolean, window: 'before' | 'after') => {
@@ -253,38 +283,5 @@ export class PriceExperimentService {
       lines.push(`${label} — ${row.channel} с ${row.startDate}, товар ${row.productExternalId}${row.budget ? `, бюджет ${row.budget.toLocaleString('ru-RU')} сум` : ''}. ${result.note}`);
     }
     return lines;
-  }
-
-  /** Воронка всех товаров: 7 дней до старта и 7 дней со дня старта. */
-  private async funnelByProduct(from: string, to: string, startDate: string): Promise<Map<string, Map<string, FunnelTotals>>> {
-    const query = {
-      measures: ['sum_imps', 'sum_views', 'sum_atc', 'generated_amount'].map((m) => F + m),
-      dimensions: [F + 'product_id'],
-      timezone: 'Asia/Tashkent',
-      timeDimensions: [{ dimension: F + 'date', dateRange: [from, to], granularity: 'day' }],
-      limit: 10_000,
-    };
-    let body: any = null;
-    for (let attempt = 0; attempt < 15; attempt++) {
-      body = (await this.cabinet.cabinet('GET', cubeUrl(query as any))).body;
-      if (!isCubeContinueWait(body)) break;
-      await new Promise((resolve) => setTimeout(resolve, 2_000));
-    }
-    const rows: any[] = body?.data ?? body?.results?.[0]?.data ?? [];
-    const num = (value: unknown) => { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : 0; };
-    const result = new Map<string, Map<string, FunnelTotals>>();
-    for (const row of rows) {
-      const date = String(row[F + 'date.day'] ?? row[F + 'date'] ?? '').slice(0, 10);
-      const id = String(row[F + 'product_id'] ?? '');
-      if (!date || !id || date > to) continue;
-      const window = date < startDate ? 'before' : 'after';
-      const byWindow = result.get(id) ?? new Map<string, FunnelTotals>();
-      const totals = byWindow.get(window) ?? empty();
-      totals.impressions += num(row[F + 'sum_imps']); totals.views += num(row[F + 'sum_views']);
-      totals.carts += num(row[F + 'sum_atc']); totals.orders += num(row[F + 'generated_amount']);
-      byWindow.set(window, totals);
-      result.set(id, byWindow);
-    }
-    return result;
   }
 }

@@ -9,9 +9,12 @@ import {
   formatAdReport,
   Funnel,
   FUNNEL_MEMBERS,
+  funnelUnavailableNote,
   isCubeContinueWait,
+  orderDays,
   parseCubeDaily,
   productFunnelQuery,
+  shortCubeError,
   windowSum,
 } from '../ad-agent';
 
@@ -22,7 +25,7 @@ const f = (impressions: number, views: number, atc: number, ordered: number, sol
 function product(id: string, title: string, funnel28: Funnel, patch: Partial<AdProduct> = {}): AdProduct {
   return {
     productId: id, title, stockUnits: 100, avgDailySales: 1, funnel28,
-    funnel7: f(funnel28.impressions / 4, funnel28.views / 4, 0, 0, 0), funnelPrev7: f(funnel28.impressions / 4, funnel28.views / 4, 0, 0, 0),
+    funnel7: f((funnel28.impressions ?? 0) / 4, (funnel28.views ?? 0) / 4, 0, 0, 0), funnelPrev7: f((funnel28.impressions ?? 0) / 4, (funnel28.views ?? 0) / 4, 0, 0, 0),
     cpo: { status: 'ACTIVE', commission: 3, minCommission: 3, maxCommission: 60, week: { impressions: 1000, clicks: 50, ordered: 5, spend: 15_000, revenue: 500_000 } },
     ...patch,
   };
@@ -126,5 +129,52 @@ describe('советы', () => {
     const [noAi] = formatAdReport({ label: 'x', advice: [], aiPlan: null, aiNote: 'ИИ-план не получен', products: [], campaigns: [], maxDrrPercent: 10 });
     expect(noAi).toContain('🧠 ИИ-план не получен');
     expect(noAi).toContain('менять ничего не нужно');
+  });
+});
+
+describe('без воронки Uzum (куб пропал 09–14.10.2026)', () => {
+  // Верх воронки неизвестен: показы, открытия и корзина — null, заказы и выкупы — из учёта магазина.
+  const blind = (funnel28: Funnel): Funnel => ({ ...funnel28, impressions: null, views: null, atc: null });
+  const blindShop = () => shop().map((row) => ({
+    ...row,
+    funnel28: blind(row.funnel28),
+    funnel7: { impressions: null, views: null, atc: null, ordered: 0, sold: 0 },
+    funnelPrev7: { impressions: null, views: null, atc: null, ordered: 0, sold: 0 },
+  }));
+
+  it('заказы по дню заказа, выкупы по дню выдачи без возвратов; отменённые — только в заказах; дни по Ташкенту', () => {
+    const daily = orderDays([
+      { state: 'PAID', orderedAt: new Date('2026-10-20T19:30:00Z'), issuedAt: new Date('2026-10-23T08:00:00Z'), items: [{ productId: '2263224', quantity: 2, returns: 1 }] },
+      { state: 'CANCELED', orderedAt: new Date('2026-10-21T08:00:00Z'), issuedAt: null, items: [{ productId: '2263224', quantity: 1, returns: 0 }] },
+      { state: 'RETURNED', orderedAt: new Date('2026-10-21T09:00:00Z'), issuedAt: new Date('2026-10-22T09:00:00Z'), items: [{ productId: '2263224', quantity: 1, returns: 1 }] },
+      { state: 'PAID', orderedAt: null, issuedAt: new Date('2026-10-22T10:00:00Z'), items: [{ productId: null, quantity: 5, returns: 0 }] },
+    ]);
+    // 19:30 UTC 20.10 = 00:30 21.10 по Ташкенту.
+    expect(daily.get('2263224')).toEqual({ '2026-10-21': { ordered: 4 }, '2026-10-23': { sold: 1 } });
+    expect(windowSum(daily, '2263224', 'ordered', '2026-10-19', '2026-10-25')).toBe(4);
+    expect(daily.size).toBe(1);
+  });
+
+  it('пометка и короткая ошибка Cube без URL запроса', () => {
+    const raw = "https://analytics-seller.uzum.uz/cubejs-api/v1/load?query=%7B%22a%22%3A1%7D&queryType=multi: HTTP 400 — Cube 'SellerReportProductFunnelSku' not found for path 'SellerReportProductFunnelSku.sum_imps'";
+    expect(shortCubeError(raw)).toBe("HTTP 400 — Cube 'SellerReportProductFunnelSku' not found for path 'SellerReportProductFunnelSku.sum_imps'");
+    expect(shortCubeError('Cube не посчитал данные за 30 секунд')).toBe('Cube не посчитал данные за 30 секунд');
+    expect(funnelUnavailableNote(`Cube SellerReportProductFunnelSku: ${shortCubeError(raw)}`)).toBe('показы, открытия и корзина недоступны: Uzum убрал воронку товаров из аналитики (с 09–14.10.2026)');
+    expect(funnelUnavailableNote('HTTP 503')).toBe('показы, открытия и корзина не получены (HTTP 503)');
+  });
+
+  it('правила по CTR, корзине и падению показов молчат, по выкупам и ДРР — работают', () => {
+    const advice = adAdvice(blindShop(), [], today);
+    expect(advice.some((row) => row.action.startsWith('улучшить карточку') || row.action.startsWith('проверить цену'))).toBe(false);
+    expect(advice.find((row) => row.target.includes('сауна'))?.action).toBe('поднять ставку «Буст заказов» с 3% до 5%');
+    expect(advice.find((row) => row.target.includes('сауна'))?.reason).toContain('выкуплено 25 шт. за 28 дней');
+  });
+
+  it('отчёт: заказано → выкуплено с пометкой вместо нулевых показов', () => {
+    const note = funnelUnavailableNote('not found');
+    const [text] = formatAdReport({ label: '26.10 10:00', advice: [], aiPlan: null, aiNote: null, products: blindShop(), campaigns: [], maxDrrPercent: 10, funnelNote: note });
+    expect(text).toContain(`Товары за 28 дней, заказано → выкуплено (${note}):`);
+    expect(text).toContain('• Полотенце пышное 600 г/м²: 477 → 327 шт.; остаток 100 шт.');
+    expect(text).not.toContain('показы → открыли');
   });
 });

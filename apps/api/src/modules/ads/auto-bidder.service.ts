@@ -17,6 +17,7 @@ import {
   reachForBid,
 } from '../../common/auto-bidder';
 import { shiftDay, tashkentDay } from '../../common/auto-pricing';
+import { emptyStreak, failureText, markNotified, recordFailure, recordSuccess, recoveryText } from '../../common/failure-alert';
 import { PrismaService } from '../../common/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { PromoPricingService } from '../pricing/promo-pricing.service';
@@ -45,6 +46,8 @@ export class AutoBidderService {
   private readonly logger = new Logger(AutoBidderService.name);
   private running = false;
   private cache = new Map<string, { at: number; value: unknown }>();
+  // Сбои запусков по расписанию: в Telegram — со второго подряд, как у лестницы ставок.
+  private failureStreak = emptyStreak();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -61,10 +64,18 @@ export class AutoBidderService {
     this.logger.log(`Авто-ставка: запуск по расписанию, слов ${count}`);
     try {
       await this.run({ apply: this.applyEnabled(), notify: true });
+      const success = recordSuccess(this.failureStreak, Date.now());
+      this.failureStreak = success.streak;
+      if (success.recovered) await this.integrations.notifyTelegram(recoveryText('Авто-ставка', success.failedForMs), 'notifyAgents').catch(() => undefined);
     } catch (error: any) {
       const message = String(error?.message || error);
       this.logger.error(`Авто-ставка: ${message}`);
-      await this.integrations.notifyTelegram(`⚠️ Авто-ставка: запуск не выполнен — ${message}`, 'notifyAgents').catch(() => undefined);
+      const now = Date.now();
+      const failure = recordFailure(this.failureStreak, now);
+      this.failureStreak = failure.streak;
+      if (failure.notify && await this.integrations.notifyTelegram(failureText('Авто-ставка', message, failure.streak, now), 'notifyAgents').catch(() => false)) {
+        this.failureStreak = markNotified(this.failureStreak, now);
+      }
     }
   }
 

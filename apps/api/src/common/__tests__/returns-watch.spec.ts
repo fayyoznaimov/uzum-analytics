@@ -135,7 +135,7 @@ describe('formatWatchMessage', () => {
     expect(plain).toContain('69 900 сум не придут');
     expect(text).toContain('снова в продаже');
     expect(text).toContain('+1 шт., доступно 12');
-    expect(plain).toContain('Ещё висят: 1 заказов на 95 750 сум');
+    expect(plain).toContain('Ещё висит: 1 заказ на 95 750 сум. Это №');
     expect(text).toContain('141 дн.');
   });
 

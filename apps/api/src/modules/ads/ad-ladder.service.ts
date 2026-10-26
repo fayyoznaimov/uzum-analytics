@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { AdBotAction, AdBotStats, normalizeQuery } from '../../common/ad-bot';
 import { AD_LADDER_DEFAULTS, AdLadderConfig, formatLadderReport, launchCampaigns, LadderCampaignSummary, LadderDecision, LadderKeyword, ladderCampaigns, ladderEnabled, ladderKey, planLadderBids } from '../../common/ad-ladder';
 import { shiftDay, tashkentDay } from '../../common/auto-pricing';
+import { emptyStreak, failureText, markNotified, recordFailure, recordSuccess, recoveryText } from '../../common/failure-alert';
 import { PrismaService } from '../../common/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { AdBotService } from './ad-bot.service';
@@ -31,6 +32,8 @@ export function ladderReportHours(): number[] {
 export class AdLadderService {
   private readonly logger = new Logger(AdLadderService.name);
   private running = false;
+  // Сбои запусков по расписанию: в Telegram — со второго подряд (разовый 401/403 Uzum проходит к следующему часу).
+  private failureStreak = emptyStreak();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -59,10 +62,18 @@ export class AdLadderService {
       const hours = ladderReportHours();
       const hour = tashkentHour(new Date());
       await this.run({ apply: this.applyEnabled(), notify: hours.includes(hour), since: hours.includes(hour) ? this.previousReportHour(hours, hour) : undefined });
+      const success = recordSuccess(this.failureStreak, Date.now());
+      this.failureStreak = success.streak;
+      if (success.recovered) await this.integrations.notifyTelegram(recoveryText('Лестница ставок', success.failedForMs), 'notifyAgents').catch(() => undefined);
     } catch (error: any) {
       const message = String(error?.message || error);
       this.logger.error(`Лестница ставок: ${message}`);
-      await this.integrations.notifyTelegram(`⚠️ Лестница ставок: запуск не выполнен — ${message}`, 'notifyAgents').catch(() => undefined);
+      const now = Date.now();
+      const failure = recordFailure(this.failureStreak, now);
+      this.failureStreak = failure.streak;
+      if (failure.notify && await this.integrations.notifyTelegram(failureText('Лестница ставок', message, failure.streak, now), 'notifyAgents').catch(() => false)) {
+        this.failureStreak = markNotified(this.failureStreak, now);
+      }
     }
   }
 

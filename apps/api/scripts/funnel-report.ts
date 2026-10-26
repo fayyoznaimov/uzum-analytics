@@ -14,7 +14,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { IntegrationType } from '@prisma/client';
-import { isCubeContinueWait } from '../src/common/ad-agent';
+import { isCubeContinueWait, shortCubeError } from '../src/common/ad-agent';
 import { tashkentDay } from '../src/common/auto-pricing';
 import { CryptoService } from '../src/common/crypto.service';
 import {
@@ -70,10 +70,15 @@ async function main() {
     const rawDays = Number(arg('--days'));
     const window = funnelWindow(today, Number.isFinite(rawDays) && rawDays > 0 ? rawDays : 28);
 
-    // Воронка по SKU и дням.
+    // Воронка по SKU и дням. Куб SellerReportProductFunnelSku пропал из аналитики Uzum 09–14.10.2026 —
+    // тогда понятная ошибка вместо HTTP 400 с огромным URL запроса.
     let body: any = null;
     for (let attempt = 0; attempt < 20; attempt++) {
-      body = (await cabinet.cabinet('GET', funnelSkuUrl(window.from, window.to))).body;
+      body = (await cabinet.cabinet('GET', funnelSkuUrl(window.from, window.to)).catch((error: any) => {
+        const message = String(error?.message || error);
+        if (/not found/i.test(message)) throw new Error('Воронка недоступна: Uzum убрал куб SellerReportProductFunnelSku из аналитики (09–14.10.2026) — показов, открытий и корзины там больше нет. Заказы и выкупы по товарам — в отчёте агента рекламы.');
+        throw new Error(shortCubeError(message));
+      })).body;
       if (!isCubeContinueWait(body)) break;
       await new Promise((resolve) => setTimeout(resolve, 2_000));
     }
