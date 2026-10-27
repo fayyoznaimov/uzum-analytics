@@ -396,13 +396,16 @@ export type SeedPhrase = { query: string; cpm: number; onlyExisting?: boolean; o
  * сначала выбросить dropIfFull (бесполезные слова), что не влезло — не добавлять. onlyLatin — только узбекские фразы. */
 export type SeedStopWords = { add?: string[]; remove?: string[]; dropIfFull?: string[]; onlyLatin?: boolean };
 /** campaignId «*» — все активные кампании (только для stopWords и suspend). suspend — остановить фразы по точному
- * совпадению; suspendGroups — остановить все фразы цветов (по id группы); budgetWeekly / uniform — бюджет кампании. */
+ * совпадению; suspendIn — остановить фразу только в этих цветах (запрос → id групп); suspendGroups — остановить все фразы
+ * цветов (по id группы); suspendReason — причина остановки в журнал; budgetWeekly / uniform — бюджет кампании. */
 export type SeedSpec = {
   campaignId: string;
   phrases?: SeedPhrase[];
   stopWords?: SeedStopWords;
   suspend?: string[];
+  suspendIn?: Record<string, string[]>;
   suspendGroups?: string[];
+  suspendReason?: string;
   budgetWeekly?: number;
   uniform?: boolean;
   /** Скопировать объявления цвета-источника в цвет-цель (цель → источник): так возобновляют группу,
@@ -441,14 +444,17 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
   const actions: AdBotAction[] = [];
   for (const spec of specs) {
     const own = spec.campaignId === '*' ? keywords : keywords.filter((row) => row.campaignId === spec.campaignId);
-    if (spec.suspend?.length || spec.suspendGroups?.length) {
+    if (spec.suspend?.length || spec.suspendGroups?.length || spec.suspendIn) {
       const targets = new Set((spec.suspend ?? []).map(normalizeQuery));
       const groups = new Set(spec.suspendGroups ?? []);
+      const inGroups = new Map(Object.entries(spec.suspendIn ?? {}).map(([query, ids]) => [normalizeQuery(query), new Set(ids)]));
       for (const row of own) {
         const byQuery = targets.has(normalizeQuery(row.query));
         const byGroup = groups.has(row.skuGroupId);
-        if (!byQuery && !byGroup) continue;
-        actions.push({ kind: 'SUSPEND', campaignId: row.campaignId, campaignName: row.campaignName, skuGroupId: row.skuGroupId, groupTitle: row.skuGroupId, adId: row.adId, query: row.query, oldCpm: row.cpm, newCpm: row.cpm, stopWords: row.stopWords, reason: byGroup ? 'ручная остановка цвета: не рекламируем (не боевой цвет или нет остатка)' : 'ручная остановка: запрос не про товар' });
+        const byPair = inGroups.get(normalizeQuery(row.query))?.has(row.skuGroupId) ?? false;
+        if (!byQuery && !byGroup && !byPair) continue;
+        const reason = spec.suspendReason ? `ручная остановка: ${spec.suspendReason}` : byGroup ? 'ручная остановка цвета: не рекламируем (не боевой цвет или нет остатка)' : byPair ? 'ручная остановка фразы в цвете' : 'ручная остановка: запрос не про товар';
+        actions.push({ kind: 'SUSPEND', campaignId: row.campaignId, campaignName: row.campaignName, skuGroupId: row.skuGroupId, groupTitle: row.skuGroupId, adId: row.adId, query: row.query, oldCpm: row.cpm, newCpm: row.cpm, stopWords: row.stopWords, reason });
       }
     }
     const suspended = new Set(spec.suspendGroups ?? []);

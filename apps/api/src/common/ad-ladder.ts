@@ -37,6 +37,22 @@ export const AD_LADDER_LAUNCH_UNTIL: Record<string, string> = { '337334': '2026-
  */
 export const AD_LADDER_HOLD_TOP: Record<string, number> = { '337334': 2 };
 
+/**
+ * Тест потолка (до until включительно, Ташкент): цвет держим в топ-10 по запросу до cap, пока его ДРР за 7 дней ≤ maxDrr —
+ * выше ставка уходит ниже топ-10, после until действует обычный потолок класса. Владелец 27.10.2026 («го делай»): j471 на
+ * sochiq стоял 16-м при потолке 25 000 и всё равно продавал — небесно-голубой 10 продаж за 19–25.10 при ДРР 4,8 %, на
+ * sochiqlar серый — 4 продажи при 6 %; неделю пробуем топ-10 до 35 000, стоп при ДРР выше 8 %.
+ */
+export type LadderCapTest = { campaignId: string; skuGroupId: string; query: string; cap: number; maxDrr: number; until: string };
+export const AD_LADDER_CAP_TESTS: LadderCapTest[] = [
+  { campaignId: '305122', skuGroupId: '5374111', query: 'sochiq', cap: 35_000, maxDrr: 8, until: '2026-11-03' },
+  { campaignId: '305122', skuGroupId: '5374108', query: 'sochiqlar', cap: 35_000, maxDrr: 8, until: '2026-11-03' },
+];
+
+export function activeCapTests(today: string, table: LadderCapTest[] = AD_LADDER_CAP_TESTS): LadderCapTest[] {
+  return table.filter((row) => today <= row.until);
+}
+
 export function launchCampaigns(today: string, table: Record<string, string> = AD_LADDER_LAUNCH_UNTIL): Set<string> {
   return new Set(Object.entries(table).filter(([, until]) => today <= until).map(([id]) => id));
 }
@@ -112,6 +128,16 @@ export function ladderDrrVerdict(stats: AdBotStats | null | undefined, maxDrr: n
   return { drr, blocked: null, severe: false };
 }
 
+/** Статистика запроса целиком — сумма по цветам; null — ни у одного цвета данных нет. */
+export function sumLadderStats(rows: Array<AdBotStats | null | undefined>): AdBotStats | null {
+  const present = rows.filter((row): row is AdBotStats => Boolean(row));
+  if (!present.length) return null;
+  return present.reduce((total, row) => ({ impressions: total.impressions + row.impressions, clicks: total.clicks + row.clicks, sold: total.sold + row.sold, revenue: total.revenue + row.revenue, spend: total.spend + row.spend, position: null }), { impressions: 0, clicks: 0, sold: 0, revenue: 0, spend: 0, position: null } as AdBotStats);
+}
+
+/** Цвет сам доказал окупаемость: есть продажи с рекламы и его ДРР не выше потолка. */
+const provenColour = (stats: AdBotStats | null | undefined, maxDrr: number) => Boolean(stats && stats.sold > 0 && stats.revenue > 0 && (stats.spend / stats.revenue) * 100 <= maxDrr);
+
 const roundUp = (value: number, step: number) => Math.ceil(value / Math.max(1, step)) * Math.max(1, step);
 const roundDown = (value: number, step: number) => Math.floor(value / Math.max(1, step)) * Math.max(1, step);
 const fmt = (value: number) => Math.round(value).toLocaleString('ru-RU');
@@ -125,36 +151,51 @@ export function ladderQueryClass(query: string, cfg: Pick<AdLadderConfig, 'class
 export const ladderKey = (keyword: Pick<AdBotKeyword, 'campaignId' | 'skuGroupId' | 'query'>) => policyKey(keyword.campaignId, keyword.skuGroupId, keyword.query);
 
 /** Решения по всем словам: какие цвета держать в топ-10 и какие ставки поставить. recent — слова, правленные за cooldownHours;
- * launch — кампании на льготе запуска (ДРР не проверяется). */
-export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = AD_LADDER_DEFAULTS, recent: Set<string> = new Set(), launch: Set<string> = new Set(), hold: Record<string, number> = AD_LADDER_HOLD_TOP): LadderDecision[] {
+ * launch — кампании на льготе запуска (ДРР не проверяется); tests — действующие тесты потолка (activeCapTests).
+ *
+ * ДРР судим и по цвету, и по запросу целиком: 19–25.10.2026 HAVANA «банное полотенце» потратила 65 600 при ДРР 10 %,
+ * но расход разошёлся на четыре цвета, ни один не набрал порога данных (30 000), и проверка цвета молчала. Если запрос
+ * в целом выше потолка, в топ-10 остаются только цвета, которые сами окупаются (есть продажи и их ДРР в пределах);
+ * при ДРР запроса выше вдвое или расходе без продаж остальным — минимальная ставка. */
+export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = AD_LADDER_DEFAULTS, recent: Set<string> = new Set(), launch: Set<string> = new Set(), hold: Record<string, number> = AD_LADDER_HOLD_TOP, tests: LadderCapTest[] = []): LadderDecision[] {
   const decisions: LadderDecision[] = [];
   const byQuery = new Map<string, LadderKeyword[]>();
   for (const keyword of keywords) {
     const key = `${keyword.campaignId}|${normalizeQuery(keyword.query)}`;
     byQuery.set(key, [...(byQuery.get(key) ?? []), keyword]);
   }
+  const none = { drr: null, blocked: null, severe: false };
   for (const rows of byQuery.values()) {
     const base = ladderQueryClass(rows[0].query, cfg);
     const held = hold[rows[0].campaignId];
     const cls = held ? { ...base, name: `${base.name}, держим в топ-10`, cap: cfg.maxBid, colors: held } : base;
+    const exempt = launch.has(rows[0].campaignId);
+    const classDrr = cls.maxDrr ?? cfg.maxDrrPercent;
+    const queryVerdict = exempt || rows.length < 2 ? none : ladderDrrVerdict(sumLadderStats(rows.map((row) => row.stats7)), classDrr, cfg);
     const priced = rows
       .map((keyword) => {
         const steps = keyword.ladder ?? [];
         const top10 = steps.length ? bidForPosition(steps, cfg.topPosition) : null;
         const target = top10 ? Math.min(cfg.maxBid, Math.max(cfg.minBid, roundUp(top10.cpm * (1 + cfg.marginPercent / 100), cfg.rounding))) : null;
-        const verdict = launch.has(keyword.campaignId) ? { drr: null, blocked: null, severe: false } : ladderDrrVerdict(keyword.stats7, cls.maxDrr ?? cfg.maxDrrPercent, cfg);
-        return { keyword, steps, top10, full: steps.length ? bidForReach(steps, 100) : null, target, verdict };
+        const test = tests.find((row) => row.campaignId === keyword.campaignId && row.skuGroupId === keyword.skuGroupId && normalizeQuery(row.query) === normalizeQuery(keyword.query));
+        const maxDrr = test?.maxDrr ?? classDrr;
+        let verdict: { drr: number | null; blocked: string | null; severe: boolean } = exempt ? none : ladderDrrVerdict(keyword.stats7, maxDrr, cfg);
+        if (!verdict.blocked && queryVerdict.blocked && !provenColour(keyword.stats7, maxDrr)) {
+          verdict = { drr: verdict.drr, blocked: `по запросу (все цвета) ${queryVerdict.blocked}`, severe: queryVerdict.severe };
+        }
+        return { keyword, steps, top10, full: steps.length ? bidForReach(steps, 100) : null, target, verdict, test };
       })
       .sort((a, b) => (a.top10?.cpm ?? Infinity) - (b.top10?.cpm ?? Infinity));
     let chosen = 0;
     for (const row of priced) {
-      const { keyword, steps, top10, full, target, verdict } = row;
+      const { keyword, steps, top10, full, target, verdict, test } = row;
       const base = { keyword, top10, full, positionBefore: steps.length ? positionForBid(steps, keyword.cpm) : null, drr: verdict.drr, blocked: verdict.blocked };
       if (!top10 || target === null) {
         decisions.push({ ...base, role: 'no-ladder', target: null, positionAfter: base.positionBefore, action: null });
         continue;
       }
-      const isTop = !verdict.blocked && target <= cls.cap && (chosen < cls.colors || top10.cpm <= cfg.cheapTop);
+      // Цвет на тесте потолка держим в топ-10 до своего потолка, не считаясь с числом цветов класса.
+      const isTop = !verdict.blocked && (test ? target <= test.cap : target <= cls.cap && (chosen < cls.colors || top10.cpm <= cfg.cheapTop));
       if (isTop) chosen++;
       const common = { campaignId: keyword.campaignId, campaignName: keyword.campaignName, skuGroupId: keyword.skuGroupId, groupTitle: keyword.skuGroupId, adId: keyword.adId, query: keyword.query, oldCpm: keyword.cpm, stopWords: keyword.stopWords };
       let next: number | null = null;
@@ -165,7 +206,7 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
         const overpay = keyword.cpm > target + Math.max(cfg.overpayTolerance, (target * cfg.overpayPercent) / 100) || (full !== null && keyword.cpm > full.cpm);
         if (outOfTop || (overpay && !cooling)) {
           next = target;
-          reason = `лестница: топ-10 (${cls.name}) стоит ${fmt(top10.cpm)}, позиция ${top10.position}; ${outOfTop ? 'ставка была ниже топ-10' : 'была переплата'}`;
+          reason = `лестница: топ-10 (${test ? `тест потолка ${fmt(test.cap)} до ${test.until}, стоп при ДРР > ${test.maxDrr} %` : cls.name}) стоит ${fmt(top10.cpm)}, позиция ${top10.position}; ${outOfTop ? 'ставка была ниже топ-10' : 'была переплата'}`;
         }
       } else if (verdict.severe) {
         // ДРР выше потолка вдвое или расход без продаж — слово не окупается: ставка на минимум (выключает только владелец).

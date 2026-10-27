@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatCampaignSummary, formatLadderReport, launchCampaigns, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, planLadderBids } from '../ad-ladder';
+import { activeCapTests, formatCampaignSummary, formatLadderReport, launchCampaigns, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, planLadderBids, sumLadderStats } from '../ad-ladder';
 import { BidLadderStep } from '../auto-bidder';
 
 /** Лестница кабинета: позиции 4…51 ↔ 100…20 % показов, цена топ-10 (позиция 9) = top10. */
@@ -79,6 +79,38 @@ describe('лестница ставок', () => {
     const decisions = planLadderBids([rich, ok]);
     expect(decisions.map((row) => [row.keyword.skuGroupId, row.role, row.action?.newCpm ?? null])).toEqual([['a', 'other', 9_500], ['b', 'top', 48_500]]);
     expect(formatLadderReport(decisions, { apply: true })).toContain('Не окупаются, из топ-10 убраны (1)');
+  });
+
+  it('ДРР по запросу целиком: расход, разбитый на цвета, не прячется под порогом данных одного цвета', () => {
+    const st = (spend: number, revenue: number, sold: number) => ({ impressions: 400, clicks: 15, sold, revenue, spend, position: null });
+    // 19–25.10 HAVANA «банное полотенце»: 65 000 на четыре цвета, ни один не набрал 30 000; ДРР запроса 11,3 % > 10 %.
+    const chrome = { ...kw('chrome', 'банное полотенце', 51_500, 50_000), stats7: st(24_000, 458_000, 3) }; // сам окупается — 5,2 %
+    const khaki = { ...kw('khaki', 'банное полотенце', 47_000, 45_000), stats7: st(16_000, 0, 0) };
+    const white = { ...kw('white', 'банное полотенце', 40_000, 52_000), stats7: st(15_000, 59_000, 1) };
+    const milk = { ...kw('milk', 'банное полотенце', 50_000, 48_000), stats7: st(10_000, 60_000, 1) };
+    expect(sumLadderStats([chrome.stats7, khaki.stats7, null])).toMatchObject({ spend: 40_000, revenue: 458_000, sold: 3 });
+    const decisions = planLadderBids([chrome, khaki, white, milk]);
+    expect(decisions.map((row) => [row.keyword.skuGroupId, row.role, row.action?.newCpm ?? null])).toEqual([
+      ['khaki', 'other', 44_500], ['milk', 'other', 47_500], ['chrome', 'top', null], ['white', 'other', null],
+    ]);
+    expect(decisions[0].blocked).toBe('по запросу (все цвета) ДРР 11.3 % > 10 %');
+    // без статистики — прежнее правило: два самых дешёвых цвета в топ-10
+    expect(planLadderBids([chrome, khaki, white, milk].map((row) => ({ ...row, stats7: null }))).filter((row) => row.role === 'top').map((row) => row.keyword.skuGroupId)).toEqual(['khaki', 'milk']);
+    // расход запроса ≥ 50 000 без продаж — всем цветам минимальная ставка
+    const a = { ...kw('a', 'полотенце банное', 30_000, 28_000), stats7: st(26_000, 0, 0) };
+    const b = { ...kw('b', 'полотенце банное', 31_000, 29_000), stats7: st(26_000, 0, 0) };
+    expect(actions([a, b])).toEqual([['a', 'LOWER', 9_500], ['b', 'LOWER', 9_500]]);
+  });
+
+  it('тест потолка: цвет держим в топ-10 до своего потолка, пока ДРР ≤ порога теста; после срока — обычный потолок', () => {
+    const blue = { ...kw('blue', 'sochiq', 16_500, 30_000), campaignId: '305122' };
+    const test = { campaignId: '305122', skuGroupId: 'blue', query: 'sochiq', cap: 35_000, maxDrr: 8, until: '2026-11-03' };
+    expect(planLadderBids([blue])[0]).toMatchObject({ role: 'other', action: null }); // потолок «узбекских основных» 25 000
+    expect(planLadderBids([blue], undefined, new Set(), new Set(), {}, [test])[0]).toMatchObject({ role: 'top', action: { kind: 'RAISE', newCpm: 31_000 } });
+    const costly = { ...blue, cpm: 31_000, stats7: { impressions: 2000, clicks: 60, sold: 4, revenue: 380_000, spend: 34_000, position: null } }; // ДРР 8,9 %
+    expect(planLadderBids([costly], undefined, new Set(), new Set(), {}, [test])[0]).toMatchObject({ role: 'other', blocked: 'ДРР 8.9 % > 8 %', action: { kind: 'LOWER', newCpm: 29_500 } });
+    expect(activeCapTests('2026-11-03').map((row) => row.query)).toEqual(['sochiq', 'sochiqlar']);
+    expect(activeCapTests('2026-11-04')).toEqual([]);
   });
 
   it('кампания «держим в топ-10»: оба цвета в топе по любой фразе до общего потолка ставки', () => {

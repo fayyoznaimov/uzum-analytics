@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { AdBotAction, AdBotStats, normalizeQuery } from '../../common/ad-bot';
-import { AD_LADDER_DEFAULTS, AdLadderConfig, formatLadderReport, launchCampaigns, LadderCampaignSummary, LadderDecision, LadderKeyword, ladderCampaigns, ladderEnabled, ladderKey, planLadderBids } from '../../common/ad-ladder';
+import { activeCapTests, AD_LADDER_DEFAULTS, AdLadderConfig, formatLadderReport, launchCampaigns, LadderCampaignSummary, LadderDecision, LadderKeyword, ladderCampaigns, ladderEnabled, ladderKey, planLadderBids } from '../../common/ad-ladder';
 import { shiftDay, tashkentDay } from '../../common/auto-pricing';
 import { emptyStreak, failureText, markNotified, recordFailure, recordSuccess, recoveryText } from '../../common/failure-alert';
 import { PrismaService } from '../../common/prisma.service';
@@ -141,7 +141,9 @@ export class AdLadderService {
       const recent = await this.recentKeys([...ids], cfg.cooldownHours);
       const launch = launchCampaigns(today);
       for (const id of launch) if (ids.has(id)) notes.push(`кампания ${campaigns.find((row) => row.id === id)?.name ?? id}: льгота запуска — ДРР не проверяется`);
-      const decisions = planLadderBids(keywords, cfg, recent.keys, launch);
+      const tests = activeCapTests(today).filter((row) => ids.has(row.campaignId));
+      for (const test of tests) notes.push(`тест потолка: ${campaigns.find((row) => row.id === test.campaignId)?.name ?? test.campaignId}, цвет ${test.skuGroupId} «${test.query}» — топ-10 до ${test.cap.toLocaleString('ru-RU')} до ${test.until}, стоп при ДРР > ${test.maxDrr} %`);
+      const decisions = planLadderBids(keywords, cfg, recent.keys, launch, undefined, tests);
       const actions = decisions.map((row) => row.action).filter((row): row is AdBotAction => Boolean(row));
       let failed = 0;
       if (options.apply && actions.length) {

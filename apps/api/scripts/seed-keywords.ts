@@ -99,7 +99,7 @@ async function main() {
       for (const [query, rows] of byQuery) {
         const kinds = [...new Set(rows.map((row) => AD_BOT_LABELS[row.kind]))].join(', ');
         const bids = [...new Set(rows.map((row) => `${fmt(row.oldCpm)} → ${fmt(row.newCpm)}`))].join('; ');
-        console.log(`  ${kinds}  «${query}»  ×${rows.length} цветов  ${bids}`);
+        console.log(`  ${kinds}  «${query}»  ×${rows.length} цветов (${rows.map((row) => title(row.skuGroupId)).join(', ')})  ${bids}`);
       }
       const soch = keywords.filter((row) => row.campaignId === spec.campaignId && row.stopWords.some((word) => word.trim().toLowerCase() === 'soch'));
       if (soch.length) console.log(`  ⚠ минус-слово «soch» стоит у ${soch.length} слов этой кампании — новым узбекским фразам оно заменено на «soch uchun» / «sochlar uchun»`);

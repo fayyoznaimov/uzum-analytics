@@ -226,6 +226,10 @@ describe('ручной посев фраз', () => {
     // остановленный цвет: только SUSPEND — ни новых фраз, ни правок минус-слов ему не нужно
     expect(stopGroup.map((row) => [row.skuGroupId, row.kind])).toEqual([['4160950', 'SUSPEND'], ['4160950', 'SUSPEND'], ['4160950', 'SUSPEND']]);
     expect(stopGroup[0].reason).toContain('цвета');
+    // фраза только в выбранных цветах (запрос → id групп) и своя причина в журнал
+    const pair = [kw({ adId: '11', skuGroupId: 'chrome', query: 'банное полотенце' }), kw({ adId: '12', skuGroupId: 'khaki', query: 'Банное  полотенце' }), kw({ adId: '13', skuGroupId: 'khaki', query: 'полотенце банное' })];
+    const stopPair = seedKeywordActions(pair, [{ campaignId: '332097', suspendIn: { 'банное полотенце': ['khaki'] }, suspendReason: 'дорого, продаж мало' }]);
+    expect(stopPair.map((row) => [row.adId, row.kind, row.reason])).toEqual([['12', 'SUSPEND', 'ручная остановка: дорого, продаж мало']]);
     // потолок ставки по кампании: 50 000 → 18 500 только для 332097
     const capped = { ...AD_BOT_DEFAULTS, campaignMaxBid: { '332097': 18_500 } };
     expect(clampBid(40_000, 'up', configFor('332097', capped))).toBe(18_500);
