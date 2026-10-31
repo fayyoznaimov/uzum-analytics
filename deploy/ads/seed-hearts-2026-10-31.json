@@ -1,0 +1,22 @@
+[
+  {
+    "_что": "Сердечки 3480224, кампания 337334, владелец 31.10.2026: «давай вплотную работать с этим товаром, нужно его продавать уже». За 7 дней 66 742 расхода и 5 продаж (ДРР 34 %): узбекские фразы 52 000 без единой продажи, единственная рабочая фраза — «полотенце для лица» (9 244 → 4 продажи). Узбекские фразы останавливаются в обоих боевых цветах (розовый 6472969, голубой 6472965); «yurakchali sochiq» остаётся как узкая и дешёвая (9 500, ставка на минимуме).",
+    "_подарок": "Карточка — подарочный и детский товар: комплект 3 шт, жаккард с сердечками, все 14 отзывов 5★. Подсказки uzum.uz 31.10: «детское полотенце для тела», «sochiqlar sovg'a to'plami». Добавляются русские подарочные и детские фразы (onlyNew: существующие ставки не трогаются, их ведёт лестница; AD_LADDER_HOLD_TOP держит оба цвета в топ-10).",
+    "campaignId": "337334",
+    "dedupe": true,
+    "suspend": ["sochiq yuz va hammom", "sochiqlar hammom yuz va", "yuz sochiq", "yuz uchun sochiq", "sochiqlar yuz uchun", "vanna sochiq", "vanna uchun sochiq", "qo'l sochiq", "qo'l uchun sochiq", "sochiq to'plami", "paxta sochiq", "chiroyli sochiq", "sovg'a sochiq", "sovg'a uchun sochiq", "jakkard sochiq", "jakard sochiq", "mahrovoy sochiq", "maxrovoy sochiq", "yurakli sochiq"],
+    "suspendReason": "Сердечки 24–30.10: узбекские фразы 52 000 без продаж (владелец 31.10)",
+    "phrases": [
+      { "query": "подарочный набор полотенец", "cpm": 15000, "onlyNew": true },
+      { "query": "набор полотенец в подарок", "cpm": 15000, "onlyNew": true },
+      { "query": "полотенце детское", "cpm": 15000, "onlyNew": true },
+      { "query": "детское полотенце для тела", "cpm": 15000, "onlyNew": true },
+      { "query": "полотенце для девочки", "cpm": 15000, "onlyNew": true },
+      { "query": "полотенце для детей", "cpm": 15000, "onlyNew": true },
+      { "query": "красивое полотенце", "cpm": 15000, "onlyNew": true },
+      { "query": "полотенце розовое", "cpm": 15000, "onlyNew": true },
+      { "query": "sochiqlar sovg'a to'plami", "cpm": 15000, "onlyNew": true },
+      { "query": "bolalar sochiq", "cpm": 15000, "onlyNew": true }
+    ]
+  }
+]
