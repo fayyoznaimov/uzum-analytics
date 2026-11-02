@@ -771,3 +771,52 @@ model AdBotChange {
   @@index([adId, createdAt])
   @@index([skuGroupId, query])
 }
+
+/// Номенклатура компании-поставщика (лист «Номенклатура» таблицы «Приход-Расход-Склад»): свои коды, не SKU Uzum.
+model SupplierItem {
+  id        String   @id @default(cuid())
+  shopId    String
+  code      Int
+  title     String
+  /// Цена закупки за штуку, сум.
+  priceUzs  Decimal  @default(0) @db.Decimal(18, 2)
+  /// Цена закупки за штуку, $ — в долларах ведётся долг; null — товар в долг не идёт.
+  priceUsd  Decimal? @db.Decimal(18, 4)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  entries   SupplierEntry[]
+
+  @@unique([shopId, code])
+}
+
+/// Журнал расчётов с компанией: приход товара (долг растёт в $), оплата в сумах (гасит долг по курсу дня),
+/// корректировка долга в $ и расход товара (только остаток, на долг не влияет; позже — из 1С).
+model SupplierEntry {
+  id        String   @id @default(cuid())
+  shopId    String
+  /// День операции, YYYY-MM-DD.
+  day       String
+  /// RECEIPT, PAYMENT, ADJUSTMENT, WRITE_OFF.
+  type      String
+  itemId    String?
+  quantity  Int?
+  /// Цены на момент операции (снимок номенклатуры).
+  priceUzs  Decimal? @db.Decimal(18, 2)
+  priceUsd  Decimal? @db.Decimal(18, 4)
+  /// Оплата в сумах.
+  amountUzs Decimal? @db.Decimal(18, 2)
+  /// Курс сум за $ для оплаты.
+  rate      Decimal? @db.Decimal(18, 4)
+  /// Изменение долга в $: приход +, оплата −, корректировка ±, расход 0.
+  amountUsd Decimal  @default(0) @db.Decimal(18, 4)
+  comment   String?
+  /// manual, excel, 1c.
+  source    String   @default("manual")
+  /// Строка исходного файла (для импорта).
+  sourceRow Int?
+  createdAt DateTime @default(now())
+  item      SupplierItem? @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@index([shopId, day])
+  @@index([itemId])
+}

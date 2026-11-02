@@ -51,6 +51,8 @@ import { AutoBidderService } from './modules/ads/auto-bidder.service';
 import { AdsController } from './modules/ads/ads.controller';
 import { MiniAppController } from './modules/miniapp/miniapp.controller';
 import { MiniAppService } from './modules/miniapp/miniapp.service';
+import { SupplierLedgerController } from './modules/supplier-ledger/supplier-ledger.controller';
+import { SupplierLedgerService } from './modules/supplier-ledger/supplier-ledger.service';
 
 @Module({
   imports: [
@@ -69,7 +71,7 @@ import { MiniAppService } from './modules/miniapp/miniapp.service';
   controllers: [
     HealthController, AuthController, IntegrationsController, CostsController, GoalsController,
     DashboardController, ProductsController, SyncController, SuppliesController, WarehouseController, ReviewsController,
-    FinancialStatementsController, PricingController, CompetitorsController, CompetitorWatchController, MarketingController, AdsController, MiniAppController,
+    FinancialStatementsController, PricingController, CompetitorsController, CompetitorWatchController, MarketingController, AdsController, MiniAppController, SupplierLedgerController,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
@@ -77,7 +79,7 @@ import { MiniAppService } from './modules/miniapp/miniapp.service';
     CompetitorsService,
     PrismaService, CryptoService, TelegramClient, OpenclawClient, AuthService, AuthGuard, IntegrationsService, CabinetAuthService,
     CostsService, GoalsService, DashboardService, ProductsService, SyncService, SuppliesService,
-    WarehouseService, DigestService, ReturnsWatchService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService, AdAgentService, AdBotService, PriceExperimentService, AutoBidderService, AdLadderService, MiniAppService,
+    WarehouseService, DigestService, ReturnsWatchService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService, AdAgentService, AdBotService, PriceExperimentService, AutoBidderService, AdLadderService, MiniAppService, SupplierLedgerService,
   ],
 })
 export class AppModule {}

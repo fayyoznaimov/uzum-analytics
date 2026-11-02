@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { BarChart3, Boxes, Crosshair, CalendarRange, ChartNoAxesCombined, CircleDollarSign, ClipboardList, Clock3, Gauge, Goal, LayoutDashboard, LogOut, Megaphone, MessageSquareText, PackageSearch, RefreshCw, Settings, WalletCards } from 'lucide-react';
+import { BarChart3, Boxes, Crosshair, CalendarRange, ChartNoAxesCombined, CircleDollarSign, ClipboardList, Clock3, Gauge, Goal, HandCoins, LayoutDashboard, LogOut, Megaphone, MessageSquareText, PackageSearch, RefreshCw, Settings, WalletCards } from 'lucide-react';
 import { api, getToken, logout, syncAndWait } from '@/lib/api';
 import { refreshOverviewEverywhere } from '@/lib/overview';
 import PeriodPicker from './PeriodPicker';
@@ -14,6 +14,7 @@ const nav: Array<[string] | [string, string, any, string[]?]> = [
   ['ДЕНЬГИ'],
   ['/dashboard', 'Главная', LayoutDashboard], ['/wallet', 'Кошелёк', WalletCards],
   ['/profit', 'Профит', ChartNoAxesCombined], ['/monthly', 'Отчёты по месяцам', CalendarRange],
+  ['/supplier', 'Долг поставщику', HandCoins],
   ['ПРОДАЖИ'],
   ['/ordered', 'Заказы', ClipboardList], ['/hourly', 'По часам', Clock3], ['/goals', 'Цели', Goal],
   ['РЕКЛАМА'],
