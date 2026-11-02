@@ -131,8 +131,10 @@ describe('лестница ставок', () => {
     // распродажа Сердечек: льгота до 16.11 и тест потолка 45 000 на оба цвета по подарочным/детским фразам
     expect([...launchCampaigns('2026-11-10')]).toEqual(['337334']);
     const push = activeCapTests('2026-11-10').filter((row) => row.campaignId === '337334');
-    expect(push.length).toBe(24);
-    expect(push.find((row) => row.query === 'полотенце детское' && row.skuGroupId === '6472965')).toMatchObject({ cap: 45_000, maxDrr: 30, until: '2026-11-16' });
+    expect(push.length).toBe(26);
+    expect(push.find((row) => row.query === 'полотенце детское' && row.skuGroupId === '6472965')).toMatchObject({ cap: 25_000, maxDrr: 30, until: '2026-11-16' });
+    expect(push.find((row) => row.query === 'полотенце в подарок' && row.skuGroupId === '6472969')).toMatchObject({ cap: 45_000 });
+    expect(push.find((row) => row.query === 'полотенце для лица' && row.skuGroupId === '6472969')).toMatchObject({ cap: 30_000 });
     expect(activeCapTests('2026-11-17').filter((row) => row.campaignId === '337334')).toEqual([]);
   });
 

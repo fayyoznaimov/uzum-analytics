@@ -48,14 +48,21 @@ export const AD_LADDER_HOLD_TOP: Record<string, number> = {};
  * sochiqlar серый — 4 продажи при 6 %; неделю пробуем топ-10 до 35 000, стоп при ДРР выше 8 %.
  */
 export type LadderCapTest = { campaignId: string; skuGroupId: string; query: string; cap: number; maxDrr: number; until: string };
-export const HEARTS_PUSH_QUERIES = ['полотенце с сердечками', 'yurakchali sochiq', 'yuz uchun sochiq', 'полотенце в подарок', 'полотенце для девочки', 'полотенце детское', 'детское полотенце для тела', 'полотенце для детей', 'полотенце розовое', 'bolalar sochiq', "sochiqlar sovg'a to'plami", 'красивое полотенце'];
+/** Фразы распродажи Сердечек с потолком по экономике размера (владелец 02.11, себестоимость 19/26/39/62 тыс.): подарочные —
+ * покупают комплект 148 500 (прибыль 42 тыс. до рекламы, тянет ставку 45 000); детские, «розовое», «красивое» и лицевые —
+ * покупают лицевое 39 500 (5 тыс. до рекламы) и салфетки, поэтому не дороже 25 000 / 30 000. */
+export const HEARTS_PUSH_QUERIES: Array<{ query: string; cap: number }> = [
+  { query: 'полотенце с сердечками', cap: 45_000 }, { query: 'yurakchali sochiq', cap: 45_000 }, { query: 'полотенце в подарок', cap: 45_000 }, { query: "sochiqlar sovg'a to'plami", cap: 45_000 },
+  { query: 'полотенце для лица', cap: 30_000 }, { query: 'yuz uchun sochiq', cap: 30_000 },
+  { query: 'полотенце для девочки', cap: 25_000 }, { query: 'полотенце детское', cap: 25_000 }, { query: 'детское полотенце для тела', cap: 25_000 }, { query: 'полотенце для детей', cap: 25_000 }, { query: 'полотенце розовое', cap: 25_000 }, { query: 'bolalar sochiq', cap: 25_000 }, { query: 'красивое полотенце', cap: 25_000 },
+];
 export const AD_LADDER_CAP_TESTS: LadderCapTest[] = [
   { campaignId: '305122', skuGroupId: '5374111', query: 'sochiq', cap: 35_000, maxDrr: 8, until: '2026-11-03' },
   { campaignId: '305122', skuGroupId: '5374108', query: 'sochiqlar', cap: 35_000, maxDrr: 8, until: '2026-11-03' },
   // Распродажа Сердечек (владелец 02.11.2026: «нужно 250 продаж, максимум продаж, собрать отзывы»): оба боевых цвета в топ-10
-  // по продающим и подарочным/детским фразам до 45 000 (в классе «остальные» потолок 20 000 покупал 14–19 места), ДРР до 30 %,
-  // до 16.11. Фразы классов «наборы» и «лицевые» и так держат два цвета по своим потолкам.
-  ...HEARTS_PUSH_QUERIES.flatMap((query) => ['6472969', '6472965'].map((skuGroupId) => ({ campaignId: '337334', skuGroupId, query, cap: 45_000, maxDrr: 30, until: '2026-11-16' }))),
+  // по продающим и подарочным/детским фразам до потолка по экономике размера (HEARTS_PUSH_QUERIES), ДРР до 30 %, до 16.11.
+  // Фразы класса «наборы» («подарочный набор полотенец», «набор полотенец в подарок») и так держат два цвета до 70 000.
+  ...HEARTS_PUSH_QUERIES.flatMap(({ query, cap }) => ['6472969', '6472965'].map((skuGroupId) => ({ campaignId: '337334', skuGroupId, query, cap, maxDrr: 30, until: '2026-11-16' }))),
 ];
 
 export function activeCapTests(today: string, table: LadderCapTest[] = AD_LADDER_CAP_TESTS): LadderCapTest[] {
