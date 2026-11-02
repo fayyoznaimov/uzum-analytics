@@ -109,8 +109,8 @@ describe('лестница ставок', () => {
     expect(planLadderBids([blue], undefined, new Set(), new Set(), {}, [test])[0]).toMatchObject({ role: 'top', action: { kind: 'RAISE', newCpm: 31_000 } });
     const costly = { ...blue, cpm: 31_000, stats7: { impressions: 2000, clicks: 60, sold: 4, revenue: 380_000, spend: 34_000, position: null } }; // ДРР 8,9 %
     expect(planLadderBids([costly], undefined, new Set(), new Set(), {}, [test])[0]).toMatchObject({ role: 'other', blocked: 'ДРР 8.9 % > 8 %', action: { kind: 'LOWER', newCpm: 29_500 } });
-    expect(activeCapTests('2026-11-03').map((row) => row.query)).toEqual(['sochiq', 'sochiqlar']);
-    expect(activeCapTests('2026-11-04')).toEqual([]);
+    expect(activeCapTests('2026-11-03').filter((row) => row.campaignId === '305122').map((row) => row.query)).toEqual(['sochiq', 'sochiqlar']);
+    expect(activeCapTests('2026-11-04').filter((row) => row.campaignId === '305122')).toEqual([]);
   });
 
   it('кампания «держим в топ-10»: оба цвета в топе по любой фразе до общего потолка ставки', () => {
@@ -128,6 +128,12 @@ describe('лестница ставок', () => {
     expect(planLadderBids([fresh])[0]).toMatchObject({ role: 'other' });
     expect([...launchCampaigns('2026-10-20', { '337334': '2026-11-01' })]).toEqual(['337334']);
     expect([...launchCampaigns('2026-11-02', { '337334': '2026-11-01' })]).toEqual([]);
+    // распродажа Сердечек: льгота до 16.11 и тест потолка 45 000 на оба цвета по подарочным/детским фразам
+    expect([...launchCampaigns('2026-11-10')]).toEqual(['337334']);
+    const push = activeCapTests('2026-11-10').filter((row) => row.campaignId === '337334');
+    expect(push.length).toBe(24);
+    expect(push.find((row) => row.query === 'полотенце детское' && row.skuGroupId === '6472965')).toMatchObject({ cap: 45_000, maxDrr: 30, until: '2026-11-16' });
+    expect(activeCapTests('2026-11-17').filter((row) => row.campaignId === '337334')).toEqual([]);
   });
 
   it('сводка кампании: ДРР, расход с понедельника и предупреждение о бюджете', () => {

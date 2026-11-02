@@ -29,7 +29,9 @@ export const AD_LADDER_DEFAULT_CAMPAIGNS = ['286528', '305122', '305324', '33209
  * отзывов первые продажи дорогие, и потолок 6 % задушил бы его в первые дни. Топ-10 и потолки ставок работают как обычно.
  * 337334 — «Сердечки 3480224 новинка» (жаккард с сердечками), создана 18.10.2026, льгота 14 дней.
  */
-export const AD_LADDER_LAUNCH_UNTIL: Record<string, string> = { '337334': '2026-11-01' };
+export const AD_LADDER_LAUNCH_UNTIL: Record<string, string> = { '337334': '2026-11-16' };
+// 02.11.2026 льгота продлена до 16.11: владелец — «нужно 250 продаж Сердечек, максимум продаж, собрать отзывы»; товар вернулся
+// в #444 (лицевое 39 500), распродажа остатка 249 шт важнее ДРР.
 /**
  * Кампании, где каждый активный цвет держим в топ-10 по каждой фразе — потолок класса не действует, только общий потолок
  * ставки maxBid (AD_BOT_MAX_BID). Значение — сколько цветов держать. 337334 «Сердечки»: владелец 18.10.2026 — «рекламируй
@@ -46,9 +48,14 @@ export const AD_LADDER_HOLD_TOP: Record<string, number> = {};
  * sochiqlar серый — 4 продажи при 6 %; неделю пробуем топ-10 до 35 000, стоп при ДРР выше 8 %.
  */
 export type LadderCapTest = { campaignId: string; skuGroupId: string; query: string; cap: number; maxDrr: number; until: string };
+export const HEARTS_PUSH_QUERIES = ['полотенце с сердечками', 'yurakchali sochiq', 'yuz uchun sochiq', 'полотенце в подарок', 'полотенце для девочки', 'полотенце детское', 'детское полотенце для тела', 'полотенце для детей', 'полотенце розовое', 'bolalar sochiq', "sochiqlar sovg'a to'plami", 'красивое полотенце'];
 export const AD_LADDER_CAP_TESTS: LadderCapTest[] = [
   { campaignId: '305122', skuGroupId: '5374111', query: 'sochiq', cap: 35_000, maxDrr: 8, until: '2026-11-03' },
   { campaignId: '305122', skuGroupId: '5374108', query: 'sochiqlar', cap: 35_000, maxDrr: 8, until: '2026-11-03' },
+  // Распродажа Сердечек (владелец 02.11.2026: «нужно 250 продаж, максимум продаж, собрать отзывы»): оба боевых цвета в топ-10
+  // по продающим и подарочным/детским фразам до 45 000 (в классе «остальные» потолок 20 000 покупал 14–19 места), ДРР до 30 %,
+  // до 16.11. Фразы классов «наборы» и «лицевые» и так держат два цвета по своим потолкам.
+  ...HEARTS_PUSH_QUERIES.flatMap((query) => ['6472969', '6472965'].map((skuGroupId) => ({ campaignId: '337334', skuGroupId, query, cap: 45_000, maxDrr: 30, until: '2026-11-16' }))),
 ];
 
 export function activeCapTests(today: string, table: LadderCapTest[] = AD_LADDER_CAP_TESTS): LadderCapTest[] {
