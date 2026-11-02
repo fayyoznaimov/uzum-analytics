@@ -144,4 +144,13 @@ describe('лестница ставок', () => {
     // наборы: потолок класса = общий потолок ставки 70 000
     expect(actions([kw('a', 'набор полотенец', 40_000, 69_000), kw('b', 'набор полотенец', 9_500, 58_000)])).toEqual([['b', 'RAISE', 60_000], ['a', 'RAISE', 70_000]]);
   });
+
+  it('топ-10 дороже потолка: к потолку не поднимаем и цвет не боевой (Сердечки 31.10–02.11: 70 000 за 13-е место)', () => {
+    const dear = planLadderBids([kw('a', 'набор полотенец', 40_000, 80_000)])[0];
+    expect(dear).toMatchObject({ role: 'other', action: null });
+    const held = planLadderBids([{ ...kw('p', 'полотенце для рук', 33_500, 131_064), campaignId: '337334' }], undefined, new Set(), new Set(), { '337334': 2 })[0];
+    expect(held).toMatchObject({ role: 'other', action: null });
+    // чуть дешевле потолка — по-прежнему боевой
+    expect(planLadderBids([kw('a', 'набор полотенец', 40_000, 67_000)])[0]).toMatchObject({ role: 'top', action: { newCpm: 69_500 } });
+  });
 });

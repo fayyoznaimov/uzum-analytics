@@ -35,7 +35,9 @@ export const AD_LADDER_LAUNCH_UNTIL: Record<string, string> = { '337334': '2026-
  * ставки maxBid (AD_BOT_MAX_BID). Значение — сколько цветов держать. 337334 «Сердечки»: владелец 18.10.2026 — «рекламируй
  * только 2 цвета и нужно держать их в топ-10» (розовый 6472969 и голубой 6472965, остальные цвета остановлены посевом).
  */
-export const AD_LADDER_HOLD_TOP: Record<string, number> = { '337334': 2 };
+export const AD_LADDER_HOLD_TOP: Record<string, number> = {};
+// 337334 «Сердечки» держали в топ-10 до потолка с 18.10 по 02.11.2026: за 31.10–02.11 ставки ушли к 70 000 на «полотенце детское»,
+// «для лица», «для рук» и покупали 13–23 места без продаж (владелец 02.11: снять режим, вернуть классовые потолки).
 
 /**
  * Тест потолка (до until включительно, Ташкент): цвет держим в топ-10 по запросу до cap, пока его ДРР за 7 дней ≤ maxDrr —
@@ -195,7 +197,9 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
         continue;
       }
       // Цвет на тесте потолка держим в топ-10 до своего потолка, не считаясь с числом цветов класса.
-      const isTop = !verdict.blocked && (test ? target <= test.cap : target <= cls.cap && (chosen < cls.colors || top10.cpm <= cfg.cheapTop));
+      // Боевой — только если сама цена топ-10 не дороже потолка: иначе ставка упиралась бы в потолок и покупала 13–27 место
+      // (Сердечки 31.10–02.11: 70 000 за «полотенце для рук» при топ-10 от 131 000). Запас 3 % потолком обрезать можно.
+      const isTop = !verdict.blocked && (test ? top10.cpm <= test.cap : top10.cpm <= cls.cap && (chosen < cls.colors || top10.cpm <= cfg.cheapTop));
       if (isTop) chosen++;
       const common = { campaignId: keyword.campaignId, campaignName: keyword.campaignName, skuGroupId: keyword.skuGroupId, groupTitle: keyword.skuGroupId, adId: keyword.adId, query: keyword.query, oldCpm: keyword.cpm, stopWords: keyword.stopWords };
       let next: number | null = null;
