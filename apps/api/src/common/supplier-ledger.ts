@@ -93,10 +93,27 @@ export function summarizeSupplierLedger(items: SupplierItemLike[], entries: Supp
     .sort((a, b) => a.code - b.code);
   return {
     summary: { ...summary, stockUnits: summary.receivedUnits - summary.writtenOffUnits, debtUzsAtLastRate: summary.lastRate ? Math.round(balance * summary.lastRate) : null },
+    days: supplierDays(rows),
     rows: rows.reverse(),
     stock: stockRows,
     deliveries: [...deliveries.values()].sort((a, b) => b.day.localeCompare(a.day)),
   };
+}
+
+/** По дням: сколько взял товара и сколько заплатил в этот день и какой долг остался после. Строки — по возрастанию дат, результат — новые сверху. */
+export function supplierDays(rows: Array<SupplierEntryLike & { balanceUsd: number }>) {
+  const days = new Map<string, { day: string; receivedUnits: number; receivedUsd: number; receivedUzs: number; paidUzs: number; paidUsd: number; adjustmentsUsd: number; writtenOffUnits: number; balanceUsd: number; entries: Array<SupplierEntryLike & { balanceUsd: number }> }>();
+  for (const row of rows) {
+    const day = days.get(row.day) || { day: row.day, receivedUnits: 0, receivedUsd: 0, receivedUzs: 0, paidUzs: 0, paidUsd: 0, adjustmentsUsd: 0, writtenOffUnits: 0, balanceUsd: 0, entries: [] };
+    if (row.type === 'RECEIPT') { day.receivedUnits += row.quantity ?? 0; day.receivedUsd = roundUsd(day.receivedUsd + row.amountUsd); day.receivedUzs += (row.quantity ?? 0) * (row.priceUzs ?? 0); }
+    if (row.type === 'PAYMENT') { day.paidUzs += row.amountUzs ?? 0; day.paidUsd = roundUsd(day.paidUsd - row.amountUsd); }
+    if (row.type === 'ADJUSTMENT') day.adjustmentsUsd = roundUsd(day.adjustmentsUsd + row.amountUsd);
+    if (row.type === 'WRITE_OFF') day.writtenOffUnits += row.quantity ?? 0;
+    day.balanceUsd = row.balanceUsd;
+    day.entries.push(row);
+    days.set(row.day, day);
+  }
+  return [...days.values()].reverse();
 }
 
 // ---------- Импорт таблицы Excel ----------

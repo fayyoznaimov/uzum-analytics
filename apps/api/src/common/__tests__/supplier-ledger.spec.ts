@@ -102,5 +102,11 @@ describe('summarizeSupplierLedger', () => {
     expect(result.rows.at(-1)!.balanceUsd).toBe(62.1);
     expect(result.stock.find((line) => line.code === 3)).toMatchObject({ receivedUnits: 100, writtenOffUnits: 40, balanceUnits: 60, balanceUsd: 111.6, balanceUzs: 1_380_000 });
     expect(result.deliveries).toEqual([{ day: '2026-10-01', units: 110, usd: 248.1, uzs: 3_050_000, lines: 2 }]);
+    expect(result.days.map(({ entries, ...day }) => ({ ...day, entries: entries.length }))).toEqual([
+      { day: '2026-10-21', receivedUnits: 0, receivedUsd: 0, receivedUzs: 0, paidUzs: 0, paidUsd: 0, adjustmentsUsd: 0, writtenOffUnits: 40, balanceUsd: 138.1, entries: 1 },
+      { day: '2026-10-20', receivedUnits: 0, receivedUsd: 0, receivedUzs: 0, paidUzs: 0, paidUsd: 0, adjustmentsUsd: -10, writtenOffUnits: 0, balanceUsd: 138.1, entries: 1 },
+      { day: '2026-10-15', receivedUnits: 0, receivedUsd: 0, receivedUzs: 0, paidUzs: 1_210_000, paidUsd: 100, adjustmentsUsd: 0, writtenOffUnits: 0, balanceUsd: 148.1, entries: 1 },
+      { day: '2026-10-01', receivedUnits: 110, receivedUsd: 248.1, receivedUzs: 3_050_000, paidUzs: 0, paidUsd: 0, adjustmentsUsd: 0, writtenOffUnits: 0, balanceUsd: 248.1, entries: 2 },
+    ]);
   });
 });

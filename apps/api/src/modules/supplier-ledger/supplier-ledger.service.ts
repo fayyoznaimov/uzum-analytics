@@ -31,9 +31,11 @@ export class SupplierLedgerService {
       amountUsd: Number(entry.amountUsd), comment: entry.comment, source: entry.source, sourceRow: entry.sourceRow, createdAt: entry.createdAt,
     }));
     const ledger = summarizeSupplierLedger(itemLikes, entryLikes);
+    const withItem = <T extends { itemId: string | null }>(row: T) => ({ ...row, item: row.itemId ? byId.get(row.itemId) ?? null : null });
     return {
       ...ledger,
-      rows: ledger.rows.map((row) => ({ ...row, item: row.itemId ? byId.get(row.itemId) ?? null : null })),
+      rows: ledger.rows.map(withItem),
+      days: ledger.days.map((day) => ({ ...day, entries: day.entries.map(withItem) })),
       items: itemLikes,
       defaultRate: ledger.summary.lastRate ?? DEFAULT_SUPPLIER_RATE,
     };
