@@ -14,6 +14,8 @@
  *      снижаем до ступени ниже топ-10.
  *   4. Правим, только если ставка вне топ-10, переплачивает больше `overpayTolerance` или вышла за 100 %:
  *      каждая правка в Uzum пересоздаёт объявление, дёргать его ради 500 сум незачем.
+ *   5. Цвет без нужного запросу размера в наличии (colourStockBlock) боевым не бывает, его ставка — на минимум;
+ *      место в топ-10 занимает следующий по цене цвет, с поставкой цвет возвращается сам.
  *
  * Модуль чистый — без сети и БД. Сервис: modules/ads/ad-ladder.service.ts.
  */
@@ -128,7 +130,50 @@ export const AD_LADDER_DEFAULTS = {
 };
 export type AdLadderConfig = typeof AD_LADDER_DEFAULTS;
 
-export type LadderKeyword = AdBotKeyword & { ladder: BidLadderStep[] | null; stats7?: AdBotStats | null };
+export type LadderSizeKind = 'set' | 'big' | 'bath' | 'face' | 'hand';
+
+/** Размер SKU по названию в кабинете (getProducts skuTitle): «БЕЛЫЙ-Банный», «СЕРЫЙ-70 x140», «КРЕМОВ-лицево», «РОЗОВ-Микс»,
+ * «БЕЖЕВ-Havana» (набор HAVANA), «ГОЛУБ-салфетк» (30×50 ×4 Сердечек), плед «beach» / «hand». null — размера в названии нет:
+ * у карточки сауны 2263224 у цвета один SKU «БЕЛЫЙ». */
+export function skuSizeKind(title: string): LadderSizeKind | null {
+  const t = title.toLowerCase();
+  if (/(микс|mix|комплек|набор|havana)/.test(t)) return 'set';
+  if (/(саун|100 ?[xх]? ?150|beach)/.test(t)) return 'big';
+  if (/(банн|70 ?[xх] ?1[34])/.test(t)) return 'bath';
+  if (/(лицев|50 ?[xх] ?(90|85))/.test(t)) return 'face';
+  if (/(салфет|hand|30 ?[xх] ?50)/.test(t)) return 'hand';
+  return null;
+}
+
+/** Какой размер нужен покупателю запроса — первое совпадение; запрос без размера («полотенце», «sochiq») — ничего. */
+const SIZE_NEEDS: Array<{ match: RegExp; kinds: LadderSizeKind[]; label: string }> = [
+  { match: /(набор|комплект|to ?plam|nabor|komplekt)/, kinds: ['set'], label: 'наборов' },
+  { match: /(саун|бан[яи]|бассейн|sauna|basseyn|banya|katta|100 ?[xх]? ?150|больш)/, kinds: ['big'], label: '100×150' },
+  { match: /(банн|тел[ао]|hammom|banyo|banni|badan|ванн|vanna|dush|душ)/, kinds: ['bath'], label: 'банного' },
+  { match: /(для рук|qo ?l|салфет)/, kinds: ['hand', 'face'], label: 'для рук' },
+  { match: /(лиц|yuz)/, kinds: ['face'], label: 'лицевого' },
+];
+
+/**
+ * Почему цвет нельзя держать в топ-10 по остатку (null — можно). 03.11.2026: у белого J403 кончились 70×140 (28.10) и наборы
+ * (31.10), а лестница держала его в топ-10 «полотенце банное» до 60 000 — 02.11 кампания потратила 27 484 без продаж, покупатель
+ * открывал белый и видел только лицевое. Нет остатка цвета вовсе — блок на любом запросе; нет размера запроса — блок на его
+ * запросах. Если размера у цвета не было никогда (у HAVANA нет 100×150), фраза выбрана сознательно — не блокируем.
+ */
+export function colourStockBlock(query: string, skus: Array<{ title: string; quantity: number }> | null | undefined): string | null {
+  if (!skus?.length) return null;
+  const stock = (rows: Array<{ quantity: number }>) => rows.reduce((sum, row) => sum + Math.max(0, row.quantity), 0);
+  if (stock(skus) <= 0) return 'у цвета нет остатка';
+  const q = normalizeQuery(query);
+  const need = SIZE_NEEDS.find((row) => row.match.test(q));
+  if (!need) return null;
+  const relevant = skus.filter((row) => { const kind = skuSizeKind(row.title); return kind === null || need.kinds.includes(kind); });
+  if (!relevant.length) return null;
+  return stock(relevant) > 0 ? null : `у цвета нет ${need.label} в наличии`;
+}
+
+/** skus — SKU цвета с остатком (AdBotService.colourSkus); нет — остаток не проверяется. */
+export type LadderKeyword = AdBotKeyword & { ladder: BidLadderStep[] | null; stats7?: AdBotStats | null; skus?: Array<{ title: string; quantity: number }> | null };
 export type LadderDecision = {
   keyword: LadderKeyword;
   role: 'top' | 'other' | 'no-ladder';
@@ -141,6 +186,8 @@ export type LadderDecision = {
   /** ДРР за 7 дней, % (null — выручки нет) и почему слово не держим в топе. */
   drr: number | null;
   blocked: string | null;
+  /** Нет нужного размера цвета в наличии (colourStockBlock) — ставка на минимум. */
+  noStock: string | null;
 };
 
 /** ДРР и вердикт по статистике слова за 7 дней. */
@@ -208,13 +255,13 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
         if (!verdict.blocked && queryVerdict.blocked && !provenColour(keyword.stats7, maxDrr)) {
           verdict = { drr: verdict.drr, blocked: `по запросу (все цвета) ${queryVerdict.blocked}`, severe: queryVerdict.severe };
         }
-        return { keyword, steps, top10, full: steps.length ? bidForReach(steps, 100) : null, target, verdict, test };
+        return { keyword, steps, top10, full: steps.length ? bidForReach(steps, 100) : null, target, verdict, test, noStock: colourStockBlock(keyword.query, keyword.skus) };
       })
       .sort((a, b) => (a.top10?.cpm ?? Infinity) - (b.top10?.cpm ?? Infinity));
     let chosen = 0;
     for (const row of priced) {
-      const { keyword, steps, top10, full, target, verdict, test } = row;
-      const base = { keyword, top10, full, positionBefore: steps.length ? positionForBid(steps, keyword.cpm) : null, drr: verdict.drr, blocked: verdict.blocked };
+      const { keyword, steps, top10, full, target, verdict, test, noStock } = row;
+      const base = { keyword, top10, full, positionBefore: steps.length ? positionForBid(steps, keyword.cpm) : null, drr: verdict.drr, blocked: verdict.blocked, noStock };
       if (!top10 || target === null) {
         decisions.push({ ...base, role: 'no-ladder', target: null, positionAfter: base.positionBefore, action: null });
         continue;
@@ -222,7 +269,7 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
       // Цвет на тесте потолка держим в топ-10 до своего потолка, не считаясь с числом цветов класса.
       // Боевой — только если сама цена топ-10 не дороже потолка: иначе ставка упиралась бы в потолок и покупала 13–27 место
       // (Сердечки 31.10–02.11: 70 000 за «полотенце для рук» при топ-10 от 131 000). Запас 3 % потолком обрезать можно.
-      const isTop = !verdict.blocked && (test ? top10.cpm <= test.cap : top10.cpm <= cls.cap && (chosen < cls.colors || top10.cpm <= cfg.cheapTop));
+      const isTop = !noStock && !verdict.blocked && (test ? top10.cpm <= test.cap : top10.cpm <= cls.cap && (chosen < cls.colors || top10.cpm <= cfg.cheapTop));
       if (isTop) chosen++;
       const common = { campaignId: keyword.campaignId, campaignName: keyword.campaignName, skuGroupId: keyword.skuGroupId, groupTitle: keyword.skuGroupId, adId: keyword.adId, query: keyword.query, oldCpm: keyword.cpm, stopWords: keyword.stopWords };
       let next: number | null = null;
@@ -235,11 +282,12 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
           next = target;
           reason = `лестница: топ-10 (${test ? `тест потолка ${fmt(test.cap)} до ${test.until}, стоп при ДРР > ${test.maxDrr} %` : cls.name}) стоит ${fmt(top10.cpm)}, позиция ${top10.position}; ${outOfTop ? 'ставка была ниже топ-10' : 'была переплата'}`;
         }
-      } else if (verdict.severe) {
+      } else if (noStock || verdict.severe) {
         // ДРР выше потолка вдвое или расход без продаж — слово не окупается: ставка на минимум (выключает только владелец).
-        if (keyword.cpm > cfg.minBid && !cooling) {
+        // Нет размера в наличии — клики пустые, снижаем и в паузу после правки: на минимуме объявление больше не дёргается.
+        if (keyword.cpm > cfg.minBid && (noStock || !cooling)) {
           next = cfg.minBid;
-          reason = `лестница: ${verdict.blocked} — ставка на минимум`;
+          reason = `лестница: ${noStock ?? verdict.blocked} — ставка на минимум`;
         }
       } else {
         const belowTop = top10.cpm - cfg.rounding;
@@ -286,6 +334,15 @@ export function formatLadderReport(decisions: LadderDecision[], opts: { apply: b
   if (opts.campaigns?.length) lines.push('', '💰 Расход и ДРР', ...opts.campaigns.map(formatCampaignSummary));
   const blocked = decisions.filter((row) => row.blocked).sort((a, b) => (b.keyword.stats7?.spend ?? 0) - (a.keyword.stats7?.spend ?? 0));
   if (blocked.length) lines.push('', `Не окупаются, из топ-10 убраны (${blocked.length}): ${blocked.slice(0, 8).map((row) => `${title(row.keyword.skuGroupId)} «${row.keyword.query}» — ${row.blocked}`).join('; ')}`);
+  const empty = decisions.filter((row) => row.noStock);
+  if (empty.length) {
+    const byColour = new Map<string, string[]>();
+    for (const row of empty) {
+      const head = `${row.keyword.campaignName}: ${title(row.keyword.skuGroupId)} — ${row.noStock}`;
+      byColour.set(head, [...(byColour.get(head) ?? []), row.keyword.query]);
+    }
+    lines.push('', `Нет размера в наличии, ставка на минимум (${empty.length}): ${[...byColour].slice(0, 8).map(([head, queries]) => `${head} (${queries.length}: ${queries.slice(0, 4).map((q) => `«${q}»`).join(', ')}${queries.length > 4 ? '…' : ''})`).join('; ')}`);
+  }
   const byCampaign = new Map<string, LadderDecision[]>();
   for (const row of changed) byCampaign.set(row.keyword.campaignName, [...(byCampaign.get(row.keyword.campaignName) ?? []), row]);
   for (const [name, rows] of byCampaign) {
@@ -295,7 +352,7 @@ export function formatLadderReport(decisions: LadderDecision[], opts: { apply: b
       lines.push(`${a.kind === 'RAISE' ? '⬆️' : '⬇️'} ${title(a.skuGroupId)} «${a.query}» ${fmt(a.oldCpm ?? 0)} → ${fmt(a.newCpm)} (позиция ${row.positionBefore ?? '—'} → ${row.positionAfter ?? '—'})`);
     }
   }
-  const missing = decisions.filter((row) => row.role === 'other' && row.top10 && ladderQueryClass(row.keyword.query).colors > 0)
+  const missing = decisions.filter((row) => row.role === 'other' && row.top10 && !row.noStock && ladderQueryClass(row.keyword.query).colors > 0)
     .filter((row) => !decisions.some((other) => other.role === 'top' && other.keyword.campaignId === row.keyword.campaignId && normalizeQuery(other.keyword.query) === normalizeQuery(row.keyword.query)));
   const queries = [...new Set(missing.map((row) => `«${row.keyword.query}» (топ-10 от ${fmt(Math.min(...missing.filter((m) => m.keyword.query === row.keyword.query).map((m) => m.top10?.cpm ?? Infinity)))})`))];
   if (queries.length) lines.push('', `Дороже потолка, ни один цвет не в топ-10: ${queries.slice(0, 15).join(', ')}`);

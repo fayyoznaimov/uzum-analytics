@@ -198,10 +198,11 @@ export class AdBotService {
     return { actions, outcomes, keywords, groupTitles, budgetNotes };
   }
 
-  /** Названия цветов по id групп: группа → SKU → skuTitle из getProducts. */
-  private async groupTitles(groupIds: string[]): Promise<Map<string, string>> {
-    const titles = new Map<string, string>();
-    if (!groupIds.length) return titles;
+  /** SKU цветов с остатком: группа → SKU (кабинет skugroup/sku) → skuTitle и quantityActive из getProducts.
+   * Группа без ответа кабинета в карту не попадает — её остаток неизвестен. */
+  async colourSkus(groupIds: string[]): Promise<Map<string, Array<{ skuId: string; title: string; quantity: number }>>> {
+    const result = new Map<string, Array<{ skuId: string; title: string; quantity: number }>>();
+    if (!groupIds.length) return result;
     const shopId = await this.cabinet.cabinetShopId();
     const skusByGroup = new Map<string, string[]>();
     for (let index = 0; index < groupIds.length; index += 20) {
@@ -210,18 +211,29 @@ export class AdBotService {
         skusByGroup.set(String(group.skuGroupId), (group.skuShortInfoDtos ?? []).map((sku: any) => String(sku.skuId)));
       }
     }
-    const skuTitle = new Map<string, string>();
+    const skuInfo = new Map<string, { title: string; quantity: number }>();
     for (let page = 0; page < MAX_PAGES; page++) {
       const body = await this.get(`${CABINET}/shop/${shopId}/product/getProducts`, { page, size: 100 });
       const products: any[] = Array.isArray(body?.productList) ? body.productList : [];
       for (const product of products) {
-        for (const sku of Array.isArray(product.skuList) ? product.skuList : []) skuTitle.set(String(sku.skuId), String(sku.skuTitle ?? sku.skuFullTitle ?? '').replace(/^FAYYOZ-/, ''));
+        for (const sku of Array.isArray(product.skuList) ? product.skuList : []) {
+          skuInfo.set(String(sku.skuId), { title: String(sku.skuTitle ?? sku.skuFullTitle ?? '').replace(/^FAYYOZ-/, ''), quantity: num(sku.quantityActive) });
+        }
       }
       if (products.length < 100) break;
     }
     for (const [groupId, skus] of skusByGroup) {
-      const names = skus.map((id) => skuTitle.get(id)).filter(Boolean) as string[];
-      if (names.length) titles.set(groupId, names[0].replace(/-(50 x 90|70 x140|Havana|Банный|Лицевой|Микс|Сауна|банн\S*|лицев\S*|микс|сауна)$/i, ''));
+      result.set(groupId, skus.flatMap((skuId) => { const info = skuInfo.get(skuId); return info ? [{ skuId, ...info }] : []; }));
+    }
+    return result;
+  }
+
+  /** Названия цветов по id групп: название первого SKU без размера. */
+  private async groupTitles(groupIds: string[]): Promise<Map<string, string>> {
+    const titles = new Map<string, string>();
+    for (const [groupId, skus] of await this.colourSkus(groupIds)) {
+      const name = skus.find((row) => row.title)?.title;
+      if (name) titles.set(groupId, name.replace(/-(50 x 90|70 x140|Havana|Банный|Лицевой|Микс|Сауна|банн\S*|лицев\S*|микс|сауна)$/i, ''));
     }
     return titles;
   }

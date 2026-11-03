@@ -128,6 +128,12 @@ export class AdLadderService {
       });
       const statsWeek = await this.adBot.keywordStatsByKey(sellerId, keywords, monday, today).catch(() => null);
       for (const row of keywords) row.stats7 = stats7?.get(statKey(row)) ?? null;
+      // Остатки цветов по размерам: цвет без размера запроса в наличии в топ-10 не держим (common/ad-ladder.ts → colourStockBlock).
+      const skus = await this.adBot.colourSkus([...new Set(keywords.map((row) => row.skuGroupId))]).catch((error: any) => {
+        notes.push(`остатки цветов не получены — наличие размеров не проверялось (${String(error?.message || error).slice(0, 100)})`);
+        return null;
+      });
+      for (const row of keywords) row.skus = skus?.get(row.skuGroupId) ?? null;
       const summaries: LadderCampaignSummary[] = campaigns.map((campaign) => {
         const rows = byCampaign.get(campaign.id) ?? [];
         const keys = [...new Set(rows.map(statKey))];

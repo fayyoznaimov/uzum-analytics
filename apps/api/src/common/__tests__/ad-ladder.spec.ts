@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeCapTests, formatCampaignSummary, formatLadderReport, launchCampaigns, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, planLadderBids, sumLadderStats } from '../ad-ladder';
+import { activeCapTests, colourStockBlock, formatCampaignSummary, formatLadderReport, launchCampaigns, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, planLadderBids, skuSizeKind, sumLadderStats } from '../ad-ladder';
 import { BidLadderStep } from '../auto-bidder';
 
 /** Лестница кабинета: позиции 4…51 ↔ 100…20 % показов, цена топ-10 (позиция 9) = top10. */
@@ -100,6 +100,36 @@ describe('лестница ставок', () => {
     const a = { ...kw('a', 'полотенце банное', 30_000, 28_000), stats7: st(26_000, 0, 0) };
     const b = { ...kw('b', 'полотенце банное', 31_000, 29_000), stats7: st(26_000, 0, 0) };
     expect(actions([a, b])).toEqual([['a', 'LOWER', 9_500], ['b', 'LOWER', 9_500]]);
+  });
+
+  it('остаток размера: цвет без размера запроса не боевой и идёт на минимум, топ-10 — следующим цветам (J403 03.11)', () => {
+    expect(['БЕЛЫЙ-Банный', 'СЕРЫЙ-70 x140', 'КРЕМОВ-банны', 'РОЗОВ-Микс', 'БЕЖЕВ-Havana', 'ГОЛУБ-комплек', 'БЕЛЫЙ-Сауна', 'НГОЛУБ-сауна', 'СЕРЫЙ-лицево', 'БЕЛЫЙ-50 x 90', 'ГОЛУБ-салфетк', 'beach', 'БЕЛЫЙ'].map(skuSizeKind))
+      .toEqual(['bath', 'bath', 'bath', 'set', 'set', 'set', 'big', 'big', 'face', 'face', 'hand', 'big', null]);
+    const white = [{ title: 'БЕЛЫЙ-Банный', quantity: 0 }, { title: 'БЕЛЫЙ-Лицевой', quantity: 20 }, { title: 'БЕЛЫЙ-Микс', quantity: 0 }, { title: 'БЕЛЫЙ-Сауна', quantity: 9 }];
+    expect(colourStockBlock('полотенце банное', white)).toBe('у цвета нет банного в наличии');
+    expect(colourStockBlock('sochiq yuz va hammom', white)).toBe('у цвета нет банного в наличии');
+    expect(colourStockBlock('Набор полотенец', white)).toBe('у цвета нет наборов в наличии');
+    expect(colourStockBlock("sochiq to'plami", white)).toBe('у цвета нет наборов в наличии');
+    for (const q of ['полотенце для лица', 'полотенце для сауны', 'полотенце для бани', 'полотенце']) expect(colourStockBlock(q, white)).toBeNull();
+    // у HAVANA 100×150 нет вовсе — фраза про баню выбрана сознательно; нет данных об остатке — не блокируем
+    expect(colourStockBlock('полотенце для бани', [{ title: 'БЕЛЫЙ-50 x 90', quantity: 29 }, { title: 'БЕЛЫЙ-70 x140', quantity: 0 }])).toBeNull();
+    expect(colourStockBlock('полотенце банное', null)).toBeNull();
+    // сауна 2263224: у цвета один SKU без размера в названии
+    expect(colourStockBlock('sauna sochiq', [{ title: 'СВЕТКОР', quantity: 0 }])).toBe('у цвета нет остатка');
+    expect(colourStockBlock('sauna sochiq', [{ title: 'СВЕТКОР', quantity: 2 }])).toBeNull();
+    // белый — самый дешёвый топ-10, но без 70×140: на минимум даже в паузе после правки, боевые — серый и розовый
+    const w = { ...kw('white', 'полотенце банное', 60_000, 45_000), skus: white };
+    const grey = { ...kw('grey', 'полотенце банное', 15_000, 50_000), skus: [{ title: 'СЕРЫЙ-Банный', quantity: 8 }] };
+    const pink = { ...kw('pink', 'полотенце банное', 37_500, 52_000), skus: [{ title: 'РОЗОВ-Банный', quantity: 9 }] };
+    const decisions = planLadderBids([w, grey, pink], undefined, new Set([ladderKey(w)]));
+    expect(decisions.map((row) => [row.keyword.skuGroupId, row.role, row.action?.newCpm ?? null])).toEqual([['white', 'other', 9_500], ['grey', 'top', 51_500], ['pink', 'top', 54_000]]);
+    expect(decisions[0]).toMatchObject({ noStock: 'у цвета нет банного в наличии', blocked: null });
+    expect(decisions[0].action?.reason).toBe('лестница: у цвета нет банного в наличии — ставка на минимум');
+    const report = formatLadderReport(decisions, { apply: true });
+    expect(report).toContain('Нет размера в наличии, ставка на минимум (1): HAVANA: white — у цвета нет банного в наличии (1: «полотенце банное»)');
+    expect(report).not.toContain('Не окупаются');
+    // остатки не получены — прежнее правило
+    expect(planLadderBids([w, grey, pink].map((row) => ({ ...row, skus: null }))).filter((row) => row.role === 'top').map((row) => row.keyword.skuGroupId)).toEqual(['white', 'grey']);
   });
 
   it('тест потолка: цвет держим в топ-10 до своего потолка, пока ДРР ≤ порога теста; после срока — обычный потолок', () => {
