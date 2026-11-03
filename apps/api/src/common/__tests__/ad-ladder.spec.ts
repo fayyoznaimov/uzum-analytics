@@ -135,8 +135,8 @@ describe('лестница ставок', () => {
     // Владелец 03.11: там, где Сердечки стоят органикой в топ-6, рекламы быть не должно.
     expect(push.find((row) => row.query === 'полотенце с сердечками')).toBeUndefined();
     expect(push.find((row) => row.query === 'yurakchali sochiq')).toBeUndefined();
-    expect(push.find((row) => row.query === 'полотенце детское' && row.skuGroupId === '6472965')).toMatchObject({ cap: 45_000, maxDrr: 30, until: '2026-11-16' });
-    expect(push.find((row) => row.query === 'sochiq yuz va hammom' && row.skuGroupId === '6472969')).toMatchObject({ cap: 45_000 });
+    expect(push.find((row) => row.query === 'полотенце детское' && row.skuGroupId === '6472965')).toMatchObject({ cap: 70_000, maxDrr: 30, until: '2026-11-16' });
+    expect(push.find((row) => row.query === 'sochiq yuz va hammom' && row.skuGroupId === '6472969')).toMatchObject({ cap: 70_000 });
     // ZoomSelling 03.11: у «полотенце жаккард» спроса нет — из тестов потолков убрана.
     expect(push.find((row) => row.query === 'полотенце жаккард')).toBeUndefined();
     expect(activeCapTests('2026-11-17').filter((row) => row.campaignId === '337334')).toEqual([]);

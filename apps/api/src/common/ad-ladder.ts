@@ -60,9 +60,10 @@ export const HEARTS_PUSH_QUERIES: Array<{ query: string; cap: number }> = [
   // «sochiqlar sovg'a to'plami», подарочные наборы — спроса нет, остановлены (deploy/ads/seed-demand-cuts-2026-11-03.json).
   // Новые: «sochiq yuz va hammom» (502 показа/день, коэффициент спроса 19 — самый свободный запрос ниши), «sochiqlar hammom yuz va»,
   // «banyo sochiq», «полотенце для тела» (+1311 % за месяц), «detskiy sochiq».
-  { query: 'полотенце для лица', cap: 45_000 }, { query: 'yuz uchun sochiq', cap: 45_000 }, { query: 'махровые полотенца для рук', cap: 45_000 },
-  { query: 'полотенце детское', cap: 45_000 }, { query: 'полотенце для детей', cap: 45_000 }, { query: 'bolalar sochiq', cap: 45_000 }, { query: 'detskiy sochiq', cap: 45_000 },
-  { query: 'sochiq yuz va hammom', cap: 45_000 }, { query: 'sochiqlar hammom yuz va', cap: 45_000 }, { query: 'banyo sochiq', cap: 45_000 }, { query: 'полотенце для тела', cap: 45_000 },
+  // Владелец 03.11 22:30: «лимит до 70к, через 2–3 дня чекнем» — потолок 70 000 на всех фразах со спросом, итог 06.11.
+  { query: 'полотенце для лица', cap: 70_000 }, { query: 'yuz uchun sochiq', cap: 70_000 }, { query: 'махровые полотенца для рук', cap: 70_000 },
+  { query: 'полотенце детское', cap: 70_000 }, { query: 'полотенце для детей', cap: 70_000 }, { query: 'bolalar sochiq', cap: 70_000 }, { query: 'detskiy sochiq', cap: 70_000 },
+  { query: 'sochiq yuz va hammom', cap: 70_000 }, { query: 'sochiqlar hammom yuz va', cap: 70_000 }, { query: 'banyo sochiq', cap: 70_000 }, { query: 'полотенце для тела', cap: 70_000 },
 ];
 export const AD_LADDER_CAP_TESTS: LadderCapTest[] = [
   { campaignId: '305122', skuGroupId: '5374111', query: 'sochiq', cap: 35_000, maxDrr: 8, until: '2026-11-03' },
