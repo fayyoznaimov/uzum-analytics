@@ -59,6 +59,11 @@ describe('parseSupplierSheets', () => {
     expect(parsed.warnings.join('\n')).toMatch(/Строка 9: код 99 нет в номенклатуре/);
   });
 
+  it('цена из колонки «Цена $» строки важнее цены номенклатуры', () => {
+    const parsed = parseSupplierSheets([nomenclature, { name: 'Продажи', rows: [[...header, 'Цена $'], [d('2026-01-24'), 1, 25, null, null, null, null, 6], [d('2026-10-15'), 1, 2]] }]);
+    expect(parsed.entries.map((entry) => [entry.priceUsd, entry.amountUsd])).toEqual([[6, 150], [6.21, 12.42]]);
+  });
+
   it('без листа номенклатуры — понятная ошибка', () => {
     expect(() => parseSupplierSheets([{ name: 'Лист1', rows: [header] }])).toThrow(/Номенклатура/);
   });

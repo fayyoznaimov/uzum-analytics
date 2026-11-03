@@ -207,6 +207,8 @@ export function parseSupplierSheets(sheets: Array<{ name: string; rows: unknown[
   });
 
   const h = headerIndex(ledger.rows[0]);
+  // Необязательная колонка «Цена $» — цена строки из накладной; без неё берётся цена из номенклатуры.
+  const usdPriceColumn = h.get('цена $') ?? h.get('цена, $') ?? h.get('цена в $');
   const known = new Set([...h.values()]);
   const entries: ParsedSupplierEntry[] = [];
   let lastDay: string | null = null;
@@ -217,6 +219,7 @@ export function parseSupplierSheets(sheets: Array<{ name: string; rows: unknown[
     const code = num(row[h.get('код')!]);
     const quantity = num(row[h.get('кол-во')!]);
     const revenue = num(row[h.get('выручка')!]);
+    const rowPriceUsd = usdPriceColumn === undefined ? null : num(row[usdPriceColumn]);
     const notes = row.map((cell, column) => (known.has(column) ? '' : scalar(cell))).filter((cell): cell is string => typeof cell === 'string' && /\p{L}/u.test(cell)).map((cell) => cell.trim());
     const isReceipt = code !== null && quantity !== null && quantity > 0;
     const isPayment = !isReceipt && code === null && revenue !== null && revenue > 0;
@@ -234,8 +237,9 @@ export function parseSupplierSheets(sheets: Array<{ name: string; rows: unknown[
       if (!item) { warnings.push(`Строка ${sourceRow}: код ${code} нет в номенклатуре — пропущена`); return; }
       if (!Number.isInteger(quantity)) warnings.push(`Строка ${sourceRow}: дробное количество ${quantity} округлено`);
       const units = Math.round(quantity!);
-      if (item.priceUsd === null) warnings.push(`Строка ${sourceRow}: у кода ${code} «${item.title}» нет цены в $ — долг не начислен`);
-      entries.push({ sourceRow, day, type: 'RECEIPT', code: code!, quantity: units, priceUzs: item.priceUzs, priceUsd: item.priceUsd, amountUzs: null, rate: null, amountUsd: receiptUsd(units, item.priceUsd), comment });
+      const priceUsd = rowPriceUsd !== null && rowPriceUsd > 0 ? rowPriceUsd : item.priceUsd;
+      if (priceUsd === null) warnings.push(`Строка ${sourceRow}: у кода ${code} «${item.title}» нет цены в $ — долг не начислен`);
+      entries.push({ sourceRow, day, type: 'RECEIPT', code: code!, quantity: units, priceUzs: item.priceUzs, priceUsd, amountUzs: null, rate: null, amountUsd: receiptUsd(units, priceUsd), comment });
     } else {
       entries.push({ sourceRow, day, type: 'PAYMENT', code: null, quantity: null, priceUzs: null, priceUsd: null, amountUzs: revenue!, rate, amountUsd: paymentUsd(revenue!, rate), comment });
     }
