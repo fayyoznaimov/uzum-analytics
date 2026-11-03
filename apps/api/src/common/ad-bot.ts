@@ -411,6 +411,11 @@ export type SeedSpec = {
   /** Скопировать объявления цвета-источника в цвет-цель (цель → источник): так возобновляют группу,
    * чьи объявления остановлены (кабинет их не отдаёт), или добавляют новый цвет в кампанию. */
   cloneGroups?: Record<string, string>;
+  /** Копировать в cloneGroups только эти фразы (03.11.2026: J403 — серому только банные и наборные фразы белого,
+   * у белого кончились 70×140 и наборы). Без поля копируются все объявления источника. */
+  cloneOnly?: string[];
+  /** Стартовая ставка копий cloneGroups вместо ставки источника; дальше ставку ведёт лестница. */
+  cloneCpm?: number;
   /** Остановить дубли фразы внутри цвета (один запрос дважды): остаётся объявление с наименьшим id. */
   dedupe?: boolean;
 };
@@ -488,13 +493,14 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
     const suspendedAds = new Set(actions.filter((row) => row.kind === 'SUSPEND').map((row) => row.adId));
     // Новые объявления этого прогона по «цвет|запрос»: cloneGroups и phrases не должны добавить одну фразу дважды.
     const planned = new Map<string, AdBotAction>();
+    const cloneOnly = spec.cloneOnly ? new Set(spec.cloneOnly.map(normalizeQuery)) : null;
     for (const [target, source] of Object.entries(spec.cloneGroups ?? {})) {
-      const from = own.filter((row) => row.skuGroupId === source);
+      const from = own.filter((row) => row.skuGroupId === source && (!cloneOnly || cloneOnly.has(normalizeQuery(row.query))));
       const have = new Set(own.filter((row) => row.skuGroupId === target).map((row) => normalizeQuery(row.query)));
       for (const row of from) {
         const key = `${target}|${normalizeQuery(row.query)}`;
         if (have.has(normalizeQuery(row.query)) || planned.has(key)) continue;
-        const action: AdBotAction = { kind: 'ADD', campaignId: spec.campaignId, campaignName: row.campaignName, skuGroupId: target, groupTitle: target, adId: null, query: row.query, oldCpm: null, newCpm: clampBid(row.cpm, 'down', cfg), stopWords: row.stopWords, reason: `скопировано из цвета ${source}` };
+        const action: AdBotAction = { kind: 'ADD', campaignId: spec.campaignId, campaignName: row.campaignName, skuGroupId: target, groupTitle: target, adId: null, query: row.query, oldCpm: null, newCpm: clampBid(spec.cloneCpm ?? row.cpm, 'down', cfg), stopWords: row.stopWords, reason: `скопировано из цвета ${source}` };
         planned.set(key, action);
         actions.push(action);
       }

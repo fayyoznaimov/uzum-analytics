@@ -242,6 +242,9 @@ describe('ручной посев фраз', () => {
     ]);
     expect(cloned[0].stopWords).toEqual(keywords[0].stopWords);
     expect(cloned[0].reason).toContain('скопировано из цвета 4160950');
+    // только выбранные фразы и своя стартовая ставка (J403 03.11: серому — банные и наборные фразы белого)
+    const some = seedKeywordActions(keywords, [{ campaignId: '332097', cloneGroups: { '999': '4160950' }, cloneOnly: ['Полотенце  для сауны'], cloneCpm: 12_000 }]);
+    expect(some.map((row) => [row.skuGroupId, row.kind, row.query, row.newCpm])).toEqual([['999', 'ADD', 'полотенце для сауны', 12_000]]);
     // бюджет кампании через buildCampaignUpdate
     const body = buildCampaignUpdate({ name: 'x', budgetConfig: { weeklyAmount: 150_000, uniformDistribution: false }, period: { dateFrom: '2026-09-26', dateTo: null, isEndless: true } }, [], { weeklyAmount: 50_000, uniform: true });
     expect(body.budgetConfig).toEqual({ reset: false, uniformDistribution: true, weeklyAmount: 50_000 });
