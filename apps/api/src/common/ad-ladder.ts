@@ -53,7 +53,9 @@ export type LadderCapTest = { campaignId: string; skuGroupId: string; query: str
 export const HEARTS_PUSH_QUERIES: Array<{ query: string; cap: number }> = [
   // Владелец 03.11.2026: «на узких запросах можем в топ-10, не обязательно топ-1; по Сердечкам тоже нужно попасть» — потолок
   // 45 000 на всех узких фразах; «полотенце детское» (топ-10 от 79 000) и «полотенце для лица» (от 109 000) остаются недосягаемыми.
-  { query: 'полотенце с сердечками', cap: 45_000 }, { query: 'yurakchali sochiq', cap: 45_000 }, { query: 'полотенце в подарок', cap: 45_000 }, { query: "sochiqlar sovg'a to'plami", cap: 45_000 },
+  // Владелец 03.11 19:00: «полотенце с сердечками» и «yurakchali sochiq» сняты — Сердечки там стоят органикой на 1–6 местах,
+  // реклама дублировала свои же места (deploy/ads/seed-hearts-organic-2026-11-03.json).
+  { query: 'полотенце в подарок', cap: 45_000 }, { query: "sochiqlar sovg'a to'plami", cap: 45_000 },
   { query: 'полотенце для лица', cap: 45_000 }, { query: 'yuz uchun sochiq', cap: 45_000 }, { query: 'полотенце жаккард', cap: 45_000 }, { query: 'махровые полотенца для рук', cap: 45_000 },
   { query: 'полотенце для девочки', cap: 45_000 }, { query: 'полотенце детское', cap: 45_000 }, { query: 'детское полотенце для тела', cap: 45_000 }, { query: 'полотенце для детей', cap: 45_000 }, { query: 'полотенце розовое', cap: 45_000 }, { query: 'bolalar sochiq', cap: 45_000 }, { query: 'красивое полотенце', cap: 45_000 },
 ];
