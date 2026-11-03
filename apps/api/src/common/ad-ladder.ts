@@ -55,9 +55,14 @@ export const HEARTS_PUSH_QUERIES: Array<{ query: string; cap: number }> = [
   // 45 000 на всех узких фразах; «полотенце детское» (топ-10 от 79 000) и «полотенце для лица» (от 109 000) остаются недосягаемыми.
   // Владелец 03.11 19:00: «полотенце с сердечками» и «yurakchali sochiq» сняты — Сердечки там стоят органикой на 1–6 местах,
   // реклама дублировала свои же места (deploy/ads/seed-hearts-organic-2026-11-03.json).
-  { query: 'полотенце в подарок', cap: 45_000 }, { query: "sochiqlar sovg'a to'plami", cap: 45_000 },
-  { query: 'полотенце для лица', cap: 45_000 }, { query: 'yuz uchun sochiq', cap: 45_000 }, { query: 'полотенце жаккард', cap: 45_000 }, { query: 'махровые полотенца для рук', cap: 45_000 },
-  { query: 'полотенце для девочки', cap: 45_000 }, { query: 'полотенце детское', cap: 45_000 }, { query: 'детское полотенце для тела', cap: 45_000 }, { query: 'полотенце для детей', cap: 45_000 }, { query: 'полотенце розовое', cap: 45_000 }, { query: 'bolalar sochiq', cap: 45_000 }, { query: 'красивое полотенце', cap: 45_000 },
+  // Владелец 03.11 22:00 («я это всё купил, теперь это нужно юзать»): список переписан по базе спроса ZoomSelling — остались только
+  // фразы с реальными показами на Uzum (≥ 20 в день); «в подарок», «жаккард», «розовое», «красивое», «для девочки», «детское … для тела»,
+  // «sochiqlar sovg'a to'plami», подарочные наборы — спроса нет, остановлены (deploy/ads/seed-demand-cuts-2026-11-03.json).
+  // Новые: «sochiq yuz va hammom» (502 показа/день, коэффициент спроса 19 — самый свободный запрос ниши), «sochiqlar hammom yuz va»,
+  // «banyo sochiq», «полотенце для тела» (+1311 % за месяц), «detskiy sochiq».
+  { query: 'полотенце для лица', cap: 45_000 }, { query: 'yuz uchun sochiq', cap: 45_000 }, { query: 'махровые полотенца для рук', cap: 45_000 },
+  { query: 'полотенце детское', cap: 45_000 }, { query: 'полотенце для детей', cap: 45_000 }, { query: 'bolalar sochiq', cap: 45_000 }, { query: 'detskiy sochiq', cap: 45_000 },
+  { query: 'sochiq yuz va hammom', cap: 45_000 }, { query: 'sochiqlar hammom yuz va', cap: 45_000 }, { query: 'banyo sochiq', cap: 45_000 }, { query: 'полотенце для тела', cap: 45_000 },
 ];
 export const AD_LADDER_CAP_TESTS: LadderCapTest[] = [
   { campaignId: '305122', skuGroupId: '5374111', query: 'sochiq', cap: 35_000, maxDrr: 8, until: '2026-11-03' },
