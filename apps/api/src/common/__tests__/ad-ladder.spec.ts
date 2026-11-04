@@ -139,8 +139,13 @@ describe('лестница ставок', () => {
     expect(planLadderBids([blue], undefined, new Set(), new Set(), {}, [test])[0]).toMatchObject({ role: 'top', action: { kind: 'RAISE', newCpm: 31_000 } });
     const costly = { ...blue, cpm: 31_000, stats7: { impressions: 2000, clicks: 60, sold: 4, revenue: 380_000, spend: 34_000, position: null } }; // ДРР 8,9 %
     expect(planLadderBids([costly], undefined, new Set(), new Set(), {}, [test])[0]).toMatchObject({ role: 'other', blocked: 'ДРР 8.9 % > 8 %', action: { kind: 'LOWER', newCpm: 29_500 } });
-    expect(activeCapTests('2026-11-03').filter((row) => row.campaignId === '305122').map((row) => row.query)).toEqual(['sochiq', 'sochiqlar']);
-    expect(activeCapTests('2026-11-04').filter((row) => row.campaignId === '305122')).toEqual([]);
+    expect(activeCapTests('2026-11-03').filter((row) => row.campaignId === '305122').map((row) => row.query)).toEqual(['sochiq', 'sochiqlar', 'полотенце банное']);
+    // 04.11: голубой j471 на «полотенце банное» до 65 000 неделю — топ-10 голубого дороже потолка банных 60 000
+    expect(activeCapTests('2026-11-04').filter((row) => row.campaignId === '305122')).toEqual([{ campaignId: '305122', skuGroupId: '5374111', query: 'полотенце банное', cap: 65_000, maxDrr: 8, until: '2026-11-11' }]);
+    const sky = { ...kw('5374111', 'полотенце банное', 9_500, 61_000), campaignId: '305122' };
+    expect(planLadderBids([sky])[0]).toMatchObject({ role: 'other', action: null });
+    expect(planLadderBids([sky], undefined, new Set(), new Set(), {}, activeCapTests('2026-11-04'))[0]).toMatchObject({ role: 'top', action: { kind: 'RAISE', newCpm: 63_000 } });
+    expect(activeCapTests('2026-11-12').filter((row) => row.campaignId === '305122')).toEqual([]);
   });
 
   it('кампания «держим в топ-10»: оба цвета в топе по любой фразе до общего потолка ставки', () => {
