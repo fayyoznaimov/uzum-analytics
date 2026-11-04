@@ -508,7 +508,9 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
     for (const skuGroupId of [...new Set(own.map((row) => row.skuGroupId))]) {
       if (suspended.has(skuGroupId)) continue;
       const inGroup = own.filter((row) => row.skuGroupId === skuGroupId);
-      const baseStop = inGroup[0].stopWords;
+      // Новые фразы получают минус-слова цвета уже с правкой этого же посева (04.11.2026: иначе новая фраза уходила бы
+      // со старым списком, и чистить её пришлось бы вторым прогоном).
+      const baseStop = spec.stopWords && !spec.stopWords.onlyLatin ? mergeStopWords(inGroup[0].stopWords, spec.stopWords, cfg.maxStopWords) ?? inGroup[0].stopWords : inGroup[0].stopWords;
       const common = { campaignId: spec.campaignId, campaignName: inGroup[0].campaignName, skuGroupId, groupTitle: skuGroupId };
       for (const phrase of spec.phrases ?? []) {
         const query = normalizeQuery(phrase.query);

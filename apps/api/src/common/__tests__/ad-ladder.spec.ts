@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeCapTests, colourStockBlock, formatCampaignSummary, formatLadderReport, launchCampaigns, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, planLadderBids, skuSizeKind, sumLadderStats } from '../ad-ladder';
+import { activeCapTests, colourStockBlock, formatCampaignSummary, formatLadderReport, launchCampaigns, ladderCampaigns, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, narrowClass, planLadderBids, skuSizeKind, sumLadderStats } from '../ad-ladder';
 import { BidLadderStep } from '../auto-bidder';
 
 /** Лестница кабинета: позиции 4…51 ↔ 100…20 % показов, цена топ-10 (позиция 9) = top10. */
@@ -163,18 +163,30 @@ describe('лестница ставок', () => {
     expect(planLadderBids([fresh])[0]).toMatchObject({ role: 'other' });
     expect([...launchCampaigns('2026-10-20', { '337334': '2026-11-01' })]).toEqual(['337334']);
     expect([...launchCampaigns('2026-11-02', { '337334': '2026-11-01' })]).toEqual([]);
-    // распродажа Сердечек: льгота до 16.11 и тест потолка 45 000 на оба цвета по подарочным/детским фразам
-    expect([...launchCampaigns('2026-11-10')]).toEqual(['337334']);
-    const push = activeCapTests('2026-11-10').filter((row) => row.campaignId === '337334');
-    expect(push.length).toBe(22);
-    // Владелец 03.11: там, где Сердечки стоят органикой в топ-6, рекламы быть не должно.
-    expect(push.find((row) => row.query === 'полотенце с сердечками')).toBeUndefined();
-    expect(push.find((row) => row.query === 'yurakchali sochiq')).toBeUndefined();
-    expect(push.find((row) => row.query === 'полотенце детское' && row.skuGroupId === '6472965')).toMatchObject({ cap: 70_000, maxDrr: 30, until: '2026-11-16' });
-    expect(push.find((row) => row.query === 'sochiq yuz va hammom' && row.skuGroupId === '6472969')).toMatchObject({ cap: 70_000 });
-    // ZoomSelling 03.11: у «полотенце жаккард» спроса нет — из тестов потолков убрана.
-    expect(push.find((row) => row.query === 'полотенце жаккард')).toBeUndefined();
-    expect(activeCapTests('2026-11-17').filter((row) => row.campaignId === '337334')).toEqual([]);
+    // 04.11.2026 («лишь бы не просрать деньги»): льгота и тесты потолков Сердечек сняты — ДРР 53 % за 7 дней.
+    expect([...launchCampaigns('2026-11-10')]).toEqual([]);
+    expect(activeCapTests('2026-11-10').filter((row) => row.campaignId === '337334')).toEqual([]);
+  });
+
+  it('узкие ключи товара: один цвет в топ-10 до потолка карточки, свой ДРР, стоп после 25 000 без продаж', () => {
+    expect(narrowClass('332097', 'Полотенце  100х150')).toMatchObject({ name: 'узкие ключи товара', cap: 45_000, colors: 1, maxDrr: 9, noSaleSpend: 25_000 });
+    expect(narrowClass('286528', 'sochiq')).toBeNull();
+    expect(narrowClass('286528', 'полотенце 100х150')).toBeNull(); // узкие ключи — свои у каждой кампании
+    expect(narrowClass('337334', "qo'l sochiq")).toMatchObject({ cap: 25_000, maxDrr: 12 });
+    expect(ladderCampaigns()).toContain('305326'); // плед в лестнице
+    const sauna = (g: string, query: string, cpm: number, top10: number | null) => ({ ...kw(g, query, cpm, top10), campaignId: '332097' });
+    // Топ-10 «полотенце 100х150» 17 893 (лестница 04.11): один цвет поднимаем, второй не трогаем (в классе «наборы, сауна» было бы два).
+    const plan = planLadderBids([sauna('a', 'полотенце 100х150', 9_500, 17_893), sauna('b', 'полотенце 100х150', 9_500, 19_000)]);
+    expect(plan.map((row) => [row.keyword.skuGroupId, row.role, row.action?.newCpm ?? null])).toEqual([['a', 'top', 18_500], ['b', 'other', null]]);
+    // «полотенце банное большое» — топ-10 66 208 дороже потолка сауны 45 000: не в топе.
+    expect(planLadderBids([sauna('a', 'полотенце банное большое', 9_500, 66_208)])[0]).toMatchObject({ role: 'other', action: null });
+    // 26 000 за 7 дней без продаж — ставка на минимум (у общих классов порог 50 000).
+    const dry = { impressions: 900, clicks: 12, sold: 0, revenue: 0, spend: 26_000, position: null };
+    expect(planLadderBids([{ ...sauna('a', 'sauna', 20_000, 14_201), stats7: dry }])[0]).toMatchObject({ role: 'other', action: { kind: 'LOWER', newCpm: 9_500 } });
+    expect(planLadderBids([{ ...sauna('a', 'полотенце банное', 20_000, 14_201), stats7: dry }])[0]).toMatchObject({ role: 'top', action: { newCpm: 15_000 } }); // общий класс: 26 000 без продаж ещё не повод
+    // Свой потолок ДРР карточки: HAVANA 9 % — при ДРР 10 % узкая фраза не в топе.
+    const havana = { ...kw('k', 'полотенце банное мужское', 9_500, 12_230), stats7: { impressions: 2_000, clicks: 40, sold: 3, revenue: 400_000, spend: 40_000, position: null } };
+    expect(planLadderBids([havana])[0]).toMatchObject({ role: 'other', blocked: 'ДРР 10.0 % > 9 %' });
   });
 
   it('сводка кампании: ДРР, расход с понедельника и предупреждение о бюджете', () => {

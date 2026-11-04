@@ -210,6 +210,9 @@ describe('ручной посев фраз', () => {
     // onlyNew — только добавить, где фразы нет; ставку существующей (её ведёт лестница) не трогаем
     const fresh = seedKeywordActions(keywords, [{ campaignId: '332097', phrases: [{ query: 'полотенце для сауны', cpm: 15_000, onlyNew: true }, { query: 'sauna sochiq', cpm: 15_000, onlyNew: true }] }]);
     expect(fresh.map((row) => [row.skuGroupId, row.kind, row.query])).toEqual([['4160950', 'ADD', 'sauna sochiq'], ['777', 'ADD', 'sauna sochiq']]);
+    // Посев с правкой минус-слов: новая фраза уходит сразу с исправленным списком цвета (04.11.2026).
+    const withWords = seedKeywordActions(keywords, [{ campaignId: '332097', stopWords: { add: ['siqilgan'], remove: ['вафельное'] }, phrases: [{ query: 'полотенце 100х150', cpm: 9_500, onlyNew: true }] }]);
+    expect(withWords.find((row) => row.kind === 'ADD' && row.skuGroupId === '777')?.stopWords).toEqual(['soch', 'siqilgan']);
   });
   it('правка минус-слов: убрать, добавить, при полном списке выбросить бесполезные; только узбекские фразы', () => {
     const full = Array.from({ length: 56 }, (_, index) => `слово${index}`).concat(['soch', 'майнкрафт']);

@@ -16,6 +16,8 @@
  *      каждая правка в Uzum пересоздаёт объявление, дёргать его ради 500 сум незачем.
  *   5. Цвет без нужного запросу размера в наличии (colourStockBlock) боевым не бывает, его ставка — на минимум;
  *      место в топ-10 занимает следующий по цене цвет, с поставкой цвет возвращается сам.
+ *   6. Узкие ключи товара (AD_LADDER_NARROW, с 04.11.2026) вместо класса по словам: один цвет в топ-10 до потолка карточки,
+ *      свой потолок ДРР карточки и стоп после 25 000 за 7 дней без продаж.
  *
  * Модуль чистый — без сети и БД. Сервис: modules/ads/ad-ladder.service.ts.
  */
@@ -24,16 +26,18 @@ import { BidLadderStep, bidForPosition, bidForReach, policyKey, positionForBid }
 
 /** Кампании полотенец (HAVANA, j471, J403, «Банное 100×150» 332097 — сауна 2263224, с 17.10.2026) — по умолчанию; AD_LADDER_CAMPAIGNS переопределяет
  * списком id через запятую. Неактивная (на паузе) кампания пропускается с пометкой в отчёте. */
-export const AD_LADDER_DEFAULT_CAMPAIGNS = ['286528', '305122', '305324', '332097', '337334'];
+export const AD_LADDER_DEFAULT_CAMPAIGNS = ['286528', '305122', '305324', '332097', '337334', '305326'];
+// 305326 «YD» — плед 2880108, с 04.11.2026 (узкие ключи пледа, AD_LADDER_NARROW).
 
 /**
  * Запуск новинки: до указанного дня (включительно, Ташкент) проверка ДРР кампании не действует — у товара без
  * отзывов первые продажи дорогие, и потолок 6 % задушил бы его в первые дни. Топ-10 и потолки ставок работают как обычно.
  * 337334 — «Сердечки 3480224 новинка» (жаккард с сердечками), создана 18.10.2026, льгота 14 дней.
  */
-export const AD_LADDER_LAUNCH_UNTIL: Record<string, string> = { '337334': '2026-11-16' };
-// 02.11.2026 льгота продлена до 16.11: владелец — «нужно 250 продаж Сердечек, максимум продаж, собрать отзывы»; товар вернулся
-// в #444 (лицевое 39 500), распродажа остатка 249 шт важнее ДРР.
+export const AD_LADDER_LAUNCH_UNTIL: Record<string, string> = {};
+// 02.11.2026 льгота Сердечек продлевалась до 16.11 («нужно 250 продаж»). 04.11.2026 снята вместе с тестами потолков 70 000
+// (владелец: «лишь бы не просрать деньги»): за 7 дней 41 836 рекламы при ДРР 53 %, «sochiq yuz va hammom» и
+// «sochiqlar hammom yuz va» за 14 дней 58 000 без продаж. Сердечки теперь под общими правилами и узкими ключами (AD_LADDER_NARROW).
 /**
  * Кампании, где каждый активный цвет держим в топ-10 по каждой фразе — потолок класса не действует, только общий потолок
  * ставки maxBid (AD_BOT_MAX_BID). Значение — сколько цветов держать. 337334 «Сердечки»: владелец 18.10.2026 — «рекламируй
@@ -50,23 +54,8 @@ export const AD_LADDER_HOLD_TOP: Record<string, number> = {};
  * sochiqlar серый — 4 продажи при 6 %; неделю пробуем топ-10 до 35 000, стоп при ДРР выше 8 %.
  */
 export type LadderCapTest = { campaignId: string; skuGroupId: string; query: string; cap: number; maxDrr: number; until: string };
-/** Фразы распродажи Сердечек (владелец 02.11: себестоимость 19/26/39/62 тыс.; 03.11: вне акции 59/69/129/179 тыс.,
- * лицевое даёт 20 тыс. до рекламы — узкие фразы держим до 45 000). */
-export const HEARTS_PUSH_QUERIES: Array<{ query: string; cap: number }> = [
-  // Владелец 03.11.2026: «на узких запросах можем в топ-10, не обязательно топ-1; по Сердечкам тоже нужно попасть» — потолок
-  // 45 000 на всех узких фразах; «полотенце детское» (топ-10 от 79 000) и «полотенце для лица» (от 109 000) остаются недосягаемыми.
-  // Владелец 03.11 19:00: «полотенце с сердечками» и «yurakchali sochiq» сняты — Сердечки там стоят органикой на 1–6 местах,
-  // реклама дублировала свои же места (deploy/ads/seed-hearts-organic-2026-11-03.json).
-  // Владелец 03.11 22:00 («я это всё купил, теперь это нужно юзать»): список переписан по базе спроса ZoomSelling — остались только
-  // фразы с реальными показами на Uzum (≥ 20 в день); «в подарок», «жаккард», «розовое», «красивое», «для девочки», «детское … для тела»,
-  // «sochiqlar sovg'a to'plami», подарочные наборы — спроса нет, остановлены (deploy/ads/seed-demand-cuts-2026-11-03.json).
-  // Новые: «sochiq yuz va hammom» (502 показа/день, коэффициент спроса 19 — самый свободный запрос ниши), «sochiqlar hammom yuz va»,
-  // «banyo sochiq», «полотенце для тела» (+1311 % за месяц), «detskiy sochiq».
-  // Владелец 03.11 22:30: «лимит до 70к, через 2–3 дня чекнем» — потолок 70 000 на всех фразах со спросом, итог 06.11.
-  { query: 'полотенце для лица', cap: 70_000 }, { query: 'yuz uchun sochiq', cap: 70_000 }, { query: 'махровые полотенца для рук', cap: 70_000 },
-  { query: 'полотенце детское', cap: 70_000 }, { query: 'полотенце для детей', cap: 70_000 }, { query: 'bolalar sochiq', cap: 70_000 }, { query: 'detskiy sochiq', cap: 70_000 },
-  { query: 'sochiq yuz va hammom', cap: 70_000 }, { query: 'sochiqlar hammom yuz va', cap: 70_000 }, { query: 'banyo sochiq', cap: 70_000 }, { query: 'полотенце для тела', cap: 70_000 },
-];
+// Тесты потолков Сердечек (HEARTS_PUSH_QUERIES: 11 фраз × 2 цвета до 70 000, ДРР до 30 %, 02–16.11.2026) сняты 04.11.2026
+// («лишь бы не просрать деньги»): за 7 дней ДРР 53 %, две узбекские фразы «для лица и тела» — 58 000 без продаж.
 export const AD_LADDER_CAP_TESTS: LadderCapTest[] = [
   { campaignId: '305122', skuGroupId: '5374111', query: 'sochiq', cap: 35_000, maxDrr: 8, until: '2026-11-03' },
   { campaignId: '305122', skuGroupId: '5374108', query: 'sochiqlar', cap: 35_000, maxDrr: 8, until: '2026-11-03' },
@@ -74,11 +63,43 @@ export const AD_LADDER_CAP_TESTS: LadderCapTest[] = [
   // (49 000 → 9 500), а 03.11 его объявление там дало 18 кликов и 3 продажи — покупатели брали голубое банное. Топ-10 голубого
   // стоит больше потолка банных 60 000, и j471 выпал из топ-10 запроса. Неделю держим голубой до 65 000, стоп при ДРР выше 8 %.
   { campaignId: '305122', skuGroupId: '5374111', query: 'полотенце банное', cap: 65_000, maxDrr: 8, until: '2026-11-11' },
-  // Распродажа Сердечек (владелец 02.11.2026: «нужно 250 продаж, максимум продаж, собрать отзывы»): оба боевых цвета в топ-10
-  // по продающим и подарочным/детским фразам до потолка по экономике размера (HEARTS_PUSH_QUERIES), ДРР до 30 %, до 16.11.
-  // Фразы класса «наборы» («подарочный набор полотенец», «набор полотенец в подарок») и так держат два цвета до 70 000.
-  ...HEARTS_PUSH_QUERIES.flatMap(({ query, cap }) => ['6472969', '6472965'].map((skuGroupId) => ({ campaignId: '337334', skuGroupId, query, cap, maxDrr: 30, until: '2026-11-16' }))),
 ];
+
+/**
+ * Узкие ключи товара (владелец 04.11.2026: «для каждого товара есть своё уникальное ключевое слово… нужно, чтобы оно было
+ * недорогим… хочу быть в топ-10 по всем самым популярным узким ключевым словам»; «лишь бы не просрать деньги»). Списки собраны
+ * из спроса ZoomSelling 03.11, продающих запросов покупателей (куб AdvertisingFeedDailyFunnel, 60 дней) и цены мест по лестнице
+ * кабинета 04.11 — `Uzum/Узкие_ключи_и_минус_слова_2026-11-04.md`. Узкий запрос — про размер, назначение, материал или аудиторию
+ * товара; у многих топ-10 стоит минимальную ставку (никто не торгуется), средний чек выше широких (HAVANA «набор полотенец
+ * махровые банное» — 127 тыс. против 70 тыс. по «sochiqlar»).
+ * На узкой фразе один цвет держим в топ-10 до cap; ДРР за 7 дней — свой потолок карточки, около трети маржи до рекламы
+ * (HAVANA 28 %, J471 32 %, J403 40 %, сауна и плед 27 %, Сердечки 38 %); 25 000 за 7 дней без продаж — ставка на минимум.
+ * Узкая фраза, у которой топ-10 дороже cap, в топ не идёт — отчёт показывает её в «дороже потолка».
+ */
+export type LadderNarrow = { cap: number; maxDrr: number; queries: string[] };
+export const AD_LADDER_NARROW_NO_SALE_SPEND = 25_000;
+export const AD_LADDER_NARROW: Record<string, LadderNarrow> = {
+  // Сауна 100×150 (2263224): размер, баня/сауна/бассейн/пляж; дороже 45 000 («полотенце банное большое» 66 тыс., «banya sochiq» 60 тыс.) — ниже топа.
+  '332097': { cap: 45_000, maxDrr: 9, queries: ['банное полотенце большое', 'sauna sochiq', 'sauna', 'сауна', 'banya uchun', 'для бани', 'полотенце 100х150', 'sochiq 100x150', 'katta sochiqlar', 'katta sochiq', 'sochiq katta', 'katta hammom sochiq', 'bani sochiq katta', 'katta bani sochiqlar', 'basseyn sochiq', 'полотенце для бассейна', 'полотенце для бани', 'полотенца для сауны', 'полотенце для сауны', 'большое полотенце', 'полотенце большое', 'полотенце банное евро', 'plyaj sochiq', 'пляжное полотенце', 'полотенце пляжное'] },
+  // Плед-полотенце 100×170 (2880108): махровый хлопковый, пляж/дача/кафе; «плед», «pled», «плед для пикника» — не узкие (0 корзин).
+  '305326': { cap: 30_000, maxDrr: 9, queries: ['махровый плед', 'плед махровый', 'плед хлопковый', 'хлопковый плед', 'плед полотенце', 'плед кафе', 'дорожный плед', 'пляжное полотенце', 'полотенце пляжное', 'plyaj sochiq', 'плед с бахромой', 'летний плед', 'плед летний', 'плед для дачи', 'плед в полоску', 'полосатый плед', 'yozgi pled', 'плед на кресло', 'плед 100х170'] },
+  // Сердечки (3480224): рисунок, дети, подарок, для рук.
+  '337334': { cap: 25_000, maxDrr: 12, queries: ['полотенце с сердечками', 'yurakchali sochiq', 'детское полотенце', "bolalar sochig'i", 'детское полотенце для лица', 'полотенце детское для рук', 'полотенце для девочек', 'полотенце для девочки', 'sochiq yuz uchun', 'yuz uchun sochiq', 'полотенце махровое жаккард', 'qol sochiqlar', "qo'l sochiq", 'полотенце розовое', 'махровые полотенца для рук'] },
+  // HAVANA (2197711): плотное 600 г, мужское, наборы, размеры 70×140 / 50×90.
+  '286528': { cap: 30_000, maxDrr: 9, queries: ['набор полотенец махровые банное', 'полотенце банное мужское', 'erkaklar sochiq', 'sochiq erkaklar uchun', 'sochiq erkaklar', 'sochiq erkak', 'мужское полотенце', 'полотенце банное махровое', 'полотенце 70х140', 'полотенце махровое 70х140', 'полотенце 50х90', 'полотенце банное 70х140', 'qalin sochiq', 'полотенце плотное', 'толстое полотенце', 'махровые полотенца', 'полотенце банное черное', 'полотенце банное 600 г'] },
+  // J471 (2898275): мягкое, для лица и тела, душ, голубой цвет, 70×135.
+  '305122': { cap: 30_000, maxDrr: 10, queries: ['полотенце для лица и тела', 'набор полотенец махровые', 'sochiq yuz', 'yumshoq sochiq', 'momiq sochiq', 'мягкое полотенце', 'dush uchun sochiq', 'dush sochiq', 'голубое полотенце', 'полотенце банное голубое', 'полотенце 70х135', 'полотенце банное 70х135', 'полотенца махровые пушистые мягкие', 'полотенце махровое', 'махровое полотенце', 'махровая полотенце', 'sochiq mini'] },
+  // J403 (2872482): белое/серое, с бордюром, для бассейна и ног.
+  '305324': { cap: 30_000, maxDrr: 13, queries: ['banni sochiqlar', 'oq sochiq', 'белое банное полотенце', 'белые банные полотенца', 'белое полотенце', 'полотенце для бассейна', 'полотенце для ног', 'полотенца для ног', 'махровое полотенце банное', 'серое полотенце', 'полотенце банное серое', 'полотенце с бордюром', 'полотенце 70х140 хлопок', 'полотенце банное хлопок', 'полотенца банное', 'полотенца отдельные'] },
+};
+
+/** Класс «узкие ключи товара» для фразы кампании; null — фраза не узкая (действуют классы по словам). */
+export function narrowClass(campaignId: string, query: string, table: Record<string, LadderNarrow> = AD_LADDER_NARROW): LadderQueryClass | null {
+  const row = table[campaignId];
+  const q = normalizeQuery(query);
+  if (!row || !row.queries.some((item) => normalizeQuery(item) === q)) return null;
+  return { name: 'узкие ключи товара', match: () => true, cap: row.cap, colors: 1, maxDrr: row.maxDrr, noSaleSpend: AD_LADDER_NARROW_NO_SALE_SPEND };
+}
 
 export function activeCapTests(today: string, table: LadderCapTest[] = AD_LADDER_CAP_TESTS): LadderCapTest[] {
   return table.filter((row) => today <= row.until);
@@ -94,8 +115,9 @@ export function ladderCampaigns(): string[] {
 }
 export const ladderEnabled = () => process.env.AD_LADDER_ENABLED !== 'false';
 
-/** maxDrr — потолок ДРР класса, %; нет — общий maxDrrPercent. */
-export type LadderQueryClass = { name: string; match: (query: string) => boolean; cap: number; colors: number; maxDrr?: number };
+/** maxDrr — потолок ДРР класса, %; нет — общий maxDrrPercent. noSaleSpend — расход за 7 дней без продаж, после которого
+ * ставка на минимум; нет — общий noSaleSpend. */
+export type LadderQueryClass = { name: string; match: (query: string) => boolean; cap: number; colors: number; maxDrr?: number; noSaleSpend?: number };
 
 export const AD_LADDER_DEFAULTS = {
   topPosition: 10,
@@ -233,7 +255,7 @@ export const ladderKey = (keyword: Pick<AdBotKeyword, 'campaignId' | 'skuGroupId
  * но расход разошёлся на четыре цвета, ни один не набрал порога данных (30 000), и проверка цвета молчала. Если запрос
  * в целом выше потолка, в топ-10 остаются только цвета, которые сами окупаются (есть продажи и их ДРР в пределах);
  * при ДРР запроса выше вдвое или расходе без продаж остальным — минимальная ставка. */
-export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = AD_LADDER_DEFAULTS, recent: Set<string> = new Set(), launch: Set<string> = new Set(), hold: Record<string, number> = AD_LADDER_HOLD_TOP, tests: LadderCapTest[] = []): LadderDecision[] {
+export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = AD_LADDER_DEFAULTS, recent: Set<string> = new Set(), launch: Set<string> = new Set(), hold: Record<string, number> = AD_LADDER_HOLD_TOP, tests: LadderCapTest[] = [], narrow: Record<string, LadderNarrow> = AD_LADDER_NARROW): LadderDecision[] {
   const decisions: LadderDecision[] = [];
   const byQuery = new Map<string, LadderKeyword[]>();
   for (const keyword of keywords) {
@@ -242,12 +264,13 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
   }
   const none = { drr: null, blocked: null, severe: false };
   for (const rows of byQuery.values()) {
-    const base = ladderQueryClass(rows[0].query, cfg);
+    const base = narrowClass(rows[0].campaignId, rows[0].query, narrow) ?? ladderQueryClass(rows[0].query, cfg);
     const held = hold[rows[0].campaignId];
     const cls = held ? { ...base, name: `${base.name}, держим в топ-10`, cap: cfg.maxBid, colors: held } : base;
     const exempt = launch.has(rows[0].campaignId);
     const classDrr = cls.maxDrr ?? cfg.maxDrrPercent;
-    const queryVerdict = exempt || rows.length < 2 ? none : ladderDrrVerdict(sumLadderStats(rows.map((row) => row.stats7)), classDrr, cfg);
+    const judge = cls.noSaleSpend ? { ...cfg, noSaleSpend: cls.noSaleSpend } : cfg;
+    const queryVerdict = exempt || rows.length < 2 ? none : ladderDrrVerdict(sumLadderStats(rows.map((row) => row.stats7)), classDrr, judge);
     const priced = rows
       .map((keyword) => {
         const steps = keyword.ladder ?? [];
@@ -255,7 +278,7 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
         const target = top10 ? Math.min(cfg.maxBid, Math.max(cfg.minBid, roundUp(top10.cpm * (1 + cfg.marginPercent / 100), cfg.rounding))) : null;
         const test = tests.find((row) => row.campaignId === keyword.campaignId && row.skuGroupId === keyword.skuGroupId && normalizeQuery(row.query) === normalizeQuery(keyword.query));
         const maxDrr = test?.maxDrr ?? classDrr;
-        let verdict: { drr: number | null; blocked: string | null; severe: boolean } = exempt ? none : ladderDrrVerdict(keyword.stats7, maxDrr, cfg);
+        let verdict: { drr: number | null; blocked: string | null; severe: boolean } = exempt ? none : ladderDrrVerdict(keyword.stats7, maxDrr, judge);
         if (!verdict.blocked && queryVerdict.blocked && !provenColour(keyword.stats7, maxDrr)) {
           verdict = { drr: verdict.drr, blocked: `по запросу (все цвета) ${queryVerdict.blocked}`, severe: queryVerdict.severe };
         }
