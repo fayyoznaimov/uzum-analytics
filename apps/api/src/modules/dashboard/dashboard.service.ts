@@ -11,7 +11,7 @@ import {
 } from '../../common/advertising';
 import { CostBreakdown, calculateOrderFinancials } from '../../common/finance';
 import { classifyStoredOrder } from '../../common/order-state';
-import { basketEligibleDate, buildWithdrawalBasket } from '../../common/payout-basket';
+import { applyPayoutDeductions, basketEligibleDate, buildWithdrawalBasket } from '../../common/payout-basket';
 import { PeriodQuery, resolvePeriod, tashkentHour, tashkentKey } from '../../common/period';
 import { PrismaService } from '../../common/prisma.service';
 import { buildProfitDays } from '../../common/profit-days';
@@ -735,7 +735,17 @@ export class DashboardService {
       const deltaDays = Math.round((new Date(`${row.date}T12:00:00+05:00`).getTime() - new Date(`${withdrawalBasketBase.today}T12:00:00+05:00`).getTime()) / 86_400_000);
       return deltaDays >= -14 && deltaDays <= 45;
     });
-    const visiblePayoutDailyRows = withdrawalBasketBase.payoutDailyRows.filter((row) => {
+    // Uzum вычитает из выплаты все списания журнала расходов с прошлой даты графика.
+    const payoutExpenseRows = await this.prisma.marketplaceExpense.findMany({
+      where: { shopId: shop.id, serviceAt: { gte: new Date(forecastNow.getTime() - 60 * 86_400_000) } },
+      select: { serviceAt: true, amount: true },
+    });
+    const netPayoutDailyRows = applyPayoutDeductions(
+      withdrawalBasketBase.payoutDailyRows,
+      payoutExpenseRows.map((row) => ({ serviceAt: row.serviceAt, amount: Number(row.amount) })),
+      { schedule: payoutSchedule, today: withdrawalBasketBase.today, serviceFeePercent: payoutServiceFeePercent },
+    );
+    const visiblePayoutDailyRows = netPayoutDailyRows.filter((row) => {
       const deltaDays = Math.round((new Date(`${row.date}T12:00:00+05:00`).getTime() - new Date(`${withdrawalBasketBase.today}T12:00:00+05:00`).getTime()) / 86_400_000);
       return deltaDays >= -21 && deltaDays <= 60;
     });

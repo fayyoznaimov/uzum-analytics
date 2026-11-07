@@ -308,16 +308,16 @@ export default function WalletClient() {
       </div>
 
       <section className="panel wallet-section">
-        <div className="panel-head"><div><h2>Отдельно: график выплат Uzum в банк</h2><p>Эта таблица уже не про корзину, а про дату отправки денег по выбранному расписанию.</p></div><Status tone="amber">{pf.schedule}</Status></div>
+        <div className="panel-head"><div><h2>Отдельно: график выплат Uzum в банк</h2><p>Дата, когда Uzum формирует выплату по расписанию. Из суммы заказов Uzum вычитает все списания с прошлой выплаты: рекламу, логистику, хранение, штрафы. Будущие дни — оценка по среднему расходу за неделю.</p></div><Status tone="amber">{pf.schedule}</Status></div>
         {payoutRows.length ? <div className="wallet-payout-table">
-          <div className="wallet-payout-head"><span>Дата выплаты</span><span>Какие дни корзины</span><span>Заказы / шт.</span><span>Сумма</span><span>Плата</span><span>К поступлению</span><span>Статус</span></div>
+          <div className="wallet-payout-head"><span>Дата выплаты</span><span>Какие дни корзины</span><span>Заказы / шт.</span><span>Заказы на сумму</span><span>Расходы Uzum</span><span>Придёт</span><span>Статус</span></div>
           {payoutRows.map((row: any) => <div className="wallet-payout-row" key={`payout-${row.date}`}>
             <b>{label(row.date, true)}</b>
             <span>{shortDate(row.basketFrom)} — {shortDate(row.basketTo)}</span>
             <span>{row.orders} / {row.units}</span>
             <strong>{money(row.amount)}</strong>
-            <span>{money(row.serviceFee)}</span>
-            <strong>{money(row.bankAmount)}</strong>
+            <span>−{money(Number(row.expensesKnown || 0) + Number(row.expensesEstimate || 0))}{Number(row.expensesEstimate || 0) > 0 ? <small style={{ display: 'block', color: 'var(--muted)' }}>оценка {money(row.expensesEstimate)}</small> : null}{row.expensesFrom ? <small style={{ display: 'block', color: 'var(--muted)' }}>с {shortDate(row.expensesFrom)}</small> : null}</span>
+            <strong>{money(row.netAmount ?? row.bankAmount)}</strong>
             <Status tone={row.status === 'DUE_TODAY' ? 'green' : row.status === 'NEEDS_RECONCILE' ? 'amber' : 'blue'}>{payoutStatus(row)}</Status>
           </div>)}
         </div> : <div className="payout-empty">Нет сумм для графика выплат.</div>}

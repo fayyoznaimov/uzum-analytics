@@ -153,7 +153,7 @@ export class IntegrationsService {
     const upcoming: any[] = (pf.payoutDailyRows || []).filter((r: any) => r.date >= pf.today && r.status !== 'NEEDS_RECONCILE');
     const nextPayout = upcoming[0];
     const nextPayoutLine = nextPayout
-      ? `📅 Ближайшее зачисление: <b>${this.fmt(nextPayout.date)} — ${this.money(nextPayout.bankAmount)} сум</b> (${nextPayout.orders} заказ.)`
+      ? `📅 Ближайшая выплата: <b>${this.fmt(nextPayout.date)} — ${this.money(nextPayout.netAmount ?? nextPayout.bankAmount)} сум</b> (${nextPayout.orders} заказ. на ${this.money(nextPayout.amount)} − расходы Uzum ${this.money(Number(nextPayout.expensesKnown || 0) + Number(nextPayout.expensesEstimate || 0))}${Number(nextPayout.expensesEstimate || 0) > 0 ? ', из них оценка ' + this.money(nextPayout.expensesEstimate) : ''})`
       : '📅 Ближайшее зачисление: пока не запланировано';
     const reconcileNote = Number(s.needsReconcile || 0) > 0
       ? `\n⚠️ Прошлые даты по графику не сверены с банком: <b>${this.money(s.needsReconcile)} сум</b> — обычно деньги уже пришли, это флаг для сверки, а не факт недостачи.`

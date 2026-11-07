@@ -110,47 +110,46 @@ export function basketEligibleDate(dateIssued: Date, holdDays = 10): string {
   return addCalendarDays(tashkentKey(dateIssued), normalizeHoldDays(holdDays) + 1);
 }
 
-export function scheduledPayoutDate(dateIssued: Date, scheduleInput: unknown = 'BIWEEKLY', holdDays = 10): string {
-  const schedule = normalizePayoutSchedule(scheduleInput);
-  const issuedKey = tashkentKey(dateIssued);
-  if (schedule === 'DAILY') return nextBusinessDay(basketEligibleDate(dateIssued, holdDays));
+/** Дни месяца, в которые Uzum формирует выплату по графику. */
+const PAYOUT_DAYS: Record<Exclude<PayoutScheduleType, 'DAILY'>, number[]> = { WEEKLY: [7, 14, 21, 28], BIWEEKLY: [7, 21], MONTHLY: [7] };
 
-  const issued = dateAtTashkentNoon(issuedKey);
-  const year = issued.getUTCFullYear();
-  const month = issued.getUTCMonth() + 1;
-  const day = Number(issuedKey.slice(8, 10));
-  let payout: string;
-
-  if (schedule === 'WEEKLY') {
-    if (day >= 27) {
-      const next = addMonths(year, month, 1);
-      payout = fromYmd(next.year, next.month, 14);
-    } else if (day <= 3) payout = fromYmd(year, month, 14);
-    else if (day <= 10) payout = fromYmd(year, month, 21);
-    else if (day <= 17) payout = fromYmd(year, month, 28);
-    else {
-      const next = addMonths(year, month, 1);
-      payout = fromYmd(next.year, next.month, 7);
-    }
-  } else if (schedule === 'MONTHLY') {
-    const add = day >= 27 ? 2 : 1;
+function firstPayoutDayOnOrAfter(date: string, schedule: Exclude<PayoutScheduleType, 'DAILY'>): string {
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  for (let add = 0; add < 3; add += 1) {
     const next = addMonths(year, month, add);
-    payout = fromYmd(next.year, next.month, 7);
-  } else {
-    if (day >= 27) {
-      const next = addMonths(year, month, 1);
-      payout = fromYmd(next.year, next.month, 21);
-    } else if (day <= 10) payout = fromYmd(year, month, 21);
-    else {
-      const next = addMonths(year, month, 1);
-      payout = fromYmd(next.year, next.month, 7);
+    for (const day of PAYOUT_DAYS[schedule]) {
+      const candidate = fromYmd(next.year, next.month, day);
+      if (candidate >= date) return candidate;
     }
   }
+  return date;
+}
 
-  // Защита от будущих изменений календаря: по таблице выплат дата всегда позже удержания.
+/**
+ * Дата выплаты по графику — первый день графика (7 и 21 для BIWEEKLY), не раньше дня входа
+ * в корзину. Сверено с фактом 07.11.2026 (34 682 112): в выплату вошли заказы, выданные
+ * 11–27.10, — у выданного 27.10 240 часов истекли 06.11, до начала дня выплаты. Старая таблица
+ * «выдано 27-го и позже → 21-е число» уносила такие заказы на две недели позже (2,8 млн).
+ * Выходной не сдвигает дату: выплата 07.11.2026 сформирована в субботу.
+ */
+export function scheduledPayoutDate(dateIssued: Date, scheduleInput: unknown = 'BIWEEKLY', holdDays = 10): string {
+  const schedule = normalizePayoutSchedule(scheduleInput);
   const eligible = basketEligibleDate(dateIssued, holdDays);
-  while (payout < eligible) payout = addCalendarDays(payout, 1);
-  return nextBusinessDay(payout);
+  if (schedule === 'DAILY') return nextBusinessDay(eligible);
+  return firstPayoutDayOnOrAfter(eligible, schedule);
+}
+
+/** Предыдущий день выплаты по графику: с него начинаются расходы, которые Uzum вычтет из выплаты `payoutDate`. */
+export function previousPayoutDate(payoutDate: string, scheduleInput: unknown = 'BIWEEKLY'): string {
+  const schedule = normalizePayoutSchedule(scheduleInput);
+  if (schedule === 'DAILY') return addCalendarDays(payoutDate, -1);
+  let probe = addCalendarDays(payoutDate, -1);
+  for (let i = 0; i < 40; i += 1) {
+    if (firstPayoutDayOnOrAfter(probe, schedule) === probe) return probe;
+    probe = addCalendarDays(probe, -1);
+  }
+  return addCalendarDays(payoutDate, -14);
 }
 
 function finiteNumber(value: unknown, fallback = 0): number {
@@ -209,6 +208,58 @@ function buildPayoutDailyRows(rows: WithdrawalBasketRow[], today: string): Payou
   return [...grouped.values()]
     .map((row) => ({ ...row, basketDays: row.basketFrom && row.basketTo ? daysBetween(row.basketFrom, row.basketTo) + 1 : 0 }))
     .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export type PayoutExpenseInput = { serviceAt: Date; amount: number };
+
+export type PayoutNetRow = PayoutDailyRow & {
+  /** С какого дня считаются расходы, вычитаемые из этой выплаты (предыдущая дата графика). */
+  expensesFrom: string;
+  /** Расходы из журнала Uzum (реклама, логистика, хранение, штрафы) с expensesFrom по день до выплаты. */
+  expensesKnown: number;
+  /** Оценка ещё не списанных расходов до дня выплаты: средний расход за 7 полных дней × оставшиеся дни. */
+  expensesEstimate: number;
+  /** Сколько придёт: заказы − расходы − плата за вывод. */
+  netAmount: number;
+};
+
+/**
+ * Uzum вычитает из выплаты все списания журнала расходов с прошлой выплаты: «Буст в ТОП» и «Буст
+ * заказов», логистику, хранение, штрафы. 07.11.2026: заказы 38 070 788 − расходы 21.10–06.11
+ * 3 505 609 = 34 565 179 против факта 34 682 112 (−0,3 %). Без вычета прогноз завышен на сумму расходов.
+ */
+export function applyPayoutDeductions(
+  rows: PayoutDailyRow[],
+  expenses: PayoutExpenseInput[],
+  options: { schedule?: PayoutScheduleType | string; today: string; serviceFeePercent?: number },
+): PayoutNetRow[] {
+  const schedule = normalizePayoutSchedule(options.schedule ?? 'BIWEEKLY');
+  const feePercent = Math.max(0, finiteNumber(options.serviceFeePercent, 0));
+  const byDay = new Map<string, number>();
+  for (const expense of expenses) {
+    const key = tashkentKey(expense.serviceAt);
+    byDay.set(key, (byDay.get(key) ?? 0) + finiteNumber(expense.amount));
+  }
+  const rateFrom = addCalendarDays(options.today, -8);
+  let lastWeek = 0;
+  for (const [key, amount] of byDay) if (key >= rateFrom && key < addCalendarDays(options.today, -1)) lastWeek += amount;
+  const dailyRate = Math.max(0, lastWeek / 7);
+  return rows.map((row) => {
+    const from = previousPayoutDate(row.date, schedule);
+    let known = 0;
+    for (const [key, amount] of byDay) if (key >= from && key < row.date) known += amount;
+    // Журнал за вчера и сегодня ещё дописывается (реклама публикуется на следующий день),
+    // поэтому оценка закрывает дни начиная со вчерашнего, где строк ещё нет.
+    let estimate = 0;
+    if (row.date > options.today) {
+      for (let day = addCalendarDays(options.today, -1); day < row.date; day = addCalendarDays(day, 1)) {
+        if (day < from) continue;
+        if (!byDay.has(day) || day >= options.today) estimate += dailyRate;
+      }
+    }
+    const beforeFee = row.amount - known - estimate;
+    return { ...row, expensesFrom: from, expensesKnown: known, expensesEstimate: estimate, netAmount: beforeFee - Math.max(0, beforeFee) * feePercent / 100 };
+  });
 }
 
 export function calculateEffectivePayout(order: Pick<WithdrawalBasketInput, 'payout' | 'gross' | 'units' | 'returnedUnits' | 'returnAmount'>) {

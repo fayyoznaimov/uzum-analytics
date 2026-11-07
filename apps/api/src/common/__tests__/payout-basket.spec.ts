@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { basketEligibleDate, buildWithdrawalBasket, calculateEffectivePayout, nextBusinessDay, normalizeHoldDays, normalizePayoutSchedule, scheduledPayoutDate } from '../payout-basket';
+import { applyPayoutDeductions, basketEligibleDate, buildWithdrawalBasket, calculateEffectivePayout, nextBusinessDay, normalizeHoldDays, normalizePayoutSchedule, previousPayoutDate, scheduledPayoutDate } from '../payout-basket';
 
 const d = (iso: string) => new Date(`${iso}T12:00:00+05:00`);
 
@@ -11,13 +11,45 @@ describe('withdrawal basket', () => {
   it('calculates Uzum biweekly schedule from issued date windows', () => {
     expect(scheduledPayoutDate(d('2026-07-01'), 'BIWEEKLY', 10)).toBe('2026-07-21');
     expect(scheduledPayoutDate(d('2026-07-11'), 'BIWEEKLY', 10)).toBe('2026-08-07');
-    expect(scheduledPayoutDate(d('2026-07-27'), 'BIWEEKLY', 10)).toBe('2026-08-21');
+    // 27.07 + 10 дней удержания = 06.08, до начала дня выплаты 07.08 (в июле 31 день)
+    expect(scheduledPayoutDate(d('2026-07-27'), 'BIWEEKLY', 10)).toBe('2026-08-07');
+    expect(scheduledPayoutDate(d('2026-07-28'), 'BIWEEKLY', 10)).toBe('2026-08-21');
+  });
+
+  it('факт 07.11.2026: выданное 11–27.10 — в выплате 07.11 (суббота, без переноса), 10.10 — в 21.10, 28.10 — в 21.11', () => {
+    expect(scheduledPayoutDate(d('2026-10-10'), 'BIWEEKLY', 10)).toBe('2026-10-21');
+    expect(scheduledPayoutDate(d('2026-10-11'), 'BIWEEKLY', 10)).toBe('2026-11-07');
+    expect(scheduledPayoutDate(d('2026-10-27'), 'BIWEEKLY', 10)).toBe('2026-11-07');
+    expect(scheduledPayoutDate(d('2026-10-28'), 'BIWEEKLY', 10)).toBe('2026-11-21');
+    expect(previousPayoutDate('2026-11-07', 'BIWEEKLY')).toBe('2026-10-21');
+    expect(previousPayoutDate('2026-11-21', 'BIWEEKLY')).toBe('2026-11-07');
+  });
+
+  it('вычитает из выплаты расходы журнала с прошлой даты графика и оценивает ещё не списанные дни', () => {
+    const rows = [
+      { date: '2026-11-07', amount: 38_070_788, serviceFee: 0, bankAmount: 38_070_788, gross: 0, returnReserve: 0, orders: 300, units: 320, returnedUnits: 0, basketFrom: '2026-10-22', basketTo: '2026-11-07', basketDays: 17, status: 'DUE_TODAY' as const },
+      { date: '2026-11-21', amount: 20_000_000, serviceFee: 0, bankAmount: 20_000_000, gross: 0, returnReserve: 0, orders: 150, units: 160, returnedUnits: 0, basketFrom: '2026-11-08', basketTo: '2026-11-21', basketDays: 14, status: 'FUTURE' as const },
+    ];
+    const expenses = [
+      { serviceAt: d('2026-10-20'), amount: 999_999 }, // до прошлой выплаты — не вычитается
+      { serviceAt: d('2026-10-21'), amount: 1_505_609 },
+      { serviceAt: d('2026-11-06'), amount: 2_000_000 },
+    ];
+    const [due, next] = applyPayoutDeductions(rows, expenses, { schedule: 'BIWEEKLY', today: '2026-11-07' });
+    expect(due).toMatchObject({ expensesFrom: '2026-10-21', expensesKnown: 3_505_609, expensesEstimate: 0, netAmount: 34_565_179 });
+    // 21.11: с 07.11 по 20.11 — 14 дней по среднему за 30.10–05.11 (строк нет → 0)
+    expect(next.expensesFrom).toBe('2026-11-07');
+    expect(next.expensesKnown).toBe(0);
+    const daily = applyPayoutDeductions([rows[1]], [{ serviceAt: d('2026-11-01'), amount: 700_000 }], { schedule: 'BIWEEKLY', today: '2026-11-07' })[0];
+    expect(daily.expensesEstimate).toBeCloseTo(100_000 * 14, 0);
+    expect(daily.netAmount).toBeCloseTo(20_000_000 - 1_400_000, 0);
   });
 
   it('calculates weekly and monthly schedule windows', () => {
     expect(scheduledPayoutDate(d('2026-07-03'), 'WEEKLY', 10)).toBe('2026-07-14');
     expect(scheduledPayoutDate(d('2026-07-04'), 'WEEKLY', 10)).toBe('2026-07-21');
-    expect(scheduledPayoutDate(d('2026-07-27'), 'MONTHLY', 10)).toBe('2026-09-07');
+    expect(scheduledPayoutDate(d('2026-07-27'), 'MONTHLY', 10)).toBe('2026-08-07');
+    expect(scheduledPayoutDate(d('2026-07-28'), 'MONTHLY', 10)).toBe('2026-09-07');
   });
 
   it('does not prorate an API payout that is already net of a partial return', () => {
@@ -89,11 +121,12 @@ describe('нормализация holdDays и графиков выплат', (
     expect(normalizePayoutSchedule(null)).toBe('BIWEEKLY');
   });
 
-  it('переносит выплату с выходного дня на понедельник', () => {
+  it('nextBusinessDay переносит выходной на понедельник, но дата выплаты по графику не переносится', () => {
     expect(nextBusinessDay('2026-07-18')).toBe('2026-07-20'); // суббота
     expect(nextBusinessDay('2026-07-19')).toBe('2026-07-20'); // воскресенье
     expect(nextBusinessDay('2026-07-20')).toBe('2026-07-20'); // будний день не двигается
-    expect(scheduledPayoutDate(d('2026-06-05'), 'BIWEEKLY', 10)).toBe('2026-06-22'); // табличная дата 21.06.2026 — воскресенье
+    // Uzum сформировал выплату 07.11.2026 в субботу — дата графика остаётся как есть.
+    expect(scheduledPayoutDate(d('2026-06-05'), 'BIWEEKLY', 10)).toBe('2026-06-21');
   });
 
   it('график DAILY платит на следующий рабочий день после входа в корзину', () => {
@@ -101,11 +134,11 @@ describe('нормализация holdDays и графиков выплат', (
     expect(scheduledPayoutDate(d('2026-07-01'), 'DAILY', 10)).toBe('2026-07-13'); // 12.07.2026 — воскресенье
   });
 
-  it('подтягивает табличную дату выплаты к дню входа в корзину, если она раньше конца удержания', () => {
-    // Выдача 25.02.2026: по таблице BIWEEKLY выплата 07.03, но удержание кончается только 08.03.
-    // Осознанно зафиксированная семантика: выплата подтягивается к eligible-дню (08.03 — воскресенье → 09.03).
+  it('если удержание кончается после дня графика, заказ уходит в следующую выплату, а не на выдуманную дату', () => {
+    // Выдача 25.02.2026: удержание кончается 08.03, позже выплаты 07.03 → следующая выплата 21.03.
     expect(basketEligibleDate(d('2026-02-25'), 10)).toBe('2026-03-08');
-    expect(scheduledPayoutDate(d('2026-02-25'), 'BIWEEKLY', 10)).toBe('2026-03-09');
+    expect(scheduledPayoutDate(d('2026-02-25'), 'BIWEEKLY', 10)).toBe('2026-03-21');
+    expect(scheduledPayoutDate(d('2026-02-24'), 'BIWEEKLY', 10)).toBe('2026-03-07');
   });
 });
 
