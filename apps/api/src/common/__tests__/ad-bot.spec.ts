@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AD_BOT_DEFAULTS, AdBotInput, AdBotKeyword, AdBotStats, buildCampaignUpdate, clampBid, configFor, decideKeyword, formatAdBotReport, groupDrrTarget, isRelevantQuery, newKeywords, normalizeQuery, planAdBot, seedKeywordActions, stopWordCandidates } from '../ad-bot';
+import { AD_BOT_DEFAULTS, AdBotInput, AdBotKeyword, AdBotStats, buildCampaignUpdate, clampBid, configFor, decideKeyword, formatAdBotReport, groupDrrTarget, isRelevantQuery, newKeywords, normalizeQuery, planAdBot, seedKeywordActions, stopWordCandidates, stopWordClashesWithQuery } from '../ad-bot';
 
 const now = new Date('2026-09-28T11:00:00+05:00');
 const kw = (patch: Partial<AdBotKeyword> = {}): AdBotKeyword => ({
@@ -213,6 +213,16 @@ describe('ручной посев фраз', () => {
     // Посев с правкой минус-слов: новая фраза уходит сразу с исправленным списком цвета (04.11.2026).
     const withWords = seedKeywordActions(keywords, [{ campaignId: '332097', stopWords: { add: ['siqilgan'], remove: ['вафельное'] }, phrases: [{ query: 'полотенце 100х150', cpm: 9_500, onlyNew: true }] }]);
     expect(withWords.find((row) => row.kind === 'ADD' && row.skuGroupId === '777')?.stopWords).toEqual(['soch', 'siqilgan']);
+    // 07.11.2026: минус-слово с общим корнем со словом фразы выключает фразу (Uzum сверяет по вхождению): «sochiqcha» и «soch»
+    // к «sauna sochiq» не добавляются и не наследуются; к «полотенце для сауны» «sochiqcha» добавить можно.
+    expect(stopWordClashesWithQuery('sochiqcha', 'sauna sochiq')).toBe(true);
+    expect(stopWordClashesWithQuery('soch', 'yuz sochiq')).toBe(true);
+    expect(stopWordClashesWithQuery('sochiqcha', 'полотенце для сауны')).toBe(false);
+    expect(stopWordClashesWithQuery('ног', 'полотенце для ног')).toBe(false); // короче 4 букв — не корень
+    const clash = seedKeywordActions(keywords, [{ campaignId: '332097', stopWords: { add: ['sochiqcha', 'rulon'] }, phrases: [{ query: 'katta sochiq', cpm: 9_500, onlyNew: true }] }]);
+    expect(clash.find((row) => row.kind === 'STOPWORDS' && row.adId === '1')?.stopWords).toEqual(['вафельное', 'sochiqcha', 'rulon']); // русские фразы: оба слова
+    expect(clash.find((row) => row.kind === 'STOPWORDS' && row.adId === '2')?.stopWords).toEqual(['soch', 'вафельное', 'sochiqcha', 'rulon']);
+    expect(clash.find((row) => row.kind === 'ADD' && row.skuGroupId === '777')?.stopWords).toEqual(['вафельное', 'rulon', 'soch uchun', 'sochlar uchun']);
   });
   it('правка минус-слов: убрать, добавить, при полном списке выбросить бесполезные; только узбекские фразы', () => {
     const full = Array.from({ length: 56 }, (_, index) => `слово${index}`).concat(['soch', 'майнкрафт']);

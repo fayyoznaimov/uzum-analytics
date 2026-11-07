@@ -420,12 +420,20 @@ export type SeedSpec = {
   dedupe?: boolean;
 };
 
-function mergeStopWords(current: string[], rule: SeedStopWords, limit: number): string[] | null {
+/** Минус-слово и слово фразы с общим корнем (от 4 букв, одно начинается с другого): Uzum сверяет минус-слова по вхождению,
+ * и такое слово выключает саму фразу. 04.11.2026 «sochiqcha», добавленное во все объявления, обнулило показы всех
+ * «sochiq…» запросов (153 объявления, ≈ 3 000 показов в день) до 07.11; «soch» так же глушит «sochiq». */
+export function stopWordClashesWithQuery(word: string, query: string): boolean {
+  const w = normalizeQuery(word);
+  return normalizeQuery(query).split(' ').some((part) => part.length >= 4 && w.length >= 4 && (part.startsWith(w) || w.startsWith(part)));
+}
+
+function mergeStopWords(current: string[], rule: SeedStopWords, limit: number, query = ''): string[] | null {
   const norm = (word: string) => normalizeQuery(word);
   const removeSet = new Set((rule.remove ?? []).map(norm));
   let next = current.filter((word) => !removeSet.has(norm(word)));
   const have = new Set(next.map(norm));
-  const toAdd = (rule.add ?? []).filter((word) => norm(word) && !have.has(norm(word)));
+  const toAdd = (rule.add ?? []).filter((word) => norm(word) && !have.has(norm(word)) && !stopWordClashesWithQuery(word, query));
   const drop = [...(rule.dropIfFull ?? [])].map(norm);
   for (const word of toAdd) {
     while (next.length >= limit && drop.length) {
@@ -468,7 +476,7 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
       for (const row of own) {
         if (suspended.has(row.skuGroupId)) continue;
         if (spec.stopWords.onlyLatin && !isLatinQuery(normalizeQuery(row.query))) continue;
-        const merged = mergeStopWords(row.stopWords, spec.stopWords, cfg.maxStopWords);
+        const merged = mergeStopWords(row.stopWords, spec.stopWords, cfg.maxStopWords, row.query);
         if (!merged) continue;
         const delta = `${merged.length - row.stopWords.length >= 0 ? '+' : ''}${merged.length - row.stopWords.length}`;
         actions.push({ kind: 'STOPWORDS', campaignId: row.campaignId, campaignName: row.campaignName, skuGroupId: row.skuGroupId, groupTitle: row.skuGroupId, adId: row.adId, query: row.query, oldCpm: row.cpm, newCpm: row.cpm, stopWords: merged, reason: `ручная правка минус-слов (${row.stopWords.length} → ${merged.length}, ${delta})` });
@@ -510,11 +518,13 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
       const inGroup = own.filter((row) => row.skuGroupId === skuGroupId);
       // Новые фразы получают минус-слова цвета уже с правкой этого же посева (04.11.2026: иначе новая фраза уходила бы
       // со старым списком, и чистить её пришлось бы вторым прогоном).
-      const baseStop = spec.stopWords && !spec.stopWords.onlyLatin ? mergeStopWords(inGroup[0].stopWords, spec.stopWords, cfg.maxStopWords) ?? inGroup[0].stopWords : inGroup[0].stopWords;
       const common = { campaignId: spec.campaignId, campaignName: inGroup[0].campaignName, skuGroupId, groupTitle: skuGroupId };
       for (const phrase of spec.phrases ?? []) {
         const query = normalizeQuery(phrase.query);
         if (!query || phrase.exceptGroups?.includes(skuGroupId)) continue;
+        // Слова, задевающие саму фразу (stopWordClashesWithQuery), в новое объявление не идут — даже если они уже стоят у цвета.
+        const inherited = inGroup[0].stopWords.filter((word) => !stopWordClashesWithQuery(word, query));
+        const baseStop = spec.stopWords && !spec.stopWords.onlyLatin ? mergeStopWords(inherited, spec.stopWords, cfg.maxStopWords, query) ?? inherited : inherited;
         const cpm = clampBid(phrase.cpm, 'down', cfg);
         const existing = inGroup.find((row) => normalizeQuery(row.query) === query && !suspendedAds.has(row.adId));
         if (existing) {
@@ -531,8 +541,10 @@ export function seedKeywordActions(keywords: AdBotKeyword[], specs: SeedSpec[], 
           continue;
         }
         let stopWords = baseStop;
-        if (isLatinQuery(query) && baseStop.some((word) => normalizeQuery(word) === 'soch')) {
-          stopWords = [...baseStop.filter((word) => normalizeQuery(word) !== 'soch'), 'soch uchun', 'sochlar uchun'].slice(0, cfg.maxStopWords);
+        // «soch» (волосы) у узбекской фразы глушит «sochiq» — вместо него «soch uchun» / «sochlar uchun».
+        if (isLatinQuery(query) && inGroup[0].stopWords.some((word) => normalizeQuery(word) === 'soch')) {
+          const have = new Set(baseStop.map(normalizeQuery));
+          stopWords = [...baseStop.filter((word) => normalizeQuery(word) !== 'soch'), ...['soch uchun', 'sochlar uchun'].filter((word) => !have.has(word))].slice(0, cfg.maxStopWords);
         }
         const action: AdBotAction = { ...common, kind: 'ADD', adId: null, query: phrase.query.trim(), oldCpm: null, newCpm: cpm, stopWords, reason: 'ручной посев фразы' };
         planned.set(key, action);

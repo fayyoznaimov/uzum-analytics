@@ -182,7 +182,7 @@ describe('лестница ставок', () => {
     expect(planLadderBids([sauna('a', 'полотенце банное большое', 9_500, 66_208)])[0]).toMatchObject({ role: 'other', action: null });
     // 26 000 за 7 дней без продаж — ставка на минимум (у общих классов порог 50 000).
     const dry = { impressions: 900, clicks: 12, sold: 0, revenue: 0, spend: 26_000, position: null };
-    expect(planLadderBids([{ ...sauna('a', 'sauna', 20_000, 14_201), stats7: dry }])[0]).toMatchObject({ role: 'other', action: { kind: 'LOWER', newCpm: 9_500 } });
+    expect(planLadderBids([{ ...sauna('a', 'sauna sochiq', 20_000, 14_201), stats7: dry }])[0]).toMatchObject({ role: 'other', action: { kind: 'LOWER', newCpm: 9_500 } });
     expect(planLadderBids([{ ...sauna('a', 'полотенце банное', 20_000, 14_201), stats7: dry }])[0]).toMatchObject({ role: 'top', action: { newCpm: 15_000 } }); // общий класс: 26 000 без продаж ещё не повод
     // Свой потолок ДРР карточки: HAVANA 9 % — при ДРР 10 % узкая фраза не в топе.
     const havana = { ...kw('k', 'полотенце банное мужское', 9_500, 12_230), stats7: { impressions: 2_000, clicks: 40, sold: 3, revenue: 400_000, spend: 40_000, position: null } };
