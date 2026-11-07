@@ -1,0 +1,64 @@
+[
+  {
+    "_что": "Владелец 07.11.2026: «можно добавить узкие запросы — парисахом, парисосочхлар, всё, что связано с ParisaHome: они недорогие и ни на что не влияют». Запросы покупателей за 60 дней: «sochiq yuz va hamom parisa» 18 показов, «parisa sochiq», «sochiq parisa», «parisa home» по 7–8, «полотенце parisa home» 3 — спрос крошечный, но свой. По одному цвету в каждой кампании (хаки HAVANA, голубой J471, серый J403, светло-коричневый сауны, розовый Сердечек, плед), ставка 9 500; класс «остальные» (потолок 20 000, один цвет).",
+    "campaignId": "286528",
+    "phrases": [
+      { "query": "parisa home", "cpm": 9500, "onlyNew": true, "exceptGroups": ["4038332", "5856537", "5856538"] },
+      { "query": "parisahome", "cpm": 9500, "onlyNew": true, "exceptGroups": ["4038332", "5856537", "5856538"] },
+      { "query": "parisa sochiq", "cpm": 9500, "onlyNew": true, "exceptGroups": ["4038332", "5856537", "5856538"] },
+      { "query": "parisa home sochiq", "cpm": 9500, "onlyNew": true, "exceptGroups": ["4038332", "5856537", "5856538"] },
+      { "query": "parisa sochiqlar", "cpm": 9500, "onlyNew": true, "exceptGroups": ["4038332", "5856537", "5856538"] },
+      { "query": "полотенце parisa home", "cpm": 9500, "onlyNew": true, "exceptGroups": ["4038332", "5856537", "5856538"] },
+      { "query": "парисахом", "cpm": 9500, "onlyNew": true, "exceptGroups": ["4038332", "5856537", "5856538"] },
+      { "query": "париса хоум", "cpm": 9500, "onlyNew": true, "exceptGroups": ["4038332", "5856537", "5856538"] },
+      { "query": "париса полотенце", "cpm": 9500, "onlyNew": true, "exceptGroups": ["4038332", "5856537", "5856538"] }
+    ]
+  },
+  {
+    "_что": "J471 — голубой",
+    "campaignId": "305122",
+    "phrases": [
+      { "query": "parisa home", "cpm": 9500, "onlyNew": true, "exceptGroups": ["5374108"] },
+      { "query": "parisahome", "cpm": 9500, "onlyNew": true, "exceptGroups": ["5374108"] },
+      { "query": "parisa sochiq", "cpm": 9500, "onlyNew": true, "exceptGroups": ["5374108"] },
+      { "query": "parisa home sochiq", "cpm": 9500, "onlyNew": true, "exceptGroups": ["5374108"] },
+      { "query": "парисахом", "cpm": 9500, "onlyNew": true, "exceptGroups": ["5374108"] },
+      { "query": "париса хоум", "cpm": 9500, "onlyNew": true, "exceptGroups": ["5374108"] }
+    ]
+  },
+  {
+    "_что": "J403 — серый (ParisaHome у J403 уже есть)",
+    "campaignId": "305324",
+    "phrases": [
+      { "query": "parisa home", "cpm": 9500, "onlyNew": true, "exceptGroups": ["5326345", "5326347"] },
+      { "query": "parisa sochiq", "cpm": 9500, "onlyNew": true, "exceptGroups": ["5326345", "5326347"] },
+      { "query": "парисахом", "cpm": 9500, "onlyNew": true, "exceptGroups": ["5326345", "5326347"] },
+      { "query": "париса хоум", "cpm": 9500, "onlyNew": true, "exceptGroups": ["5326345", "5326347"] }
+    ]
+  },
+  {
+    "_что": "Сауна — светло-коричневый 4160952 («parisa home sauna sochiqlar» встречался)",
+    "campaignId": "332097",
+    "phrases": [
+      { "query": "parisa home", "cpm": 9500, "onlyNew": true, "exceptGroups": ["4160949"] },
+      { "query": "parisa home sauna sochiq", "cpm": 9500, "onlyNew": true, "exceptGroups": ["4160949"] },
+      { "query": "парисахом", "cpm": 9500, "onlyNew": true, "exceptGroups": ["4160949"] }
+    ]
+  },
+  {
+    "_что": "Сердечки — розовый",
+    "campaignId": "337334",
+    "phrases": [
+      { "query": "parisa home", "cpm": 9500, "onlyNew": true, "exceptGroups": ["6472965"] },
+      { "query": "парисахом", "cpm": 9500, "onlyNew": true, "exceptGroups": ["6472965"] }
+    ]
+  },
+  {
+    "_что": "Плед («parisa home плед» встречался)",
+    "campaignId": "305326",
+    "phrases": [
+      { "query": "parisa home плед", "cpm": 9500, "onlyNew": true },
+      { "query": "parisa home", "cpm": 9500, "onlyNew": true }
+    ]
+  }
+]
