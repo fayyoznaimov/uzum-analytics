@@ -3,12 +3,18 @@ import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma.service';
 import {
+  RETURN_STOCK_LOG,
+  STUCK_MOVED_LOG,
   STUCK_ORDER_STATE,
+  WATCH_DIGEST_LOG,
   WarehouseRow,
-  formatWatchMessage,
+  digestEvents,
+  formatWatchDigest,
   pickStuckOrders,
   pickTransitions,
+  transitionPayload,
   warehouseEvents,
+  warehousePayload,
 } from '../../common/returns-watch';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { PromoPricingService } from '../pricing/promo-pricing.service';
@@ -23,7 +29,9 @@ const MAX_PAGES = 10;
  * события приходят без предупреждения, поэтому раз в час сверяем:
  *   — переходы статусов заказов, которые висели дольше порога;
  *   — складские количества SKU из кабинета (возвращено / доступно / брак).
- * Про каждое событие пишем в Telegram один раз (dedupeKey в NotificationLog).
+ * Каждое событие один раз пишется в журнал (dedupeKey в NotificationLog), но в Telegram каждый час больше не идёт:
+ * владелец 09.11.2026 — «про зависшие не надо каждый раз напоминать, раз в неделю». Раз в неделю
+ * (RETURNS_WATCH_DIGEST_CRON, по умолчанию понедельник 10:00 Ташкент) — одна сводка: что висит сейчас и итоги недели.
  */
 @Injectable()
 export class ReturnsWatchService {
@@ -46,6 +54,54 @@ export class ReturnsWatchService {
     } catch (error: any) {
       this.logger.warn(`Слежка за зависшими заказами: ${error?.message || error}`);
     }
+  }
+
+  @Cron(process.env.RETURNS_WATCH_DIGEST_CRON || '0 10 * * 1', { name: 'returns-watch-digest', timeZone: 'Asia/Tashkent' })
+  async weekly() {
+    if (process.env.RETURNS_WATCH_ENABLED === 'false') return;
+    try {
+      await this.digest({ send: true });
+    } catch (error: any) {
+      this.logger.warn(`Сводка по зависшим заказам: ${error?.message || error}`);
+    }
+  }
+
+  /** Заказы, которые висят без выдачи дольше порога, — сейчас. */
+  private async stuckNow(shopId: string, cutoffDays: number, now: Date) {
+    const rows = await this.prisma.order.findMany({
+      where: { shopId, state: STUCK_ORDER_STATE, orderedAt: { lte: new Date(now.getTime() - cutoffDays * 86_400_000) } },
+      include: { items: { include: { sku: { select: { sellerSku: true } } } } },
+    });
+    return pickStuckOrders(rows, { cutoffDays, now });
+  }
+
+  /**
+   * Недельная сводка: события журнала с прошлой сводки (не дольше 14 дней) + что висит сейчас. Не больше одной
+   * сводки в день (dedupeKey по дню); отметка в журнале — только после отправки, иначе события перейдут в следующую.
+   * send=false — только текст (проверка вручную).
+   */
+  async digest(options: { send: boolean }, now = new Date()) {
+    const shop = await this.prisma.shop.findFirst({ where: { isActive: true } });
+    if (!shop) return { message: '', sent: false };
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tashkent' }).format(now);
+    const dedupeKey = `returns-watch-digest:${day}`;
+    if (options.send && await this.prisma.notificationLog.findUnique({ where: { dedupeKey } })) return { message: '', sent: false };
+    const last = await this.prisma.notificationLog.findFirst({ where: { type: WATCH_DIGEST_LOG }, orderBy: { sentAt: 'desc' } });
+    const floor = new Date(now.getTime() - 14 * 86_400_000);
+    const since: Date = last?.sentAt && last.sentAt > floor ? last.sentAt : new Date(now.getTime() - 7 * 86_400_000);
+    const logs = await this.prisma.notificationLog.findMany({
+      where: { type: { in: [STUCK_MOVED_LOG, RETURN_STOCK_LOG] }, sentAt: { gt: since, lte: now } },
+      select: { type: true, payload: true },
+    });
+    const cutoffDays = this.cutoffDays();
+    const days = Math.max(1, Math.round((now.getTime() - since.getTime()) / 86_400_000));
+    const message = formatWatchDigest({ ...digestEvents(logs), stillStuck: await this.stuckNow(shop.id, cutoffDays, now), cutoffDays, days });
+    let sent = false;
+    if (options.send && message) {
+      sent = await this.integrations.notifyTelegram(message, 'notifySupplyStatus');
+      if (sent) await this.prisma.notificationLog.create({ data: { type: WATCH_DIGEST_LOG, dedupeKey, payload: { events: logs.length } as Prisma.InputJsonValue } });
+    }
+    return { message, sent };
   }
 
   /** Складские количества по SKU из кабинета, сопоставленные с нашими SKU. */
@@ -100,12 +156,7 @@ export class ReturnsWatchService {
     const cutoffDays = this.cutoffDays();
     const cutoffDate = new Date(now.getTime() - cutoffDays * 86_400_000);
     const orderInclude = { items: { include: { sku: { select: { sellerSku: true } } } } } as const;
-
-    const stuckRows = await this.prisma.order.findMany({
-      where: { shopId: shop.id, state: STUCK_ORDER_STATE, orderedAt: { lte: cutoffDate } },
-      include: orderInclude,
-    });
-    const stillStuck = pickStuckOrders(stuckRows, { cutoffDays, now });
+    const stillStuck = await this.stuckNow(shop.id, cutoffDays, now);
 
     // Переходы за две недели: Uzum иногда проставляет статус задним числом.
     const historyRows = await this.prisma.orderStatusHistory.findMany({
@@ -161,26 +212,20 @@ export class ReturnsWatchService {
       fresh.warehouse.push(event);
     }
 
-    const message = formatWatchMessage({ ...fresh, stillStuck });
-    let sent = false;
-    if (message) {
-      sent = await this.integrations.notifyTelegram(message, 'notifySupplyStatus');
-      if (sent) {
-        const logs: Prisma.NotificationLogCreateManyInput[] = [
-          ...fresh.transitions.map((event) => ({
-            type: 'STUCK_ORDER_MOVED',
-            dedupeKey: `stuck-order:${event.number}:${event.to}:${event.historyId}`,
-            payload: { number: event.number, to: event.to, daysStuck: event.daysStuck, gross: event.gross } as Prisma.InputJsonValue,
-          })),
-          ...fresh.warehouse.map((event) => ({
-            type: 'RETURN_IN_STOCK',
-            dedupeKey: `return-stock:${event.skuId}:${event.kind}:${event.units}:${event.capturedKey}`,
-            payload: { sellerSku: event.sellerSku, kind: event.kind, units: event.units, available: event.available } as Prisma.InputJsonValue,
-          })),
-        ];
-        if (logs.length) await this.prisma.notificationLog.createMany({ data: logs, skipDuplicates: true });
-      }
-    }
+    // В Telegram события не уходят — только в журнал, из которого раз в неделю собирается сводка (digest).
+    const logs: Prisma.NotificationLogCreateManyInput[] = [
+      ...fresh.transitions.map((event) => ({
+        type: STUCK_MOVED_LOG,
+        dedupeKey: `stuck-order:${event.number}:${event.to}:${event.historyId}`,
+        payload: transitionPayload(event) as Prisma.InputJsonValue,
+      })),
+      ...fresh.warehouse.map((event) => ({
+        type: RETURN_STOCK_LOG,
+        dedupeKey: `return-stock:${event.skuId}:${event.kind}:${event.units}:${event.capturedKey}`,
+        payload: warehousePayload(event) as Prisma.InputJsonValue,
+      })),
+    ];
+    if (logs.length) await this.prisma.notificationLog.createMany({ data: logs, skipDuplicates: true });
     return {
       cutoffDays,
       stillStuck: stillStuck.length,
@@ -188,8 +233,6 @@ export class ReturnsWatchService {
       transitions: fresh.transitions.length,
       warehouse: fresh.warehouse.length,
       snapshots,
-      notified: sent,
-      message,
     };
   }
 }

@@ -5,6 +5,7 @@
  *   ... --apply                                      реально поставить ставки
  *   ... --telegram                                   ещё и отправить отчёт в Telegram
  *   ... --campaign 286528                            только эти кампании (по умолчанию — ladderCampaigns())
+ *   ... --details                                    ещё и подробности: каждая правка, слова не в топе по ДРР, топ-10 дороже потолка
  *
  * Токены берутся из БД (IntegrationCredential) и нигде не печатаются.
  */
@@ -51,6 +52,8 @@ async function main() {
     const campaign = option('campaign');
     const result = await service.run({ apply: flag('apply'), notify: flag('telegram'), campaignIds: campaign ? campaign.split(',') : undefined });
     console.log(result.report);
+    if (flag('details') && result.details) console.log(`
+${result.details}`);
   } finally {
     await prisma.$disconnect();
   }

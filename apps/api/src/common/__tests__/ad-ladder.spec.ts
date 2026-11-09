@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeCapTests, colourStockBlock, formatCampaignSummary, formatLadderReport, launchCampaigns, ladderCampaigns, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, narrowClass, planLadderBids, skuSizeKind, sumLadderStats } from '../ad-ladder';
+import { activeCapTests, colourStockBlock, colourTitle, formatCampaignSummary, formatLadderDetails, formatLadderReport, launchCampaigns, ladderCampaigns, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, narrowClass, planLadderBids, skuSizeKind, sumLadderStats } from '../ad-ladder';
 import { BidLadderStep } from '../auto-bidder';
 
 /** Лестница кабинета: позиции 4…51 ↔ 100…20 % показов, цена топ-10 (позиция 9) = top10. */
@@ -40,7 +40,7 @@ describe('лестница ставок', () => {
     ];
     expect(actions(rows)).toEqual([['khaki', 'LOWER', 47_500], ['white', 'RAISE', 56_500], ['milk', 'LOWER', 60_500]]);
     const report = formatLadderReport(planLadderBids(rows), { apply: true });
-    expect(report).toContain('Боевых пар «цвет + запрос»: 2, в топ-10 после правок: 2');
+    expect(report).toContain('Лестница: в топ-10 2 из 2 пар «цвет + запрос»; правок сейчас: 3.');
   });
 
   it('потолок класса: дорогой топ-10 не покупаем; дешёвый топ — любому цвету; без лестницы — без правок', () => {
@@ -78,7 +78,8 @@ describe('лестница ставок', () => {
     const ok = { ...kw('b', 'полотенце банное', 40_000, 47_000), stats7: st(40_000, 800_000, 5) };
     const decisions = planLadderBids([rich, ok]);
     expect(decisions.map((row) => [row.keyword.skuGroupId, row.role, row.action?.newCpm ?? null])).toEqual([['a', 'other', 9_500], ['b', 'top', 48_500]]);
-    expect(formatLadderReport(decisions, { apply: true })).toContain('Не окупаются, из топ-10 убраны (1)');
+    expect(formatLadderReport(decisions, { apply: true })).toContain('по ДРР из топа сняты 1');
+    expect(formatLadderDetails(decisions)).toContain('Не окупаются, из топ-10 убраны (1):\n  HAVANA a «полотенце банное» — ДРР 25.0 % > 10 %');
   });
 
   it('ДРР по запросу целиком: расход, разбитый на цвета, не прячется под порогом данных одного цвета', () => {
@@ -125,9 +126,10 @@ describe('лестница ставок', () => {
     expect(decisions.map((row) => [row.keyword.skuGroupId, row.role, row.action?.newCpm ?? null])).toEqual([['white', 'other', 9_500], ['grey', 'top', 51_500], ['pink', 'top', 54_000]]);
     expect(decisions[0]).toMatchObject({ noStock: 'у цвета нет банного в наличии', blocked: null });
     expect(decisions[0].action?.reason).toBe('лестница: у цвета нет банного в наличии — ставка на минимум');
-    const report = formatLadderReport(decisions, { apply: true });
-    expect(report).toContain('Нет размера в наличии, ставка на минимум (1): HAVANA: white — у цвета нет банного в наличии (1: «полотенце банное»)');
-    expect(report).not.toContain('Не окупаются');
+    const report = formatLadderReport(decisions, { apply: true, titles: new Map([['white', 'белый']]) });
+    expect(report).toContain('⚠ Нет в наличии, реклама на минимуме: HAVANA: белый (банное)');
+    expect(report).not.toContain('по ДРР');
+    expect(formatLadderDetails(decisions)).toContain('HAVANA: white — у цвета нет банного в наличии: «полотенце банное»');
     // остатки не получены — прежнее правило
     expect(planLadderBids([w, grey, pink].map((row) => ({ ...row, skus: null }))).filter((row) => row.role === 'top').map((row) => row.keyword.skuGroupId)).toEqual(['white', 'grey']);
   });
@@ -189,10 +191,35 @@ describe('лестница ставок', () => {
     expect(planLadderBids([havana])[0]).toMatchObject({ role: 'other', blocked: 'ДРР 10.0 % > 9 %' });
   });
 
-  it('сводка кампании: ДРР, расход с понедельника и предупреждение о бюджете', () => {
-    expect(formatCampaignSummary({ name: 'Сауна', spend7: 140_000, revenue7: 1_000_000, sold7: 6, weekSpend: 120_000, weeklyBudget: 150_000, daysPassed: 3 }))
-      .toBe('«Сауна»: реклама за 7 дней 140\u00a0000, выручка 1\u00a0000\u00a0000, продаж 6, ДРР 14.0 % · с понедельника 120\u00a0000 из 150\u00a0000 (80 %) — ⚠ при таком темпе кончится раньше воскресенья');
+  it('сводка кампании: ДРР и предупреждение о бюджете одной строкой', () => {
+    expect(formatCampaignSummary({ name: 'Сауна 100×150', spend7: 140_000, revenue7: 1_000_000, sold7: 6, weekSpend: 120_000, weeklyBudget: 150_000, daysPassed: 3 }).replace(/ /g, ' '))
+      .toBe('Сауна 100×150 — 140 тыс., 6 прод., ДРР 14,0 % · ⚠ бюджет 150 тыс. кончится до воскресенья');
+    expect(formatCampaignSummary({ name: 'Плед', spend7: 836, revenue7: 0, sold7: 0, weekSpend: 0, weeklyBudget: 150_000, daysPassed: 0 })).toBe('Плед — 836 сум, 0 прод., продаж с рекламы нет');
+    // понедельник: за неделю данных ещё нет — темп не считаем
+    expect(formatCampaignSummary({ name: 'J471', spend7: 159_000, revenue7: 4_748_000, sold7: 52, weekSpend: 0, weeklyBudget: 250_000, daysPassed: 0 })).toBe('J471 — 159 тыс., 52 прод., ДРР 3,3 %');
     expect(formatCampaignSummary({ name: 'J403', spend7: 0, revenue7: 0, sold7: 0, weekSpend: 160_000, weeklyBudget: 150_000, daysPassed: 5 })).toContain('бюджет кончился');
+  });
+
+  it('отчёт в Telegram короткий: итог, кампании по расходу, одна строка лестницы, только то, что требует действий', () => {
+    expect(colourTitle([{ title: 'БЕЛЫЙ-Банный' }])).toBe('белый');
+    expect(colourTitle([{ title: 'НГОЛУБ-сауна' }])).toBe('нголуб');
+    expect(colourTitle([{ title: 'БЕЛЫЙ' }])).toBe('белый');
+    expect(colourTitle([])).toBeNull();
+    const campaigns = [
+      { name: 'J471', spend7: 159_194, revenue7: 4_748_000, sold7: 52, weekSpend: 0, weeklyBudget: 250_000, daysPassed: 0 },
+      { name: 'HAVANA', spend7: 171_283, revenue7: 3_545_000, sold7: 45, weekSpend: 0, weeklyBudget: 250_000, daysPassed: 0 },
+    ];
+    const rows = [kw('khaki', 'полотенце банное', 55_000, 45_760), kw('white', 'полотенце банное', 51_000, 54_576)];
+    const report = formatLadderReport(planLadderBids(rows), { apply: true, campaigns, edits: { count: 274, hours: 24 } });
+    expect(report.replace(/ /g, ' ').split('\n')).toEqual([
+      '📶 Реклама «Буст в ТОП» за 7 дней: 330 тыс., продаж 97, ДРР 4,0 %',
+      'HAVANA — 171 тыс., 45 прод., ДРР 4,8 %',
+      'J471 — 159 тыс., 52 прод., ДРР 3,4 %',
+      '',
+      'Лестница: в топ-10 2 из 2 пар «цвет + запрос»; правок за сутки: 274.',
+    ]);
+    expect(formatLadderReport([], { apply: false })).toContain('Режим предложений');
+    expect(formatLadderReport([], { apply: true, failed: 2, notes: ['кампания Плед не активна — пропущена'] })).toContain('⚠ Не прошло правок: 2\n⚠ кампания Плед не активна — пропущена');
   });
 
   it('ставка не выше потолка 70 000 и не ниже минимума', () => {

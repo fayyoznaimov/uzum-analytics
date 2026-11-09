@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { AdBotAction, AdBotStats, normalizeQuery } from '../../common/ad-bot';
-import { activeCapTests, AD_LADDER_DEFAULTS, AdLadderConfig, formatLadderReport, launchCampaigns, LadderCampaignSummary, LadderDecision, LadderKeyword, ladderCampaigns, ladderEnabled, ladderKey, planLadderBids } from '../../common/ad-ladder';
+import { activeCapTests, AD_LADDER_DEFAULTS, AdLadderConfig, campaignLabel, colourTitle, formatLadderDetails, formatLadderReport, launchCampaigns, LadderCampaignSummary, LadderDecision, LadderKeyword, ladderCampaigns, ladderEnabled, ladderKey, planLadderBids } from '../../common/ad-ladder';
 import { shiftDay, tashkentDay } from '../../common/auto-pricing';
 import { emptyStreak, failureText, markNotified, recordFailure, recordSuccess, recoveryText } from '../../common/failure-alert';
 import { PrismaService } from '../../common/prisma.service';
@@ -13,10 +13,12 @@ import { AutoBidderService } from './auto-bidder.service';
 /** Час по Ташкенту (0–23). */
 const tashkentHour = (date: Date) => Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Tashkent', hour: '2-digit', hourCycle: 'h23' }).format(date));
 
-/** Часы отчёта в Telegram (AD_LADDER_REPORT_HOURS, по умолчанию 10 и 19): сверка идёт каждый час, отчёт — только в эти часы. */
+/** Часы отчёта в Telegram (AD_LADDER_REPORT_HOURS, по умолчанию 10): сверка идёт каждый час, отчёт — только в эти часы.
+ * С 09.11.2026 один раз в день (владелец: отчёт длинный, не читаю): расход и ДРР в нём за 7 дней из Cube, который
+ * обновляется раз в сутки утром, — вечерний отчёт повторял утренние цифры. */
 export function ladderReportHours(): number[] {
-  const hours = String(process.env.AD_LADDER_REPORT_HOURS ?? '10,19').split(',').map((h) => Number(h.trim())).filter((h) => Number.isInteger(h) && h >= 0 && h < 24);
-  return hours.length ? hours.sort((a, b) => a - b) : [10, 19];
+  const hours = String(process.env.AD_LADDER_REPORT_HOURS ?? '10').split(',').map((h) => Number(h.trim())).filter((h) => Number.isInteger(h) && h >= 0 && h < 24);
+  return hours.length ? hours.sort((a, b) => a - b) : [10];
 }
 
 /**
@@ -94,7 +96,7 @@ export class AdLadderService {
   }
 
   /** since — часов с прошлого отчёта: в отчёт добавляется число правок лестницы за это время. */
-  async run(options: { apply: boolean; notify: boolean; campaignIds?: string[]; since?: number }): Promise<{ decisions: LadderDecision[]; failed: number; report: string; notes: string[] }> {
+  async run(options: { apply: boolean; notify: boolean; campaignIds?: string[]; since?: number }): Promise<{ decisions: LadderDecision[]; failed: number; report: string; details: string; notes: string[] }> {
     if (this.running) throw new Error('лестница ставок уже выполняется');
     this.running = true;
     try {
@@ -102,14 +104,17 @@ export class AdLadderService {
       const ids = new Set(options.campaignIds ?? ladderCampaigns());
       const sellerId = await this.adBot.sellerId(today);
       const campaigns = (await this.adBot.listCampaigns(sellerId, today)).filter((row) => ids.has(row.id));
+      // notes — сбои и то, что владелец должен знать (идут в Telegram); info — служебное (тесты, льготы), только в подробностях.
       const notes: string[] = [];
-      for (const id of ids) if (!campaigns.some((row) => row.id === id)) notes.push(`кампания ${id} не активна — пропущена`);
+      const info: string[] = [];
+      for (const id of ids) if (!campaigns.some((row) => row.id === id)) notes.push(`кампания ${campaignLabel(id)} не активна — пропущена`);
       const keywords: LadderKeyword[] = [];
       const byCampaign = new Map<string, LadderKeyword[]>();
+      const ladderErrors: string[] = [];
       for (const campaign of campaigns) {
         for (const keyword of await this.adBot.loadKeywords(campaign)) {
           const ladder = await this.autoBidder.ladder(keyword).catch((error: any) => {
-            notes.push(`«${keyword.query}»: лестница не получена — ${String(error?.message || error).slice(0, 100)}`);
+            ladderErrors.push(`«${keyword.query}»: ${String(error?.message || error).slice(0, 100)}`);
             return null;
           });
           const row: LadderKeyword = { ...keyword, ladder };
@@ -134,21 +139,28 @@ export class AdLadderService {
         return null;
       });
       for (const row of keywords) row.skus = skus?.get(row.skuGroupId) ?? null;
+      if (ladderErrors.length) {
+        notes.push(`лестница кабинета не получена по ${ladderErrors.length} фразам (${ladderErrors[0]})`);
+        info.push(...ladderErrors);
+      }
+      const titles = new Map<string, string>();
+      for (const [groupId, list] of skus ?? []) { const name = colourTitle(list); if (name) titles.set(groupId, name); }
       const summaries: LadderCampaignSummary[] = campaigns.map((campaign) => {
         const rows = byCampaign.get(campaign.id) ?? [];
         const keys = [...new Set(rows.map(statKey))];
         const sum = (map: Map<string, AdBotStats> | null, field: 'spend' | 'revenue' | 'sold') => keys.reduce((total, key) => total + (map?.get(key)?.[field] ?? 0), 0);
+        // Полных дней недели с данными: расход за сегодня Cube отдаёт только завтра утром.
         return {
-          name: campaign.name, spend7: sum(stats7, 'spend'), revenue7: sum(stats7, 'revenue'), sold7: sum(stats7, 'sold'),
-          weekSpend: sum(statsWeek, 'spend'), weeklyBudget: Number(campaign.budgetConfig?.weeklyAmount) || null, daysPassed: ((dow + 6) % 7) + 1,
+          name: campaignLabel(campaign.id, campaign.name), spend7: sum(stats7, 'spend'), revenue7: sum(stats7, 'revenue'), sold7: sum(stats7, 'sold'),
+          weekSpend: sum(statsWeek, 'spend'), weeklyBudget: Number(campaign.budgetConfig?.weeklyAmount) || null, daysPassed: (dow + 6) % 7,
         };
       });
       const cfg = this.config();
       const recent = await this.recentKeys([...ids], cfg.cooldownHours);
       const launch = launchCampaigns(today);
-      for (const id of launch) if (ids.has(id)) notes.push(`кампания ${campaigns.find((row) => row.id === id)?.name ?? id}: льгота запуска — ДРР не проверяется`);
+      for (const id of launch) if (ids.has(id)) info.push(`кампания ${campaignLabel(id)}: льгота запуска — ДРР не проверяется`);
       const tests = activeCapTests(today).filter((row) => ids.has(row.campaignId));
-      for (const test of tests) notes.push(`тест потолка: ${campaigns.find((row) => row.id === test.campaignId)?.name ?? test.campaignId}, цвет ${test.skuGroupId} «${test.query}» — топ-10 до ${test.cap.toLocaleString('ru-RU')} до ${test.until}, стоп при ДРР > ${test.maxDrr} %`);
+      for (const test of tests) info.push(`тест потолка: ${campaignLabel(test.campaignId)}, ${titles.get(test.skuGroupId) ?? test.skuGroupId} «${test.query}» — топ-10 до ${test.cap.toLocaleString('ru-RU')} до ${test.until}, стоп при ДРР > ${test.maxDrr} %`);
       const decisions = planLadderBids(keywords, cfg, recent.keys, launch, undefined, tests);
       const actions = decisions.map((row) => row.action).filter((row): row is AdBotAction => Boolean(row));
       let failed = 0;
@@ -157,13 +169,14 @@ export class AdLadderService {
         const outcomes = await this.adBot.apply(actions, new Map(campaigns.map((row) => [row.id, row])), empty);
         failed = outcomes.filter((row) => !row.ok).length;
       }
-      if (options.since) notes.unshift(`с прошлого отчёта (${options.since} ч) правок лестницы: ${(await this.recentKeys([...ids], options.since)).count}`);
-      const report = formatLadderReport(decisions, { apply: options.apply, failed, notes: notes.slice(0, 10), campaigns: summaries });
+      const edits = options.since ? { count: (await this.recentKeys([...ids], options.since)).count, hours: options.since } : undefined;
+      const report = formatLadderReport(decisions, { apply: options.apply, failed, notes: notes.slice(0, 5), campaigns: summaries, titles, edits });
+      const details = formatLadderDetails(decisions, { titles, info });
       if (options.notify || failed) {
         await this.integrations.notifyTelegram(report, 'notifyAgents').catch((error: any) => this.logger.warn(`Лестница ставок: Telegram — ${error?.message || error}`));
       }
       this.logger.log(`Лестница ставок: правок ${actions.length}, не прошло ${failed}`);
-      return { decisions, failed, report, notes };
+      return { decisions, failed, report, details, notes };
     } finally {
       this.running = false;
     }

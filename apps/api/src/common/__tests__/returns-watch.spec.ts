@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifyTransition,
-  formatWatchMessage,
+  digestEvents,
+  formatWatchDigest,
   pickStuckOrders,
   pickTransitions,
+  transitionPayload,
   warehouseEvents,
+  warehousePayload,
 } from '../returns-watch';
 
 const order = (over: Record<string, any> = {}) => ({
@@ -112,42 +115,52 @@ describe('warehouseEvents', () => {
   });
 });
 
-describe('formatWatchMessage', () => {
+describe('недельная сводка (formatWatchDigest)', () => {
   const now = new Date('2026-10-13T10:00:00Z');
   const stuck = pickStuckOrders([order()], { cutoffDays: 14, now });
+  const plain = (text: string) => text.replace(/ /g, ' ');
 
-  it('без событий не пишет ничего', () => {
-    expect(formatWatchMessage({ transitions: [], warehouse: [], stillStuck: stuck })).toBe('');
+  it('ничего не висит и движения не было — не пишет', () => {
+    expect(formatWatchDigest({ transitions: [], warehouse: [], stillStuck: [], cutoffDays: 14, days: 7 })).toBe('');
   });
 
-  it('собирает письмо по разделам и добавляет остаток зависших', () => {
-    const transitions = pickTransitions([
+  it('напоминает о зависших, даже если за неделю движения не было', () => {
+    const text = plain(formatWatchDigest({ transitions: [], warehouse: [], stillStuck: stuck, cutoffDays: 14, days: 7 }));
+    expect(text.split('\n')).toEqual([
+      '🔁 Зависшие заказы — сводка за неделю',
+      'Висят без выдачи дольше 14 дн.: 1 заказ на 95 750 сум.',
+      'Самые старые: №108565279 от 25.05 (141 дн.)',
+      '',
+      'За 7 дн. движения не было.',
+    ]);
+  });
+
+  it('итоги недели из журнала — суммами, без перечня каждого события; «в пути» не показывает', () => {
+    const returned = pickTransitions([
       { id: 'h1', fromStatus: 'WAITING', toStatus: 'CANCELED', changedAt: new Date('2026-10-13T09:00:00Z'), order: order({ marketplaceOrderId: '115753914', orderedAt: new Date('2026-07-08T10:00:00Z'), grossRevenue: 69900 }) },
+      { id: 'h2', fromStatus: 'WAITING', toStatus: 'PAID', changedAt: new Date('2026-10-13T09:00:00Z'), order: order({ marketplaceOrderId: '115753915' }) },
     ], { cutoffDays: 14, now });
-    const text = formatWatchMessage({
-      transitions,
-      warehouse: [{ kind: 'BACK_IN_STOCK', skuId: 's1', sellerSku: 'HAVANA-СЕРЫЙ-50 x 90', units: 1, available: 12, capturedKey: '' }],
-      stillStuck: stuck,
-    });
-    const plain = text.replace(/\u00a0/g, ' ');
-    expect(text).toContain('Закрыты возвратом');
-    expect(text).toContain('№115753914');
-    expect(plain).toContain('69 900 сум не придут');
-    expect(text).toContain('снова в продаже');
-    expect(text).toContain('+1 шт., доступно 12');
-    expect(plain).toContain('Ещё висит: 1 заказ на 95 750 сум. Это №');
-    expect(text).toContain('141 дн.');
-  });
-
-  it('сообщает, когда зависших не осталось', () => {
-    const text = formatWatchMessage({
-      transitions: pickTransitions([
-        { id: 'h1', fromStatus: 'WAITING', toStatus: 'PAID', changedAt: new Date('2026-10-13T09:00:00Z'), order: order() },
-      ], { cutoffDays: 14, now }),
-      warehouse: [],
-      stillStuck: [],
-    });
-    expect(text).toContain('Наконец выданы');
-    expect(text).toContain('Зависших заказов больше нет.');
+    const logs = [
+      ...returned.map((event) => ({ type: 'STUCK_ORDER_MOVED', payload: transitionPayload(event) })),
+      // запись до 09.11.2026: без kind и payout
+      { type: 'STUCK_ORDER_MOVED', payload: { number: '1', to: 'RETURNED', daysStuck: 20, gross: 30100 } },
+      { type: 'RETURN_IN_STOCK', payload: warehousePayload({ kind: 'BACK_IN_STOCK', skuId: 's1', sellerSku: 'HAVANA-СЕРЫЙ-50 x 90', units: 2, available: 12, capturedKey: '' }) },
+      { type: 'RETURN_IN_STOCK', payload: { sellerSku: 'J471-ГОЛУБ-70 x135', kind: 'BACK_AS_DEFECT', units: 1, available: 3 } },
+      { type: 'RETURN_IN_STOCK', payload: { sellerSku: 'J471-ГОЛУБ-70 x135', kind: 'BACK_AS_DEFECT', units: 1, available: 3 } },
+      { type: 'RETURN_IN_STOCK', payload: { sellerSku: 'J403-БЕЛЫЙ', kind: 'RETURN_REGISTERED', units: 4, available: 0 } },
+    ];
+    const events = digestEvents(logs);
+    expect(events.transitions.map((event) => event.kind)).toEqual(['RETURNED', 'ISSUED', 'RETURNED']);
+    const text = plain(formatWatchDigest({ ...events, stillStuck: [], cutoffDays: 14, days: 7 }));
+    expect(text.split('\n')).toEqual([
+      '🔁 Зависшие заказы — сводка за неделю',
+      'Зависших заказов нет.',
+      '',
+      'За 7 дн.:',
+      '• закрыты возвратом: 2 заказа, 100 000 сум не придут',
+      '• наконец выданы: 1 заказ, выплата 74 685 сум',
+      '• вернулись на склад и снова в продаже: 2 шт.',
+      '• вернулись браком, в продажу не попадут: 2 шт. (J471-ГОЛУБ-70 x135 ×2)',
+    ]);
   });
 });

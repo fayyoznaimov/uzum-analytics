@@ -337,54 +337,108 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
   return decisions;
 }
 
-/** Отчёт владельцу: что поменяли и где боевые цвета не попадают в топ-10. */
-/** Сводка кампании для отчёта: расход и выручка с рекламы за 7 дней, расход с понедельника и недельный бюджет. */
-export type LadderCampaignSummary = { name: string; spend7: number; revenue7: number; sold7: number; weekSpend: number; weeklyBudget: number | null; daysPassed: number };
+/** Короткие имена кампаний для отчёта: в кабинете HAVANA называется «Обучение буст топ микс», сауна — «Банное 100×150: …». */
+export const LADDER_CAMPAIGN_LABELS: Record<string, string> = { '286528': 'HAVANA', '305122': 'J471', '305324': 'J403', '332097': 'Сауна 100×150', '337334': 'Сердечки', '305326': 'Плед' };
+export const campaignLabel = (id: string, name?: string | null) => LADDER_CAMPAIGN_LABELS[id] ?? name ?? id;
 
-export function formatCampaignSummary(row: LadderCampaignSummary): string {
-  const drr = row.revenue7 > 0 ? `${((row.spend7 / row.revenue7) * 100).toFixed(1)} %` : row.spend7 > 0 ? 'нет продаж' : '—';
-  let budget = '';
-  if (row.weeklyBudget) {
-    const used = Math.round((row.weekSpend / row.weeklyBudget) * 100);
-    budget = ` · с понедельника ${fmt(row.weekSpend)} из ${fmt(row.weeklyBudget)} (${used} %)`;
-    if (row.weekSpend >= row.weeklyBudget) budget += ' — ⚠ бюджет кончился, показов до понедельника нет';
-    else if (row.daysPassed > 0 && (row.weekSpend / row.daysPassed) * 7 > row.weeklyBudget) budget += ' — ⚠ при таком темпе кончится раньше воскресенья';
-  }
-  return `«${row.name}»: реклама за 7 дней ${fmt(row.spend7)}, выручка ${fmt(row.revenue7)}, продаж ${row.sold7}, ДРР ${drr}${budget}`;
+/** Цвет по SKU кабинета: «БЕЛЫЙ-Банный» → «белый», «НГОЛУБ-сауна» → «нголуб»; у сауны SKU без размера — «БЕЛЫЙ» → «белый». */
+export function colourTitle(skus: Array<{ title: string }> | null | undefined): string | null {
+  const title = skus?.find((row) => row.title)?.title?.trim();
+  if (!title) return null;
+  return (title.includes('-') ? title.replace(/-[^-]*$/, '') : title).toLowerCase() || null;
 }
 
-export function formatLadderReport(decisions: LadderDecision[], opts: { apply: boolean; failed?: number; titles?: Map<string, string>; notes?: string[]; campaigns?: LadderCampaignSummary[] }): string {
+/** Сводка кампании для отчёта: расход и выручка с рекламы за 7 дней, расход с понедельника и недельный бюджет.
+ * daysPassed — полных дней недели с данными: Cube публикует расход дня утром следующего, в понедельник их 0. */
+export type LadderCampaignSummary = { name: string; spend7: number; revenue7: number; sold7: number; weekSpend: number; weeklyBudget: number | null; daysPassed: number };
+
+const money = (value: number) => (value >= 1_000 ? `${Math.round(value / 1_000).toLocaleString('ru-RU')} тыс.` : `${Math.round(value).toLocaleString('ru-RU')} сум`);
+const pct = (value: number) => `${value.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
+
+export function formatCampaignSummary(row: LadderCampaignSummary): string {
+  const drr = row.revenue7 > 0 ? `, ДРР ${pct((row.spend7 / row.revenue7) * 100)}` : row.spend7 > 0 ? ', продаж с рекламы нет' : '';
+  let line = `${row.name} — ${money(row.spend7)}, ${row.sold7} прод.${drr}`;
+  if (row.weeklyBudget) {
+    if (row.weekSpend >= row.weeklyBudget) line += ' · ⚠ недельный бюджет кончился, показов до понедельника нет';
+    else if (row.daysPassed > 0 && (row.weekSpend / row.daysPassed) * 7 > row.weeklyBudget) line += ` · ⚠ бюджет ${money(row.weeklyBudget)} кончится до воскресенья`;
+  }
+  return line;
+}
+
+const STOCK_SHORT: Record<string, string> = { наборов: 'наборы', '100×150': '100×150', банного: 'банное', 'для рук': 'для рук', лицевого: 'лицевое' };
+const stockShort = (reason: string) => { const match = /нет (.+) в наличии$/.exec(reason); return match ? STOCK_SHORT[match[1]] ?? match[1] : 'весь цвет'; };
+
+/**
+ * Отчёт владельцу в Telegram — раз в день и коротко (09.11.2026 владелец: «рекомендации пиздец длинные, я их не читаю»):
+ * деньги по кампаниям, одна строка о работе лестницы и только то, что требует его действий — нет товара, бюджет, сбои.
+ * Подробности (каждая правка, слова не в топе по ДРР, топ-10 дороже потолка) — formatLadderDetails, для ручного запуска.
+ */
+export function formatLadderReport(decisions: LadderDecision[], opts: { apply: boolean; failed?: number; titles?: Map<string, string>; notes?: string[]; campaigns?: LadderCampaignSummary[]; edits?: { count: number; hours: number } }): string {
   const title = (id: string) => opts.titles?.get(id) ?? id;
-  const changed = decisions.filter((row) => row.action);
-  const lines = [`📶 Лестница ставок «Буст в ТОП» — ${opts.apply ? 'применено' : 'только предложения'}`];
+  const campaigns = opts.campaigns ?? [];
+  const spend = campaigns.reduce((sum, row) => sum + row.spend7, 0);
+  const revenue = campaigns.reduce((sum, row) => sum + row.revenue7, 0);
+  const sold = campaigns.reduce((sum, row) => sum + row.sold7, 0);
+  const lines = [campaigns.length
+    ? `📶 Реклама «Буст в ТОП» за 7 дней: ${money(spend)}, продаж ${sold}${revenue > 0 ? `, ДРР ${pct((spend / revenue) * 100)}` : ''}`
+    : '📶 Реклама «Буст в ТОП»'];
+  if (!opts.apply) lines.push('Режим предложений — ставки не менялись.');
+  lines.push(...[...campaigns].sort((a, b) => b.spend7 - a.spend7).map(formatCampaignSummary));
   const tops = decisions.filter((row) => row.role === 'top');
   const inTop = tops.filter((row) => row.positionAfter !== null && row.positionAfter <= 10).length;
-  lines.push(`Боевых пар «цвет + запрос»: ${tops.length}, в топ-10 после правок: ${inTop}. Правок: ${changed.length}${opts.failed ? `, не прошло: ${opts.failed}` : ''}.`);
-  if (opts.campaigns?.length) lines.push('', '💰 Расход и ДРР', ...opts.campaigns.map(formatCampaignSummary));
+  const blocked = decisions.filter((row) => row.blocked).length;
+  const edits = opts.edits ? `правок за ${opts.edits.hours === 24 ? 'сутки' : `${opts.edits.hours} ч`}: ${opts.edits.count}` : `правок сейчас: ${decisions.filter((row) => row.action).length}`;
+  lines.push('', `Лестница: в топ-10 ${inTop} из ${tops.length} пар «цвет + запрос»${blocked ? `, по ДРР из топа сняты ${blocked}` : ''}; ${edits}.`);
+  const empty = decisions.filter((row) => row.noStock);
+  if (empty.length) {
+    const byCampaign = new Map<string, Map<string, Set<string>>>();
+    for (const row of empty) {
+      const name = campaignLabel(row.keyword.campaignId, row.keyword.campaignName);
+      const colours = byCampaign.get(name) ?? new Map<string, Set<string>>();
+      colours.set(title(row.keyword.skuGroupId), (colours.get(title(row.keyword.skuGroupId)) ?? new Set<string>()).add(stockShort(String(row.noStock))));
+      byCampaign.set(name, colours);
+    }
+    const parts = [...byCampaign].map(([name, colours]) => `${name}: ${[...colours].map(([colour, needs]) => `${colour} (${needs.has('весь цвет') ? 'весь цвет' : [...needs].join(', ')})`).join(', ')}`);
+    lines.push(`⚠ Нет в наличии, реклама на минимуме: ${parts.join('; ')}`);
+  }
+  if (opts.failed) lines.push(`⚠ Не прошло правок: ${opts.failed}`);
+  for (const note of opts.notes ?? []) lines.push(`⚠ ${note}`);
+  return lines.join('\n');
+}
+
+/** Подробный разбор прогона (ручной запуск scripts/ad-ladder.ts --details): каждая правка, слова не в топе по ДРР,
+ * нет размера по фразам, запросы, где топ-10 дороже потолка, и служебные заметки (тесты потолка, льготы). */
+export function formatLadderDetails(decisions: LadderDecision[], opts: { titles?: Map<string, string>; info?: string[] } = {}): string {
+  const title = (id: string) => opts.titles?.get(id) ?? id;
+  const lines: string[] = [];
   const blocked = decisions.filter((row) => row.blocked).sort((a, b) => (b.keyword.stats7?.spend ?? 0) - (a.keyword.stats7?.spend ?? 0));
-  if (blocked.length) lines.push('', `Не окупаются, из топ-10 убраны (${blocked.length}): ${blocked.slice(0, 8).map((row) => `${title(row.keyword.skuGroupId)} «${row.keyword.query}» — ${row.blocked}`).join('; ')}`);
+  if (blocked.length) lines.push(`Не окупаются, из топ-10 убраны (${blocked.length}):`, ...blocked.map((row) => `  ${campaignLabel(row.keyword.campaignId, row.keyword.campaignName)} ${title(row.keyword.skuGroupId)} «${row.keyword.query}» — ${row.blocked}`));
   const empty = decisions.filter((row) => row.noStock);
   if (empty.length) {
     const byColour = new Map<string, string[]>();
     for (const row of empty) {
-      const head = `${row.keyword.campaignName}: ${title(row.keyword.skuGroupId)} — ${row.noStock}`;
+      const head = `${campaignLabel(row.keyword.campaignId, row.keyword.campaignName)}: ${title(row.keyword.skuGroupId)} — ${row.noStock}`;
       byColour.set(head, [...(byColour.get(head) ?? []), row.keyword.query]);
     }
-    lines.push('', `Нет размера в наличии, ставка на минимум (${empty.length}): ${[...byColour].slice(0, 8).map(([head, queries]) => `${head} (${queries.length}: ${queries.slice(0, 4).map((q) => `«${q}»`).join(', ')}${queries.length > 4 ? '…' : ''})`).join('; ')}`);
+    lines.push('', `Нет размера в наличии, ставка на минимум (${empty.length}):`, ...[...byColour].map(([head, queries]) => `  ${head}: ${queries.map((q) => `«${q}»`).join(', ')}`));
   }
   const byCampaign = new Map<string, LadderDecision[]>();
-  for (const row of changed) byCampaign.set(row.keyword.campaignName, [...(byCampaign.get(row.keyword.campaignName) ?? []), row]);
+  for (const row of decisions.filter((item) => item.action)) {
+    const name = campaignLabel(row.keyword.campaignId, row.keyword.campaignName);
+    byCampaign.set(name, [...(byCampaign.get(name) ?? []), row]);
+  }
   for (const [name, rows] of byCampaign) {
-    lines.push('', `«${name}»`);
+    lines.push('', `Правки «${name}»:`);
     for (const row of rows) {
       const a = row.action as AdBotAction;
-      lines.push(`${a.kind === 'RAISE' ? '⬆️' : '⬇️'} ${title(a.skuGroupId)} «${a.query}» ${fmt(a.oldCpm ?? 0)} → ${fmt(a.newCpm)} (позиция ${row.positionBefore ?? '—'} → ${row.positionAfter ?? '—'})`);
+      lines.push(`  ${a.kind === 'RAISE' ? '⬆️' : '⬇️'} ${title(a.skuGroupId)} «${a.query}» ${fmt(a.oldCpm ?? 0)} → ${fmt(a.newCpm)} (позиция ${row.positionBefore ?? '—'} → ${row.positionAfter ?? '—'})`);
     }
   }
-  const missing = decisions.filter((row) => row.role === 'other' && row.top10 && !row.noStock && ladderQueryClass(row.keyword.query).colors > 0)
+  // Запрос, где ни один цвет не в топ-10 потому, что топ-10 дороже потолка (не по ДРР и не из-за остатка).
+  const missing = decisions.filter((row) => row.role === 'other' && row.top10 && !row.noStock && !row.blocked)
     .filter((row) => !decisions.some((other) => other.role === 'top' && other.keyword.campaignId === row.keyword.campaignId && normalizeQuery(other.keyword.query) === normalizeQuery(row.keyword.query)));
   const queries = [...new Set(missing.map((row) => `«${row.keyword.query}» (топ-10 от ${fmt(Math.min(...missing.filter((m) => m.keyword.query === row.keyword.query).map((m) => m.top10?.cpm ?? Infinity)))})`))];
-  if (queries.length) lines.push('', `Дороже потолка, ни один цвет не в топ-10: ${queries.slice(0, 15).join(', ')}`);
-  for (const note of opts.notes ?? []) lines.push(`⚠ ${note}`);
+  if (queries.length) lines.push('', `Топ-10 дороже потолка, ни один цвет не в топе: ${queries.join(', ')}`);
+  for (const note of opts.info ?? []) lines.push(`· ${note}`);
   return lines.join('\n');
 }
