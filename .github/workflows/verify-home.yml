@@ -1,0 +1,39 @@
+# Сверка цифр Главной — ручной запуск из GitHub (Actions → «Сверка Главной» → Run workflow).
+# Выполняется на сервере ParisaUbuntu в рабочей копии ~/uzum с её .env: БД есть только там.
+# Только чтение. Цифры уходят владельцу в Telegram; в лог (репозиторий публичный) — только ✅/⚠️ без сумм.
+# Шаг падает, если хоть одна цифра экрана не совпала с прямым пересчётом из базы.
+name: Сверка Главной
+
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: 'С какого дня (ГГГГ-ММ-ДД), пусто — последние 7 дней'
+        type: string
+        default: ''
+      to:
+        description: 'По какой день (ГГГГ-ММ-ДД)'
+        type: string
+        default: ''
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  verify-home:
+    runs-on: [self-hosted, uzum-server]
+    timeout-minutes: 10
+    steps:
+      - name: Сверка Главной → Telegram
+        env:
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
+        run: |
+          set -euo pipefail
+          cd ~/uzum
+          echo "Версия на сервере: $(git log --oneline -1)"
+          set -a && . ./.env && set +a
+          period=()
+          if [ -n "${FROM:-}" ]; then period=(--from "$FROM" --to "${TO:-$FROM}"); fi
+          npx tsx apps/api/scripts/verify-home.ts "${period[@]}" --telegram --quiet
