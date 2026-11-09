@@ -3,35 +3,28 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { BarChart3, Boxes, Crosshair, CalendarRange, ChartNoAxesCombined, CircleDollarSign, ClipboardList, Clock3, Gauge, Goal, HandCoins, LayoutDashboard, LogOut, Megaphone, MessageSquareText, PackageSearch, RefreshCw, Settings, WalletCards } from 'lucide-react';
+import { BarChart3, Boxes, ChartNoAxesCombined, ClipboardList, HandCoins, LayoutDashboard, LogOut, Megaphone, MessageSquareText, PackageSearch, RefreshCw, Settings, WalletCards } from 'lucide-react';
 import { api, getToken, logout, syncAndWait } from '@/lib/api';
 import { refreshOverviewEverywhere } from '@/lib/overview';
 import PeriodPicker from './PeriodPicker';
 
 // Пункт меню: [href, название, иконка, доп. пути, при которых он подсвечен].
-// Склад+Поставки и Отзывы+Качество объединены — внутри экранов переключение вкладками.
-const nav: Array<[string] | [string, string, any, string[]?]> = [
-  ['ДЕНЬГИ'],
-  ['/dashboard', 'Главная', LayoutDashboard], ['/wallet', 'Кошелёк', WalletCards],
-  ['/profit', 'Профит', ChartNoAxesCombined], ['/monthly', 'Отчёты по месяцам', CalendarRange],
-  ['/supplier', 'Долг поставщику', HandCoins],
-  ['ПРОДАЖИ'],
-  ['/ordered', 'Заказы', ClipboardList], ['/hourly', 'По часам', Clock3], ['/goals', 'Цели', Goal],
-  ['РЕКЛАМА'],
-  ['/ads', 'Кампании', Megaphone], ['/auto-bidder', 'Авто-ставка', Gauge],
-  ['ТОВАРЫ'],
-  ['/products', 'Товары и цены', PackageSearch], ['/competitors', 'Конкуренты', Crosshair], ['/warehouse', 'Склад и поставки', Boxes, ['/supplies']],
-  ['/costs', 'Себестоимость', CircleDollarSign], ['/reviews', 'Отзывы и качество', MessageSquareText, ['/quality']],
-  ['СЕРВИС'],
-  ['/settings', 'Настройки', Settings],
+// Владелец 09.11.2026 (после демо Sellium): «70 % не используется» — в меню 10 пунктов вместо 19.
+// Парные экраны открываются вкладками внутри пункта (см. subtabs). «Цели», «Конкуренты»,
+// «Авто-ставка» и «Качество карточек» из меню убраны, но открываются по прямой ссылке.
+const nav: Array<[string, string, any, string[]?]> = [
+  ['/dashboard', 'Главная', LayoutDashboard, ['/goals']], ['/wallet', 'Кошелёк', WalletCards],
+  ['/profit', 'Профит', ChartNoAxesCombined, ['/monthly']], ['/ordered', 'Заказы', ClipboardList, ['/hourly']],
+  ['/products', 'Товары', PackageSearch, ['/costs', '/competitors']], ['/warehouse', 'Склад и поставки', Boxes, ['/supplies']],
+  ['/ads', 'Реклама', Megaphone, ['/auto-bidder']], ['/reviews', 'Отзывы', MessageSquareText, ['/quality']],
+  ['/supplier', 'Долг поставщику', HandCoins], ['/settings', 'Настройки', Settings],
 ];
 
 // Вкладки внутри объединённых пунктов меню.
+const tabs = { profit: [['/profit', 'За период'], ['/monthly', 'По месяцам']], ordered: [['/ordered', 'Заказы'], ['/hourly', 'По часам']], products: [['/products', 'Товары и цены'], ['/costs', 'Себестоимость']], warehouse: [['/warehouse', 'Склад'], ['/supplies', 'Поставки']] } as Record<string, Array<[string, string]>>;
 const subtabs: Record<string, Array<[string, string]>> = {
-  '/warehouse': [['/warehouse', 'Склад'], ['/supplies', 'Поставки']],
-  '/supplies': [['/warehouse', 'Склад'], ['/supplies', 'Поставки']],
-  '/reviews': [['/reviews', 'Отзывы'], ['/quality', 'Качество карточек']],
-  '/quality': [['/reviews', 'Отзывы'], ['/quality', 'Качество карточек']],
+  '/profit': tabs.profit, '/monthly': tabs.profit, '/ordered': tabs.ordered, '/hourly': tabs.ordered,
+  '/products': tabs.products, '/costs': tabs.products, '/warehouse': tabs.warehouse, '/supplies': tabs.warehouse,
 };
 
 export default function AppShell({ children, title, subtitle, actions, periodEnabled = true }: { children: React.ReactNode; title: string; subtitle?: string; actions?: React.ReactNode; periodEnabled?: boolean }) {
@@ -63,7 +56,7 @@ export default function AppShell({ children, title, subtitle, actions, periodEna
   }
 
   return <div className="app">
-    <aside className="sidebar"><div className="brand"><div className="brand-mark"><BarChart3/></div><div><b>Uzum Analytics</b><span>{shop.name}</span></div></div><nav>{nav.map((entry) => entry.length === 1 ? <span key={entry[0]} className="nav-group">{entry[0]}</span> : (([href, labelText, Icon, also]) => <Link key={href} href={href} className={path === href || (also || []).includes(path || '') ? 'active' : ''}><Icon size={18}/><span>{labelText}</span></Link>)(entry as [string, string, any, string[]?]))}</nav><div className="side-foot"><button onClick={logout}><LogOut size={17}/>Выйти</button></div></aside>
+    <aside className="sidebar"><div className="brand"><div className="brand-mark"><BarChart3/></div><div><b>Uzum Analytics</b><span>{shop.name}</span></div></div><nav>{nav.map(([href, labelText, Icon, also]) => <Link key={href} href={href} title={labelText} className={path === href || (also || []).includes(path || '') ? 'active' : ''}><Icon size={18}/><span>{labelText}</span></Link>)}</nav><div className="side-foot"><button onClick={logout}><LogOut size={17}/>Выйти</button></div></aside>
     <main className="main"><section className="page-head"><div><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div><div className="head-actions">{syncMessage && <span className={syncMessage.startsWith('Ошибка') ? 'top-sync-error' : 'top-sync-ok'}>{syncMessage}</span>}<button className="ghost" onClick={refreshData} disabled={syncing}><RefreshCw size={16} className={syncing ? 'spin' : ''}/>{syncing ? 'Обновление…' : 'Обновить данные'}</button>{periodEnabled && <PeriodPicker/>}{actions}</div></section>{subtabs[path || ''] && <div className="subtabs">{subtabs[path || ''].map(([href, labelText]) => <Link key={href} href={href} className={path === href ? 'active' : ''}>{labelText}</Link>)}</div>}{children}</main>
   </div>;
 }

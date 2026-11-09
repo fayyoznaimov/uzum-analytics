@@ -28,7 +28,7 @@ export default function AdsClient(){
    {name:'Буст в ТОП',spend:topPromotionSpend,factual:topPromotionFactual,provisional:topPromotionProvisional,share:revenue?topPromotionSpend/revenue*100:0,status:ads.topExpensePending?'Свежий факт может дополниться':'Факт finance/expenses',tone:ads.topExpensePending?'amber':topPromotionSpend?'green':'gray'},
  ];
 
- return <AppShell title="Реклама" subtitle="Фактические списания, предварительные суммы и общий ДРР магазина без ложной атрибуции продаж кампаниям">
+ return <AppShell title="Реклама">
  {loading?<div className="loading">Загружаем рекламу…</div>:error?<div className="error-box settings-notice"><span>{error}</span><button className="ghost" onClick={()=>void load()}>Повторить</button></div>:data&&<>
   <div className="metrics-grid"><MetricCard label="ПОДТВЕРЖДЁННАЯ РЕКЛАМА" value={money(adSpend)} tone="orange"/><MetricCard label="ВЫРУЧКА МАГАЗИНА" value={money(revenue)} tone="blue"/><MetricCard label="ВЫРУЧКА / РЕКЛАМНЫЕ РАСХОДЫ" value={adSpend>0?`${roas.toFixed(2)}x`:'—'} tone="green"/><MetricCard label="ФАКТИЧЕСКИЙ ДРР" value={revenue?`${effectivePercent.toFixed(1)}%`:'—'} tone="violet"/><MetricCard label={storeProfitKnown?'ЧИСТАЯ ПРИБЫЛЬ МАГАЗИНА':'ПРИБЫЛЬ НЕ РАССЧИТАНА'} value={storeProfitKnown?money(storeProfit):'—'} tone={storeProfitKnown?(storeProfit>=0?'cyan':'red'):'gray'}/><MetricCard label="СТАТУС ПЕРИОДА" value={mayBeIncomplete?'Свежий, не финальный':'Факт Uzum'} tone={mayBeIncomplete?'orange':'green'}/></div>
    {!storeProfitKnown&&<div className="profit-provisional"><AlertTriangle size={18}/><div><b>Нет полного набора данных для прибыли</b><span>Число скрыто: отсутствующая выплата или себестоимость не заменяется нулём.</span></div><Status tone="amber">прибыль неизвестна</Status></div>}

@@ -31,7 +31,7 @@ export default function OrderedClient(){
   {group:'Реклама',name:'Буст в ТОП',value:Number(m.orderedTopPromotionExpense||0),source:'Кампания целиком; Uzum не даёт разбивку по товарам для этого типа буста'},
  ],[m,orderedCommission,orderedMarketplaceLogistics,data]);
  const totalCosts=rows.reduce((sum,row)=>sum+row.value,0);
- return <AppShell title="Заказано" subtitle="Что заказали покупатели в выбранном периоде: все расходы и потенциальная прибыль — независимо от того, выкупят ли ещё или нет">
+ return <AppShell title="Заказы">
   {loading?<div className="loading">Считаем заказанное…</div>:error?<div className="error-box settings-notice"><span>{error}</span><button className="ghost" onClick={()=>void load()}>Повторить</button></div>:data?.empty?<div className="error-box settings-notice"><span>Магазин ещё не подключён или не было ни одной синхронизации.</span></div>:data&&<>
    <div className="metrics-grid">
     <MetricCard label={`ЗАКАЗАНО • ${orderedUnits} ШТ.`} value={money(orderedRevenue)}/>

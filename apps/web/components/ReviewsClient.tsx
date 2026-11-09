@@ -136,7 +136,7 @@ export default function ReviewsClient(){
   }catch(e:any){setSyncError(e.message||'Не удалось запустить автообработку отзывов')}finally{setAutoRunning(false)}
  }
  const initialLoading=aggregateLoading&&feedLoading&&!data&&!feed;
- return <AppShell periodEnabled={false} title="Отзывы" subtitle="Реальные тексты отзывов Uzum и очередь контроля ответов" actions={<><button className="ghost" onClick={runAutoReply} disabled={autoRunning}><Sparkles size={16} className={autoRunning?'spin':''}/>{autoRunning?'Обрабатываем…':'Запустить автообработку'}</button><button className="primary" onClick={sync} disabled={syncing}><RefreshCw size={16} className={syncing?'spin':''}/>{syncing?'Импортируем…':'Импортировать отзывы'}</button></>}>
+ return <AppShell periodEnabled={false} title="Отзывы" actions={<><button className="ghost" onClick={runAutoReply} disabled={autoRunning}><Sparkles size={16} className={autoRunning?'spin':''}/>{autoRunning?'Обрабатываем…':'Запустить автообработку'}</button><button className="primary" onClick={sync} disabled={syncing}><RefreshCw size={16} className={syncing?'spin':''}/>{syncing?'Импортируем…':'Импортировать отзывы'}</button></>}>
   {initialLoading?<div className="loading">Получаем отзывы из Uzum…</div>:<>
    {(aggregateError||syncError)&&<div className="review-error"><AlertTriangle/><span>{aggregateError||syncError}</span></div>}
    {syncNotice&&<div className="review-success"><CheckCircle2/><span>{syncNotice}</span></div>}

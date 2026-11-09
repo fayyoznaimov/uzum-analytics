@@ -121,6 +121,27 @@ html,body{font-family:'Golos Text',ui-sans-serif,system-ui,-apple-system,"Segoe 
 .panel.collapse[open]>summary::after{transform:rotate(225deg)}
 .panel.collapse:not([open])>summary .panel-head{border-bottom:0}
 @media(max-width:760px){.wallet-strip{gap:14px}.wallet-strip>a{margin-left:0}}
+/* Главная 09.11.2026: четыре цифры, панель «Требует внимания» со вкладками-счётчиками, график + топ */
+.home-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}.home-metrics>div{min-width:0}.home-metrics>div strong{overflow-wrap:anywhere;white-space:normal}
+.signals .panel-head{border-bottom:0;padding-bottom:6px}
+.sig-tabs{display:flex;gap:4px;padding:0 12px;border-bottom:1px solid #e8edf3;overflow-x:auto;scrollbar-width:none}
+.sig-tabs::-webkit-scrollbar{display:none}
+.sig-tabs button{flex:0 0 auto;display:flex;align-items:center;gap:8px;background:none;color:#4A4F5C;font-size:13px;font-weight:600;padding:9px 10px 10px;border-bottom:2px solid transparent;margin-bottom:-1px}
+.sig-tabs button:hover{color:var(--ink)}
+.sig-tabs button.active{color:#5536D1;border-bottom-color:#6C47FF}
+.sig-tabs i{font-style:normal;font-size:11.5px;font-weight:700;border-radius:7px;padding:2px 7px;background:#edf0f4;color:#748098}
+.sig-tabs i.red{background:#ffe8e9;color:#cc3948}.sig-tabs i.amber{background:#fff2d9;color:#b47609}.sig-tabs i.gray{background:#eeeaff;color:#5d49d7}
+.sig-body{padding:6px 17px 12px}
+.sig-note{margin:6px 0 2px;font-size:12px;color:var(--muted)}
+.sig-row{display:flex;gap:12px;align-items:center;padding:9px 0;border-bottom:1px dashed var(--line)}
+.sig-row>div{flex:1;min-width:0}.sig-row strong,.sig-row span{display:block}.sig-row strong{font-size:12.5px}.sig-row span{font-size:11.5px;color:var(--muted);margin-top:2px}
+.sig-row em{font-style:normal;font-weight:700;font-size:12.5px;white-space:nowrap}.sig-row em.red{color:var(--red)}.sig-row em.amber{color:#b47609}
+.sig-lead{font-size:12px;color:#b47609;background:#fff2d9;border-radius:7px;padding:3px 7px;white-space:nowrap}
+.sig-empty{padding:14px 0 8px;font-size:12.5px;color:var(--muted)}
+.sig-link{display:inline-flex;align-items:center;gap:5px;margin-top:10px;color:var(--violet);font-size:12.5px;font-weight:700;text-decoration:none}
+.home-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}.home-grid>.panel:first-child{margin-right:6px}.home-grid>.panel:last-child{margin-left:6px}
+@media(max-width:1100px){.home-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.home-grid{grid-template-columns:1fr}.home-grid>.panel{margin-left:22px!important;margin-right:22px!important}}
+@media(max-width:650px){.home-metrics{padding:0 12px 12px;gap:8px}.home-metrics .metric{padding:11px 12px}.home-metrics .metric strong{font-size:16px}.home-metrics .metric span{font-size:10.5px}}
 /* Каркас без верхней панели: шапка страницы начинается сразу, сообщение синка — в head-actions */
 .page-head{padding-top:26px}
 .head-actions{flex-wrap:wrap;justify-content:flex-end}

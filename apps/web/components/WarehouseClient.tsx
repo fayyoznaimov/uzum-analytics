@@ -12,7 +12,7 @@ export default function WarehouseClient(){
  useEffect(()=>{api('/warehouse/lost-revenue?days=30').then(setLost).catch(()=>setLost(null))},[]);
  async function upload(e:ChangeEvent<HTMLInputElement>){const file=e.target.files?.[0];if(!file)return;setBusy(true);setMessage('');try{const form=new FormData();form.append('file',file);const r:any=await apiForm('/warehouse/import',form);setMessage(r.duplicate?`Этот отчёт уже загружен (${r.rows} строк)`:`Импортировано ${r.rows} SKU, сопоставлено ${r.matchedSkus}`);await load()}catch(err:any){setMessage(`Ошибка: ${err.message}`)}finally{setBusy(false);e.target.value=''}}
  const s=data?.summary;
- return <AppShell periodEnabled={false} title="Склад и потенциал" subtitle="Импорт отчёта Uzum «Остатки (новый)»: целевой запас, поставка, потенциальная выплата и прибыль">
+ return <AppShell periodEnabled={false} title="Склад и поставки">
   <div className="warehouse-upload"><div><FileSpreadsheet/><div><b>Загрузите отчёт .xlsx из Uzum</b><span>Повторный файл определяется по SHA-256 и не дублируется</span></div></div><label className="primary"><Upload size={16}/>{busy?'Импорт…':'Импортировать Excel'}<input hidden type="file" accept=".xlsx" disabled={busy} onChange={upload}/></label></div>
   {message&&<div className={message.startsWith('Ошибка')?'error-box settings-notice':'success-box settings-notice'}>{message}</div>}
   {data?.empty?<section className="empty-state"><Boxes/><h2>Отчёт ещё не загружен</h2><p>{data.message}</p></section>:data&&<>

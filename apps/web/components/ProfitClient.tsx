@@ -45,7 +45,7 @@ export default function ProfitClient(){
   result.push({tone:'blue',icon:BadgePercent,title:'Доля выплаты Uzum',text:`Фактическая выплата составила ${payoutRatio.toFixed(1)}% оплаченной выручки.`});
   return result;
  },[profit,revenue,adSpend,cogs,payout]);
- return <AppShell title="Профит" subtitle="Полная экономика оплаченных продаж за выбранный период: от цены заказа до чистой прибыли">
+ return <AppShell title="Профит">
   {loading?<div className="loading">Считаем прибыль и расходы…</div>:error?<div className="error-box settings-notice"><span>{error}</span><button className="ghost" onClick={()=>void load()}>Повторить</button></div>:data?.empty?<div className="error-box settings-notice"><span>Магазин ещё не подключён или не было ни одной синхронизации. Откройте «Настройки», добавьте ключи Uzum и запустите синхронизацию — после этого появятся данные о прибыли.</span></div>:data&&<>
    <div className="metrics-grid">
     <MetricCard label={`ЗАКАЗАНО ЗА ПЕРИОД • ${Number(m.orderedUnits||0)} ШТ.`} value={money(Number(m.orderedRevenue||0))}/>

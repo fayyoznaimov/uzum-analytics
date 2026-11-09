@@ -31,7 +31,7 @@ export default function SettingsClient(){
   catch(e:any){setNotice(`Ошибка: ${e.message}`)}finally{setBusy('')}
  }
  const toggle=(key:keyof TelegramForm)=>(e:React.ChangeEvent<HTMLInputElement>)=>setTg({...tg,[key]:e.target.checked});
- return <AppShell periodEnabled={false} title="Настройки" subtitle="Безопасное подключение Uzum API и реальная проверка доставки Telegram">
+ return <AppShell periodEnabled={false} title="Настройки">
   {notice&&<div className={notice.startsWith('Ошибка')?'error-box settings-notice':'success-box settings-notice'}>{notice}</div>}
   <div className="settings-grid">
    <section className="integration-card"><div className="integration-head"><div className="integration-icon uz"><Store/></div><div><h2>Uzum Seller API</h2><p>Магазины, товары, SKU, заказы и остатки</p></div><Status tone={row('UZUM')?.status==='CONNECTED'?'green':row('UZUM')?.status==='ERROR'?'red':'gray'}>{row('UZUM')?.status==='CONNECTED'?'Подключено':row('UZUM')?.status==='ERROR'?'Ошибка':'Не настроено'}</Status></div>

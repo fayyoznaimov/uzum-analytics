@@ -36,7 +36,7 @@ export default function ProductsClient() {
     return () => clearTimeout(timer);
   }, [q, query]);
 
-  return <AppShell title="Товары" subtitle="Заказы, выплаты, комиссия МП, логистика, себестоимость и чистая прибыль по карточкам">
+  return <AppShell title="Товары">
     <div className="toolbar"><div className="search grow"><Search size={17}/><input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Поиск по названию или ID…"/></div></div>
     {error && <div className="error-box settings-notice">{error}</div>}
     {loading ? <div className="loading">Загружаем товары…</div> : <>

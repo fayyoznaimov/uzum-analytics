@@ -190,7 +190,7 @@ export default function WalletClient() {
   const statementReturns = statement?.returns || [];
   const hasMismatch = (unmatchedRows || 0) > 0 || expenseDelta !== 0;
 
-  return <AppShell title="Кошелёк" subtitle="Когда деньги за выданные заказы попадут в корзину вывода и сколько придёт в выплату Uzum">
+  return <AppShell title="Кошелёк">
     {loading ? <div className="loading">Загружаем кошелёк…</div> : error ? <div className="error-box settings-notice"><span>{error}</span><button className="ghost" onClick={() => void reload()}>Повторить</button></div> : !pf ? <div className="loading">Нет данных кошелька за период.</div> : <div className="wl">
       <section className="wl-hero">
         <div className="wl-hero-main">
