@@ -107,6 +107,33 @@ export function activeCapTests(today: string, table: LadderCapTest[] = AD_LADDER
   return table.filter((row) => today <= row.until);
 }
 
+/**
+ * Акцент (до until включительно, Ташкент): у фраз кампании потолок ДРР не ниже maxDrr — лестница держит их в топ-10 там,
+ * где обычный потолок класса или узких ключей снял бы. query — только фразы, подходящие под regexp; нет — все фразы кампании.
+ * Владелец 09.11.2026 («нужно как можно больше сделать акцент на Сердечках и 100×150»): ходовые размеры до поставки 22.11
+ * почти кончились, остаток — Сердечки (237 шт) и 100×150 (183 шт; цены сауны и J403 снижены до 159 000, J471 — до 139 000).
+ * До конца акции #444 (03.12) — Сердечки целиком, сауна целиком и фразы про 100×150 у J471 и J403.
+ */
+export type LadderFocus = { campaignId: string; query?: RegExp; maxDrr: number; until: string; note: string };
+export const BIG_SIZE_QUERY = /(саун|бан[яи]|бассейн|sauna|basseyn|banya|katta|100 ?[xх]? ?150|больш)/;
+export const AD_LADDER_FOCUS: LadderFocus[] = [
+  { campaignId: '337334', maxDrr: 15, until: '2026-12-03', note: 'Сердечки' },
+  { campaignId: '332097', maxDrr: 15, until: '2026-12-03', note: 'сауна 100×150' },
+  { campaignId: '305122', query: BIG_SIZE_QUERY, maxDrr: 15, until: '2026-12-03', note: 'J471 100×150' },
+  { campaignId: '305324', query: BIG_SIZE_QUERY, maxDrr: 15, until: '2026-12-03', note: 'J403 100×150' },
+];
+
+export function activeFocus(today: string, table: LadderFocus[] = AD_LADDER_FOCUS): LadderFocus[] {
+  return table.filter((row) => today <= row.until);
+}
+
+/** Потолок ДРР акцента для фразы кампании; null — фраза не в акценте. */
+export function focusDrr(campaignId: string, query: string, focus: LadderFocus[]): number | null {
+  const q = normalizeQuery(query);
+  const hits = focus.filter((row) => row.campaignId === campaignId && (!row.query || row.query.test(q)));
+  return hits.length ? Math.max(...hits.map((row) => row.maxDrr)) : null;
+}
+
 export function launchCampaigns(today: string, table: Record<string, string> = AD_LADDER_LAUNCH_UNTIL): Set<string> {
   return new Set(Object.entries(table).filter(([, until]) => today <= until).map(([id]) => id));
 }
@@ -127,6 +154,10 @@ export const AD_LADDER_DEFAULTS = {
   marginPercent: 3,
   rounding: 500,
   minBid: 9_500,
+  /** Цвет, у которого нужного запросу размера меньше стольких штук, в топ-10 не держим и ставим минимальную ставку
+   * (colourStockBlock). Владелец 09.11.2026: до поставки 22.11 ходовые размеры почти кончились — реклама на последние
+   * 1–4 штуки только торопит их и тратит деньги, которые нужны Сердечкам и 100×150. AD_LADDER_MIN_STOCK переопределяет. */
+  minStock: 5,
   maxBid: 70_000,
   /** Топ-10 дешевле этого — берём для любого цвета запроса. */
   cheapTop: 15_000,
@@ -176,7 +207,7 @@ export function skuSizeKind(title: string): LadderSizeKind | null {
 /** Какой размер нужен покупателю запроса — первое совпадение; запрос без размера («полотенце», «sochiq») — ничего. */
 const SIZE_NEEDS: Array<{ match: RegExp; kinds: LadderSizeKind[]; label: string }> = [
   { match: /(набор|комплект|to ?plam|nabor|komplekt)/, kinds: ['set'], label: 'наборов' },
-  { match: /(саун|бан[яи]|бассейн|sauna|basseyn|banya|katta|100 ?[xх]? ?150|больш)/, kinds: ['big'], label: '100×150' },
+  { match: BIG_SIZE_QUERY, kinds: ['big'], label: '100×150' },
   { match: /(банн|тел[ао]|hammom|banyo|banni|badan|ванн|vanna|dush|душ)/, kinds: ['bath'], label: 'банного' },
   { match: /(для рук|qo ?l|салфет)/, kinds: ['hand', 'face'], label: 'для рук' },
   { match: /(лиц|yuz)/, kinds: ['face'], label: 'лицевого' },
@@ -187,17 +218,24 @@ const SIZE_NEEDS: Array<{ match: RegExp; kinds: LadderSizeKind[]; label: string 
  * (31.10), а лестница держала его в топ-10 «полотенце банное» до 60 000 — 02.11 кампания потратила 27 484 без продаж, покупатель
  * открывал белый и видел только лицевое. Нет остатка цвета вовсе — блок на любом запросе; нет размера запроса — блок на его
  * запросах. Если размера у цвета не было никогда (у HAVANA нет 100×150), фраза выбрана сознательно — не блокируем.
+ * minStock — с 09.11.2026 блокируем и когда штук меньше порога (AD_LADDER_DEFAULTS.minStock): последние 1–4 штуки реклама
+ * не продаёт дороже, а только раньше выводит в ноль.
  */
-export function colourStockBlock(query: string, skus: Array<{ title: string; quantity: number }> | null | undefined): string | null {
+export function colourStockBlock(query: string, skus: Array<{ title: string; quantity: number }> | null | undefined, minStock = 1): string | null {
   if (!skus?.length) return null;
+  const min = Math.max(1, minStock);
   const stock = (rows: Array<{ quantity: number }>) => rows.reduce((sum, row) => sum + Math.max(0, row.quantity), 0);
-  if (stock(skus) <= 0) return 'у цвета нет остатка';
+  const total = stock(skus);
+  if (total <= 0) return 'у цвета нет остатка';
+  if (total < min) return `у цвета осталось ${total} шт`;
   const q = normalizeQuery(query);
   const need = SIZE_NEEDS.find((row) => row.match.test(q));
   if (!need) return null;
   const relevant = skus.filter((row) => { const kind = skuSizeKind(row.title); return kind === null || need.kinds.includes(kind); });
   if (!relevant.length) return null;
-  return stock(relevant) > 0 ? null : `у цвета нет ${need.label} в наличии`;
+  const left = stock(relevant);
+  if (left <= 0) return `у цвета нет ${need.label} в наличии`;
+  return left < min ? `у цвета ${need.label} осталось ${left} шт` : null;
 }
 
 /** skus — SKU цвета с остатком (AdBotService.colourSkus); нет — остаток не проверяется. */
@@ -257,7 +295,7 @@ export const ladderKey = (keyword: Pick<AdBotKeyword, 'campaignId' | 'skuGroupId
  * но расход разошёлся на четыре цвета, ни один не набрал порога данных (30 000), и проверка цвета молчала. Если запрос
  * в целом выше потолка, в топ-10 остаются только цвета, которые сами окупаются (есть продажи и их ДРР в пределах);
  * при ДРР запроса выше вдвое или расходе без продаж остальным — минимальная ставка. */
-export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = AD_LADDER_DEFAULTS, recent: Set<string> = new Set(), launch: Set<string> = new Set(), hold: Record<string, number> = AD_LADDER_HOLD_TOP, tests: LadderCapTest[] = [], narrow: Record<string, LadderNarrow> = AD_LADDER_NARROW): LadderDecision[] {
+export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = AD_LADDER_DEFAULTS, recent: Set<string> = new Set(), launch: Set<string> = new Set(), hold: Record<string, number> = AD_LADDER_HOLD_TOP, tests: LadderCapTest[] = [], narrow: Record<string, LadderNarrow> = AD_LADDER_NARROW, focus: LadderFocus[] = []): LadderDecision[] {
   const decisions: LadderDecision[] = [];
   const byQuery = new Map<string, LadderKeyword[]>();
   for (const keyword of keywords) {
@@ -270,7 +308,9 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
     const held = hold[rows[0].campaignId];
     const cls = held ? { ...base, name: `${base.name}, держим в топ-10`, cap: cfg.maxBid, colors: held } : base;
     const exempt = launch.has(rows[0].campaignId);
-    const classDrr = cls.maxDrr ?? cfg.maxDrrPercent;
+    // Акцент (activeFocus) поднимает потолок ДРР фраз до своего, но не опускает, если у класса он и так выше.
+    const focused = focusDrr(rows[0].campaignId, rows[0].query, focus);
+    const classDrr = Math.max(cls.maxDrr ?? cfg.maxDrrPercent, focused ?? 0);
     const judge = cls.noSaleSpend ? { ...cfg, noSaleSpend: cls.noSaleSpend } : cfg;
     const queryVerdict = exempt || rows.length < 2 ? none : ladderDrrVerdict(sumLadderStats(rows.map((row) => row.stats7)), classDrr, judge);
     const priced = rows
@@ -284,7 +324,7 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
         if (!verdict.blocked && queryVerdict.blocked && !provenColour(keyword.stats7, maxDrr)) {
           verdict = { drr: verdict.drr, blocked: `по запросу (все цвета) ${queryVerdict.blocked}`, severe: queryVerdict.severe };
         }
-        return { keyword, steps, top10, full: steps.length ? bidForReach(steps, 100) : null, target, verdict, test, noStock: colourStockBlock(keyword.query, keyword.skus) };
+        return { keyword, steps, top10, full: steps.length ? bidForReach(steps, 100) : null, target, verdict, test, noStock: colourStockBlock(keyword.query, keyword.skus, cfg.minStock) };
       })
       .sort((a, b) => (a.top10?.cpm ?? Infinity) - (b.top10?.cpm ?? Infinity));
     let chosen = 0;
@@ -366,14 +406,21 @@ export function formatCampaignSummary(row: LadderCampaignSummary): string {
 }
 
 const STOCK_SHORT: Record<string, string> = { наборов: 'наборы', '100×150': '100×150', банного: 'банное', 'для рук': 'для рук', лицевого: 'лицевое' };
-const stockShort = (reason: string) => { const match = /нет (.+) в наличии$/.exec(reason); return match ? STOCK_SHORT[match[1]] ?? match[1] : 'весь цвет'; };
+const stockShort = (reason: string) => {
+  const none = /нет (.+) в наличии$/.exec(reason);
+  if (none) return STOCK_SHORT[none[1]] ?? none[1];
+  const few = /у цвета (.+) осталось (\d+) шт$/.exec(reason);
+  if (few) return `${STOCK_SHORT[few[1]] ?? few[1]} ${few[2]} шт`;
+  const total = /у цвета осталось (\d+) шт$/.exec(reason);
+  return total ? `всего ${total[1]} шт` : 'весь цвет';
+};
 
 /**
  * Отчёт владельцу в Telegram — раз в день и коротко (09.11.2026 владелец: «рекомендации пиздец длинные, я их не читаю»):
  * деньги по кампаниям, одна строка о работе лестницы и только то, что требует его действий — нет товара, бюджет, сбои.
  * Подробности (каждая правка, слова не в топе по ДРР, топ-10 дороже потолка) — formatLadderDetails, для ручного запуска.
  */
-export function formatLadderReport(decisions: LadderDecision[], opts: { apply: boolean; failed?: number; titles?: Map<string, string>; notes?: string[]; campaigns?: LadderCampaignSummary[]; edits?: { count: number; hours: number } }): string {
+export function formatLadderReport(decisions: LadderDecision[], opts: { apply: boolean; failed?: number; titles?: Map<string, string>; notes?: string[]; campaigns?: LadderCampaignSummary[]; edits?: { count: number; hours: number }; minStock?: number }): string {
   const title = (id: string) => opts.titles?.get(id) ?? id;
   const campaigns = opts.campaigns ?? [];
   const spend = campaigns.reduce((sum, row) => sum + row.spend7, 0);
@@ -399,7 +446,7 @@ export function formatLadderReport(decisions: LadderDecision[], opts: { apply: b
       byCampaign.set(name, colours);
     }
     const parts = [...byCampaign].map(([name, colours]) => `${name}: ${[...colours].map(([colour, needs]) => `${colour} (${needs.has('весь цвет') ? 'весь цвет' : [...needs].join(', ')})`).join(', ')}`);
-    lines.push(`⚠ Нет в наличии, реклама на минимуме: ${parts.join('; ')}`);
+    lines.push(`⚠ Нет или меньше ${opts.minStock ?? AD_LADDER_DEFAULTS.minStock} шт, реклама на минимуме: ${parts.join('; ')}`);
   }
   if (opts.failed) lines.push(`⚠ Не прошло правок: ${opts.failed}`);
   for (const note of opts.notes ?? []) lines.push(`⚠ ${note}`);

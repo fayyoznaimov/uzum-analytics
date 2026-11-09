@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { AdBotAction, AdBotStats, normalizeQuery } from '../../common/ad-bot';
-import { activeCapTests, AD_LADDER_DEFAULTS, AdLadderConfig, campaignLabel, colourTitle, formatLadderDetails, formatLadderReport, launchCampaigns, LadderCampaignSummary, LadderDecision, LadderKeyword, ladderCampaigns, ladderEnabled, ladderKey, planLadderBids } from '../../common/ad-ladder';
+import { activeCapTests, activeFocus, AD_LADDER_DEFAULTS, AdLadderConfig, campaignLabel, colourTitle, formatLadderDetails, formatLadderReport, launchCampaigns, LadderCampaignSummary, LadderDecision, LadderKeyword, ladderCampaigns, ladderEnabled, ladderKey, planLadderBids } from '../../common/ad-ladder';
 import { shiftDay, tashkentDay } from '../../common/auto-pricing';
 import { emptyStreak, failureText, markNotified, recordFailure, recordSuccess, recoveryText } from '../../common/failure-alert';
 import { PrismaService } from '../../common/prisma.service';
@@ -49,8 +49,10 @@ export class AdLadderService {
   config(): AdLadderConfig {
     const max = Number(process.env.AD_BOT_MAX_BID);
     const drr = Number(process.env.AD_AGENT_MAX_DRR_PERCENT);
+    const minStock = Number(process.env.AD_LADDER_MIN_STOCK);
     return {
       ...AD_LADDER_DEFAULTS,
+      minStock: Number.isFinite(minStock) && minStock >= 1 ? Math.floor(minStock) : AD_LADDER_DEFAULTS.minStock,
       maxBid: Number.isFinite(max) && max > 0 ? max : AD_LADDER_DEFAULTS.maxBid,
       maxDrrPercent: Number.isFinite(drr) && drr > 0 ? drr : AD_LADDER_DEFAULTS.maxDrrPercent,
     };
@@ -161,7 +163,9 @@ export class AdLadderService {
       for (const id of launch) if (ids.has(id)) info.push(`кампания ${campaignLabel(id)}: льгота запуска — ДРР не проверяется`);
       const tests = activeCapTests(today).filter((row) => ids.has(row.campaignId));
       for (const test of tests) info.push(`тест потолка: ${campaignLabel(test.campaignId)}, ${titles.get(test.skuGroupId) ?? test.skuGroupId} «${test.query}» — топ-10 до ${test.cap.toLocaleString('ru-RU')} до ${test.until}, стоп при ДРР > ${test.maxDrr} %`);
-      const decisions = planLadderBids(keywords, cfg, recent.keys, launch, undefined, tests);
+      const focus = activeFocus(today).filter((row) => ids.has(row.campaignId));
+      for (const row of focus) info.push(`акцент до ${row.until}: ${row.note} — потолок ДРР ${row.maxDrr} %`);
+      const decisions = planLadderBids(keywords, cfg, recent.keys, launch, undefined, tests, undefined, focus);
       const actions = decisions.map((row) => row.action).filter((row): row is AdBotAction => Boolean(row));
       let failed = 0;
       if (options.apply && actions.length) {
@@ -170,7 +174,7 @@ export class AdLadderService {
         failed = outcomes.filter((row) => !row.ok).length;
       }
       const edits = options.since ? { count: (await this.recentKeys([...ids], options.since)).count, hours: options.since } : undefined;
-      const report = formatLadderReport(decisions, { apply: options.apply, failed, notes: notes.slice(0, 5), campaigns: summaries, titles, edits });
+      const report = formatLadderReport(decisions, { apply: options.apply, failed, notes: notes.slice(0, 5), campaigns: summaries, titles, edits, minStock: cfg.minStock });
       const details = formatLadderDetails(decisions, { titles, info });
       if (options.notify || failed) {
         await this.integrations.notifyTelegram(report, 'notifyAgents').catch((error: any) => this.logger.warn(`Лестница ставок: Telegram — ${error?.message || error}`));

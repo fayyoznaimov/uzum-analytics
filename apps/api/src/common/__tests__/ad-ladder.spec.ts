@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeCapTests, colourStockBlock, colourTitle, formatCampaignSummary, formatLadderDetails, formatLadderReport, launchCampaigns, ladderCampaigns, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, narrowClass, planLadderBids, skuSizeKind, sumLadderStats } from '../ad-ladder';
+import { activeCapTests, activeFocus, AD_LADDER_FOCUS, colourStockBlock, focusDrr, colourTitle, formatCampaignSummary, formatLadderDetails, formatLadderReport, launchCampaigns, ladderCampaigns, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, narrowClass, planLadderBids, skuSizeKind, sumLadderStats } from '../ad-ladder';
 import { BidLadderStep } from '../auto-bidder';
 
 /** Лестница кабинета: позиции 4…51 ↔ 100…20 % показов, цена топ-10 (позиция 9) = top10. */
@@ -127,7 +127,7 @@ describe('лестница ставок', () => {
     expect(decisions[0]).toMatchObject({ noStock: 'у цвета нет банного в наличии', blocked: null });
     expect(decisions[0].action?.reason).toBe('лестница: у цвета нет банного в наличии — ставка на минимум');
     const report = formatLadderReport(decisions, { apply: true, titles: new Map([['white', 'белый']]) });
-    expect(report).toContain('⚠ Нет в наличии, реклама на минимуме: HAVANA: белый (банное)');
+    expect(report).toContain('⚠ Нет или меньше 5 шт, реклама на минимуме: HAVANA: белый (банное)');
     expect(report).not.toContain('по ДРР');
     expect(formatLadderDetails(decisions)).toContain('HAVANA: white — у цвета нет банного в наличии: «полотенце банное»');
     // остатки не получены — прежнее правило
@@ -220,6 +220,36 @@ describe('лестница ставок', () => {
     ]);
     expect(formatLadderReport([], { apply: false })).toContain('Режим предложений');
     expect(formatLadderReport([], { apply: true, failed: 2, notes: ['кампания Плед не активна — пропущена'] })).toContain('⚠ Не прошло правок: 2\n⚠ кампания Плед не активна — пропущена');
+  });
+
+  it('мало остатка (меньше 5 шт нужного размера): цвет не боевой и на минимуме; 5 шт и больше — как раньше', () => {
+    const skus = [{ title: 'РОЗОВ-лицевой', quantity: 4 }, { title: 'РОЗОВ-банный', quantity: 9 }, { title: 'РОЗОВ-комплек', quantity: 3 }];
+    expect(colourStockBlock('полотенце для лица', skus, 5)).toBe('у цвета лицевого осталось 4 шт');
+    expect(colourStockBlock('полотенце банное', skus, 5)).toBeNull();
+    expect(colourStockBlock('набор полотенец', skus, 5)).toBe('у цвета наборов осталось 3 шт');
+    expect(colourStockBlock('полотенце', [{ title: 'БЕЛЫЙ', quantity: 3 }], 5)).toBe('у цвета осталось 3 шт');
+    expect(colourStockBlock('полотенце для лица', skus)).toBeNull(); // без порога — прежнее правило «только ноль»
+    const pink = { ...kw('pink', 'полотенце для лица', 30_000, 20_000), skus };
+    const blue = { ...kw('blue', 'полотенце для лица', 15_000, 25_000), skus: [{ title: 'ГОЛУБ-лицевой', quantity: 14 }] };
+    const decisions = planLadderBids([pink, blue]);
+    expect(decisions.map((row) => [row.keyword.skuGroupId, row.role, row.action?.newCpm ?? null])).toEqual([['pink', 'other', 9_500], ['blue', 'top', 26_000]]);
+    expect(formatLadderReport(decisions, { apply: true, titles: new Map([['pink', 'розовый']]) })).toContain('⚠ Нет или меньше 5 шт, реклама на минимуме: HAVANA: розовый (лицевое 4 шт)');
+  });
+
+  it('акцент: Сердечки, сауна и 100×150 у J471/J403 — потолок ДРР 15 % до 03.12, остальное по-старому', () => {
+    const focus = activeFocus('2026-11-10');
+    expect(focus).toHaveLength(4);
+    expect(activeFocus('2026-12-04')).toHaveLength(0);
+    expect(focusDrr('337334', 'полотенце для лица', focus)).toBe(15);
+    expect(focusDrr('332097', 'большое полотенце', focus)).toBe(15);
+    expect(focusDrr('305122', 'полотенце для сауны', focus)).toBe(15);
+    expect(focusDrr('305122', 'полотенце банное', focus)).toBeNull();
+    expect(focusDrr('286528', 'полотенце для сауны', focus)).toBeNull(); // у HAVANA нет 100×150
+    expect(AD_LADDER_FOCUS.every((row) => row.until === '2026-12-03')).toBe(true);
+    // Сердечки, узкая фраза: свой потолок 12 %, ДРР 13,3 % — без акцента не в топе, с акцентом в топе.
+    const hearts = { ...kw('pink', 'детское полотенце', 9_500, 12_000), campaignId: '337334', stats7: { impressions: 2_000, clicks: 40, sold: 3, revenue: 300_000, spend: 40_000, position: null } };
+    expect(planLadderBids([hearts])[0]).toMatchObject({ role: 'other', blocked: 'ДРР 13.3 % > 12 %' });
+    expect(planLadderBids([hearts], undefined, undefined, undefined, undefined, [], undefined, focus)[0]).toMatchObject({ role: 'top', blocked: null, action: { newCpm: 12_500 } });
   });
 
   it('ставка не выше потолка 70 000 и не ниже минимума', () => {
