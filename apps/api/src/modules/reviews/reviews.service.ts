@@ -3,8 +3,9 @@ import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { BadGatewayException, BadRequestException, forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { IntegrationStatus, IntegrationType, Prisma } from '@prisma/client';
-import { DEFAULT_OPENCLAW_MODEL, OpenclawClient } from '../../common/openclaw.client';
+import { OpenclawClient } from '../../common/openclaw.client';
 import { PrismaService } from '../../common/prisma.service';
+import { emptyReviewReply, isEmptyReview, replyLanguage, replyRejectReason, ReviewReplyLanguage } from '../../common/review-reply';
 import { z } from 'zod';
 import { IntegrationsService } from '../integrations/integrations.service';
 
@@ -23,6 +24,9 @@ const ReviewDraftSchema = z.object({
 
 /** Модель по умолчанию для черновиков ответов на отзывы (путь api — свой ключ). */
 const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-5';
+/** Через OpenClaw ответы покупателям пишет Opus (владелец 09.11.2026: «поставь хорошего агента»): отзывов с текстом —
+ * несколько в день, на лимит подписки это почти не давит; пустые отзывы до модели не доходят. REVIEW_OPENCLAW_MODEL переопределяет. */
+const DEFAULT_REVIEW_OPENCLAW_MODEL = 'claude-cli/claude-opus-5-5';
 
 @Injectable()
 export class ReviewsService {
@@ -70,13 +74,16 @@ export class ReviewsService {
    * на витрине — сразу видно скрипт. Вместо шаблонов задаём тон, а от повторов
    * страхует список уже использованных формулировок в пользовательском сообщении.
    */
-  private replySystemPrompt(shopName?: string | null) {
+  private replySystemPrompt(shopName: string | null | undefined, language: ReviewReplyLanguage) {
+    const lang = language === 'uz'
+      ? 'ЯЗЫК ОТВЕТА: только узбекский латиницей (lotin). Ни одного русского слова, никакой кириллицы.'
+      : 'ЯЗЫК ОТВЕТА: только русский. Ни одного узбекского слова («рахмат», «ранглари», «sochiq» и т.п.) и никакой латиницы, кроме названия магазина. Имя покупателя ничего не говорит о языке — язык уже выбран.';
     return `Ты отвечаешь от имени магазина «${shopName || 'продавца'}» на отзывы покупателей на Uzum.
+${lang}
 Пиши как живой человек из небольшого семейного магазина текстиля, которому правда приятно, что покупка понравилась. Не служба поддержки, не отдел маркетинга.
 
 ГЛАВНОЕ: каждый ответ должен быть непохож на предыдущие. В сообщении придёт список уже использованных формулировок — не повторяй ни одну из них, даже частично, и не строй ответ по той же схеме. Меняй начало, интонацию, порядок мысли, длину. Одинаковые ответы под соседними отзывами выдают бота и обесценивают все остальные.
 
-Язык: определи по тексту отзыва — русский или узбекский (lotin). Если текста нет, смотри на имя: латиница — узбекский, кириллица или «Безымянный» — русский.
 Длина: 1–2 предложения. Коротко, тепло, без приторности и канцелярита.
 Не пересказывай отзыв и не рекламируй товар. Не выдумывай подробностей, которых в отзыве нет.
 
@@ -117,8 +124,17 @@ export class ReviewsService {
     if (!review) throw new BadRequestException('Отзыв не найден');
     if (!review.needsReply) throw new BadRequestException('На этот отзыв уже есть ответ продавца');
     const configured = await this.integrations.getPlain(IntegrationType.ANTHROPIC);
+    const language = replyLanguage(review);
+    const recent = await this.recentReplies(review.shopId);
+    // Отзыв без текста (владелец 09.11.2026): модели там нечего сказать, она выдумывала подробности и писала по-узбекски
+    // русским покупателям — короткая благодарность из банка формулировок, без ИИ.
+    if (isEmptyReview(review) && review.rating >= 4) {
+      const reply = emptyReviewReply(review, recent);
+      const saved = await this.prisma.review.update({ where: { id }, data: { aiReplyText: reply, aiReplyLanguage: 'ru', aiReplyRisk: 'LOW', aiReplyModel: 'template', aiReplyGeneratedAt: new Date() } });
+      return { id: saved.id, draft: saved.aiReplyText, language: 'ru', risk: 'LOW', model: 'template', canAutoSend: true, sent: false };
+    }
     const customer = review.anonymous ? 'покупатель' : (review.customerName || 'покупатель');
-    const system = this.replySystemPrompt(review.shop?.name);
+    const system = this.replySystemPrompt(review.shop?.name, language);
     const input = JSON.stringify({
       customer,
       rating: review.rating,
@@ -127,14 +143,21 @@ export class ReviewsService {
       review: review.content,
       pros: review.pros,
       cons: review.cons,
-      уже_использовано_не_повторять: await this.recentReplies(review.shopId),
+      уже_использовано_не_повторять: recent,
     });
 
     const generated = this.aiProvider(configured?.metadata) === 'openclaw'
-      ? await this.draftViaOpenclaw(system, input, this.text(configured?.metadata?.openclawModel) || DEFAULT_OPENCLAW_MODEL)
+      ? await this.draftViaOpenclaw(system, input, this.text(configured?.metadata?.openclawModel) || process.env.REVIEW_OPENCLAW_MODEL || DEFAULT_REVIEW_OPENCLAW_MODEL, language)
       : await this.draftViaAnthropic(system, input, String(configured?.metadata?.model || DEFAULT_ANTHROPIC_MODEL), configured?.token);
-    const parsed = generated.draft;
-    const model = generated.model;
+    let parsed = { ...generated.draft, language };
+    let model = generated.model;
+    // Модель всё же ответила не на том языке или упомянула оценку: на 4–5★ по-русски уходит шаблон, иначе — ручная проверка.
+    const reject = replyRejectReason(parsed.reply, language);
+    if (reject) {
+      this.logger.warn(`Черновик ответа отклонён (${reject}): ${parsed.reply.slice(0, 80)}`);
+      if (review.rating >= 4 && language === 'ru') { parsed = { reply: emptyReviewReply(review, recent), language: 'ru', risk: 'LOW' }; model = 'template'; }
+      else parsed = { ...parsed, risk: 'REVIEW' };
+    }
 
     const risk = review.rating <= 3 ? 'REVIEW' : parsed.risk;
     const saved = await this.prisma.review.update({
@@ -157,10 +180,10 @@ export class ReviewsService {
    * проверяем той же схемой; одна повторная попытка — на случай, если модель
    * обернула JSON пояснением.
    */
-  private async draftViaOpenclaw(system: string, input: string, model?: string | null) {
+  private async draftViaOpenclaw(system: string, input: string, model: string | null | undefined, language: ReviewReplyLanguage) {
     const format = [
       'Верни РОВНО один JSON-объект и ничего больше: без пояснений, без markdown-обёртки, без тройных кавычек.',
-      '{"reply": "текст ответа", "language": "ru" | "uz", "risk": "LOW" | "REVIEW"}',
+      `{"reply": "текст ответа", "language": "${language}", "risk": "LOW" | "REVIEW"}`,
       'Поле reply — не длиннее 350 символов. Инструменты вызывать не нужно, это чистая генерация текста.',
     ].join('\n');
     let lastError = 'Claude вернул ответ в неверном формате';
@@ -168,7 +191,8 @@ export class ReviewsService {
       const strict = attempt === 0 ? '' : '\n\nПредыдущий ответ не разобрался. Верни только JSON-объект: первый символ «{», последний «}».';
       let result: { text: string; model: string | null };
       try {
-        result = await this.openclaw.run(`${system}\n\n${format}${strict}\n\nОтзыв:\n${input}`, { model, thinking: 'off' });
+        // Opus через OpenClaw не принимает thinking=off — минимальный «low» годится всем моделям.
+        result = await this.openclaw.run(`${system}\n\n${format}${strict}\n\nОтзыв:\n${input}`, { model, thinking: 'low' });
       } catch (error: any) {
         // safeError здесь не годится: он прячет всё незнакомое под «Review
         // synchronization failed», а тут ошибка локальная и её надо видеть.
