@@ -1114,6 +1114,7 @@ export class DashboardService {
 
     let inventorySummary: any = null;
     let risks: any[] = [];
+    let risksTotal = 0;
     if (latestInventory) {
       const reportMetrics = latestInventory.metrics;
       const sumMetric = (fn: (metric: typeof reportMetrics[number]) => number) => reportMetrics.reduce((sum, metric) => sum + fn(metric), 0);
@@ -1149,9 +1150,12 @@ export class DashboardService {
         effectiveAdvertisingPercent: inventorySaleValue > 0 ? inventoryAdvertisingEstimate / inventorySaleValue * 100 : 0,
         potentialProfitCoverage: reportMetrics.length ? knownProfitRows.length / reportMetrics.length * 100 : 0,
       };
-      risks = reportMetrics
+      const riskMetrics = reportMetrics
         .filter((metric) => metric.endingSoon || metric.recommendedSupply > 0 || metric.coverageDays <= 10)
-        .sort((a, b) => a.coverageDays - b.coverageDays || b.recommendedSupply - a.recommendedSupply)
+        .sort((a, b) => a.coverageDays - b.coverageDays || b.recommendedSupply - a.recommendedSupply);
+      // Список режется до 8 строк, а счётчик на Главной должен показывать все SKU под риском.
+      risksTotal = riskMetrics.length;
+      risks = riskMetrics
         .slice(0, 8)
         .map((metric) => ({
           id: metric.id,
@@ -1163,7 +1167,9 @@ export class DashboardService {
           status: metric.endingSoon ? 'Заканчивается' : metric.recommendedSupply > 0 ? 'Нужна поставка' : 'Малый запас',
         }));
     } else {
-      risks = skus.filter((sku) => sku.stock <= 10).sort((a, b) => a.stock - b.stock).slice(0, 8).map((sku) => ({
+      const lowSkus = skus.filter((sku) => sku.stock <= 10).sort((a, b) => a.stock - b.stock);
+      risksTotal = lowSkus.length;
+      risks = lowSkus.slice(0, 8).map((sku) => ({
         id: sku.id,
         title: sku.product.title,
         sku: sku.sellerSku,
@@ -1389,6 +1395,7 @@ export class DashboardService {
       hourly,
       topProducts,
       risks,
+      risksTotal,
       goals: goals.map((goal: any) => ({
         id: goal.id,
         metric: goal.metric,
