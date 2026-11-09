@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { latestAdvertisingRates } from '../../common/advertising';
+import { loadBoostState } from '../../common/boost-state';
 import { calculateInventoryAnalytics, median } from '../../common/inventory-analytics';
 import { parseInventoryWorkbook } from '../../common/inventory-report';
 import { lostRevenueForSku, SkuSale, StockPoint } from '../../common/lost-revenue';
@@ -139,7 +140,7 @@ SKU: ${parsed.rows.length}
     ]);
 
     const taxPercent = Number(settings.taxPercent);
-    const advertisingRates = latestAdvertisingRates(recentAdvertisingExpenses);
+    const advertisingRates = latestAdvertisingRates(recentAdvertisingExpenses, { boostState: await loadBoostState(this.prisma) });
     const mapped = allMetrics.map((metric) => {
       const cost = metric.sku?.costs[0];
       const landedUnitCost = cost ? Number(cost.amount) + Number(cost.packagingCost) + Number(cost.warehouseLogisticsCost) + Number(cost.additionalCost) : 0;

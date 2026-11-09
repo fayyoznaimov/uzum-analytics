@@ -17,6 +17,44 @@ export type ProductAdvertisingRate = {
 
 export type ProductAdvertisingRateTimeline = Map<string, ProductAdvertisingRate[]>;
 
+/**
+ * Статус «Буста заказов» товара из кабинета. Ставка из журнала У000120 живёт 30 дней, и без статуса
+ * выключенный буст ещё месяц «съедал» прибыль в оценках и в Telegram (владелец 09.11.2026: «я их
+ * отключил — если есть списание, показывать, если нет — не считать»). На паузе последняя ставка
+ * покрывает только заказы до конца дня её последнего показа: позже буст их уже не продвигал.
+ */
+export type BoostStateMap = Map<string, { active: boolean }>;
+
+/** Свежесть статуса из кабинета: старше — считаем неизвестным и оцениваем по-старому. */
+export const BOOST_STATE_MAX_AGE_MS = 6 * 3_600_000;
+
+export function boostStateMap(
+  products: Array<{ externalId: string; orderBoostStatus?: string | null; orderBoostCheckedAt?: Date | null }>,
+  now: Date = new Date(),
+): BoostStateMap {
+  const map: BoostStateMap = new Map();
+  for (const product of products) {
+    const status = String(product.orderBoostStatus ?? '').trim().toUpperCase();
+    const checkedAt = product.orderBoostCheckedAt ? new Date(product.orderBoostCheckedAt) : null;
+    if (!status || !checkedAt || now.getTime() - checkedAt.getTime() > BOOST_STATE_MAX_AGE_MS) continue;
+    map.set(String(product.externalId), { active: status === 'ACTIVE' });
+  }
+  return map;
+}
+
+/** Товар на паузе и заказ сделан после дня последнего показа — буст его не продвигал, оценки нет. */
+export function boostPausedFor(rate: Pick<ProductAdvertisingRate, 'productExternalId' | 'observedAt'>, at: Date, boostState?: BoostStateMap): boolean {
+  const state = boostState?.get(rate.productExternalId);
+  if (!state || state.active) return false;
+  return at.getTime() >= rate.observedAt.getTime() + 86_400_000;
+}
+
+/** Буст товара точно выключен (статус кабинета свежий и не ACTIVE). */
+export function boostKnownOff(productExternalId: string | null | undefined, boostState?: BoostStateMap): boolean {
+  const state = boostState?.get(String(productExternalId ?? '').trim());
+  return Boolean(state && !state.active);
+}
+
 export const ORDER_BOOST_CODE = 'У000120';
 export const TOP_PROMOTION_CODE = 'У000119';
 export const ADVERTISING_EXPENSE_CODES = [
@@ -164,7 +202,7 @@ function compareAdvertisingRates(a: ProductAdvertisingRate, b: ProductAdvertisin
 
 export function latestAdvertisingRates(
   expenses: AdvertisingExpenseLike[],
-  options: { now?: Date; lookbackDays?: number } = {},
+  options: { now?: Date; lookbackDays?: number; boostState?: BoostStateMap } = {},
 ): Map<string, ProductAdvertisingRate> {
   const now = options.now ?? new Date();
   const lookbackDays = Math.max(0, Number(options.lookbackDays ?? 30));
@@ -179,6 +217,7 @@ export function latestAdvertisingRates(
       rates.set(candidate.productExternalId, candidate);
     }
   }
+  for (const [productExternalId, rate] of rates) if (boostPausedFor(rate, now, options.boostState)) rates.delete(productExternalId);
   return rates;
 }
 
@@ -199,7 +238,7 @@ export function advertisingRateAt(
   timeline: ProductAdvertisingRateTimeline,
   productExternalId: string | null | undefined,
   at: Date,
-  options: { maxAgeDays?: number } = {},
+  options: { maxAgeDays?: number; boostState?: BoostStateMap } = {},
 ): ProductAdvertisingRate | null {
   const rows = timeline.get(String(productExternalId ?? '').trim()) ?? [];
   let result: ProductAdvertisingRate | null = null;
@@ -209,6 +248,7 @@ export function advertisingRateAt(
   }
   if (!result) return null;
   const maxAgeDays = Math.max(0, Number(options.maxAgeDays ?? 30));
+  if (boostPausedFor(result, at, options.boostState)) return null;
   return at.getTime() - result.observedAt.getTime() <= maxAgeDays * 86_400_000 ? result : null;
 }
 
@@ -239,7 +279,7 @@ export function advertisingEstimateAt(
   items: Array<{ amount: unknown; productExternalId?: string | null }>,
   timeline: ProductAdvertisingRateTimeline,
   at: Date,
-  options: { maxRateAgeDays?: number } = {},
+  options: { maxRateAgeDays?: number; boostState?: BoostStateMap } = {},
 ): { amount: number; effectivePercent: number; coveredRevenue: number; totalRevenue: number } {
   let amount = 0;
   let coveredRevenue = 0;
@@ -247,6 +287,14 @@ export function advertisingEstimateAt(
   for (const item of items) {
     const revenue = Math.max(0, Number(item.amount) || 0);
     totalRevenue += revenue;
+    // Буст выключен — реклама по заказу известна и равна нулю: выручка покрыта, суммы нет.
+    if (boostKnownOff(item.productExternalId, options.boostState)) {
+      // Заказ до паузы буст ещё продвигал — его списание придёт по последней ставке.
+      const last = advertisingRateAt(timeline, item.productExternalId, at, { maxAgeDays: options.maxRateAgeDays, boostState: options.boostState });
+      coveredRevenue += revenue;
+      if (last) amount += revenue * last.percent / 100;
+      continue;
+    }
     const rate = advertisingRateAt(timeline, item.productExternalId, at, { maxAgeDays: options.maxRateAgeDays });
     if (!rate) continue;
     coveredRevenue += revenue;

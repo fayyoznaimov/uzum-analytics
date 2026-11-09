@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { IntegrationType, Prisma } from '@prisma/client';
-import { advertisingRateAt, advertisingRateTimeline, latestAdvertisingRates } from '../../common/advertising';
+import { advertisingRateAt, advertisingRateTimeline, boostKnownOff, latestAdvertisingRates } from '../../common/advertising';
+import { loadBoostState } from '../../common/boost-state';
 import { durationLabel, emptyStreak, markNotified, recordFailure, recordSuccess, runsLabel } from '../../common/failure-alert';
 import { classifyOrderState, resolveOrderReportDate } from '../../common/order-state';
 import { basketEligibleDate, scheduledPayoutDate } from '../../common/payout-basket';
@@ -109,19 +110,25 @@ export class SyncService {
       },
       select: { id: true, productExternalId: true, serviceAt: true, createdAt: true, name: true, raw: true },
     });
-    const rates = latestAdvertisingRates(expenses, { now, lookbackDays: 30 });
+    const boostState = await loadBoostState(this.prisma, shop.id);
+    const rates = latestAdvertisingRates(expenses, { now, lookbackDays: 30, boostState });
     const products = await this.prisma.product.findMany({
       where: { shopId: shop.id },
       select: { externalId: true, title: true },
       orderBy: { title: 'asc' },
     });
-    const lines = products.map((product) => {
+    // Буст выключен у товара — строка в сводке не нужна; выключен у всех — сводку не шлём (владелец 09.11.2026).
+    const lines = products.filter((product) => !boostKnownOff(product.externalId, boostState)).map((product) => {
       const rate = rates.get(product.externalId);
       const title = product.title.replace(/[\r\n]+/g, ' ').trim();
       return rate
         ? `• ${title}: ${rate.percent}% (наблюдалась ${rate.observedAt.toLocaleDateString('ru-RU', { timeZone: 'Asia/Tashkent' })})`
         : `• ${title}: ставка не наблюдалась за 30 дней`;
     });
+    if (!lines.length) {
+      this.logger.log('Сводка ставок «Буста заказов» не отправлена: буст выключен у всех товаров');
+      return;
+    }
     await this.integrations.notifyTelegram(
       `📣 Ежедневная проверка ставок рекламы — ${shop.name}\n${lines.join('\n')}\n\nСтавки взяты из фактических строк Uzum У000120, без подстановки общего процента.`,
       'notifyDailyDigest',
@@ -413,6 +420,7 @@ export class SyncService {
     ]);
     const hasBaseline = existingOrderCount > 0;
     const productAdvertisingTimeline = advertisingRateTimeline(recentAdvertisingExpenses);
+    const boostState = await loadBoostState(this.prisma, shopId);
     const holdDays = Number(settings?.payoutDelayDays ?? 10);
     const payoutSchedule = String((settings as any)?.payoutSchedule || 'BIWEEKLY');
     const pageLimit = Math.max(1, Number(process.env.ORDER_SYNC_MAX_PAGES || 200));
@@ -650,8 +658,10 @@ export class SyncService {
             productAdvertisingTimeline,
             productExternalId,
             orderedAt || advertisingRateNow,
+            { boostState },
           ))
           .find((rate) => rate !== null) ?? null;
+        const boostOff = !advertisingRate && productExternalIds.some((productExternalId) => boostKnownOff(productExternalId, boostState));
         const productExternalId = advertisingRate?.productExternalId || productExternalIds[0] || null;
         const advertisingPercent = advertisingRate?.percent ?? 0;
         const advertising = gross * advertisingPercent / 100;
@@ -684,7 +694,7 @@ export class SyncService {
             : 0;
           const tax = gross * Number(settings?.taxPercent ?? 1) / 100;
           const profit = payoutPick.value - productCost - tax - advertising;
-          const profitKnown = payoutPick.found && grossKnown && Boolean(activeCost) && Boolean(advertisingRate);
+          const profitKnown = payoutPick.found && grossKnown && Boolean(activeCost) && (Boolean(advertisingRate) || boostOff);
           const upperSku = skuTitle.toUpperCase();
           const family = upperSku.match(/(?:^|[-_])(J\d+|YD|D272)(?:[-_]|$)/)?.[1] || 'UNKNOWN';
           const variant = upperSku.includes('ЛИЦ') ? 'ЛИЦЕВОЕ'
@@ -696,7 +706,10 @@ export class SyncService {
           const escapeHtml = (value: unknown) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
           const advertisingLine = advertisingRate
             ? `\n📣 Оценка рекламы по последней наблюдаемой ставке ${advertisingPercent}%: <b>~-${money(advertising)} so'm</b>`
-            : `\n📣 Реклама: <b>не рассчитана</b> (ставка этого товара в Uzum не наблюдалась)`;
+            : boostOff
+              // Буст заказов выключен — строки о рекламе нет: списания по заказу не будет.
+              ? ''
+              : `\n📣 Реклама: <b>не рассчитана</b> (ставка этого товара в Uzum не наблюдалась)`;
           const payoutLine = payoutPick.found
             ? `<b>+${money(payoutPick.value)} so'm</b>`
             : '<b>нет факта API</b>';

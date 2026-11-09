@@ -200,6 +200,9 @@ model Product {
   imageUrl   String?
   status     String?
   raw        Json?
+  /// «Буст заказов» в кабинете: ACTIVE / PAUSED / … (cpo/advertisements/search), обновляется раз в 20 минут.
+  orderBoostStatus    String?
+  orderBoostCheckedAt DateTime?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   shop       Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { advertisingEstimate, advertisingEstimateAt, advertisingRateTimeline, baseAdvertisingCode, latestAdvertisingRates, parseAdvertisingEffectiveAt, parseAdvertisingPercent } from '../advertising';
+import { advertisingEstimate, advertisingEstimateAt, advertisingRateAt, advertisingRateTimeline, baseAdvertisingCode, boostStateMap, latestAdvertisingRates, parseAdvertisingEffectiveAt, parseAdvertisingPercent } from '../advertising';
 
 describe('advertising facts', () => {
   it('parses the rate from Russian and Uzbek Uzum descriptions', () => {
@@ -108,5 +108,41 @@ describe('advertising facts', () => {
     expect(advertisingEstimateAt([{ productExternalId: 'A', amount: 100_000 }], timeline, new Date('2026-07-15T10:00:00Z')).amount).toBe(3_000);
     expect(advertisingEstimateAt([{ productExternalId: 'A', amount: 100_000 }], timeline, new Date('2026-08-15T10:00:00Z')).amount).toBe(6_000);
     expect(advertisingEstimateAt([{ productExternalId: 'A', amount: 100_000 }], timeline, new Date('2026-10-15T10:00:00Z')).coveredRevenue).toBe(0);
+  });
+});
+
+describe('буст заказов на паузе (владелец 09.11.2026)', () => {
+  const at = (iso: string) => new Date(`${iso}T15:00:00+05:00`);
+  const expense = (product: string, shown: string) => ({
+    productExternalId: product,
+    serviceAt: at('2026-11-09'),
+    name: `Buyurtmalarni ko‘paytirish to‘lovi, tovar IDsi — ${product}. Xaridor tovarni olganida 2076 so‘m yechib oldik, sana — 2026-11-09. Sotuvdan foiz — 3%. Namoyish — ${shown}`,
+  });
+  const checked = new Date('2026-11-09T10:00:00+05:00');
+  const paused = boostStateMap([{ externalId: '2197711', orderBoostStatus: 'PAUSED', orderBoostCheckedAt: checked }], new Date('2026-11-09T11:00:00+05:00'));
+
+  it('на паузе ставка покрывает заказы только до конца дня последнего показа', () => {
+    const timeline = advertisingRateTimeline([expense('2197711', '2026-11-03')]);
+    expect(advertisingRateAt(timeline, '2197711', at('2026-11-03'), { boostState: paused })?.percent).toBe(3);
+    expect(advertisingRateAt(timeline, '2197711', at('2026-11-04'), { boostState: paused })).toBeNull();
+    // без статуса — как раньше: ставка живёт 30 дней
+    expect(advertisingRateAt(timeline, '2197711', at('2026-11-08'))?.percent).toBe(3);
+  });
+
+  it('заказ после паузы: реклама известна и равна нулю, а не «не рассчитана»', () => {
+    const timeline = advertisingRateTimeline([expense('2197711', '2026-11-03')]);
+    const estimate = advertisingEstimateAt([{ amount: 59_000, productExternalId: '2197711' }], timeline, at('2026-11-08'), { boostState: paused });
+    expect(estimate).toMatchObject({ amount: 0, coveredRevenue: 59_000, totalRevenue: 59_000 });
+    const before = advertisingEstimateAt([{ amount: 59_000, productExternalId: '2197711' }], timeline, at('2026-11-03'), { boostState: paused });
+    expect(before.amount).toBeCloseTo(1_770, 0);
+  });
+
+  it('на паузе текущая ставка товара пропадает; устаревший статус кабинета не учитывается', () => {
+    const rates = latestAdvertisingRates([expense('2197711', '2026-11-03')], { now: at('2026-11-09'), boostState: paused });
+    expect(rates.has('2197711')).toBe(false);
+    const stale = boostStateMap([{ externalId: '2197711', orderBoostStatus: 'PAUSED', orderBoostCheckedAt: new Date('2026-11-08T10:00:00+05:00') }], new Date('2026-11-09T11:00:00+05:00'));
+    expect(stale.size).toBe(0);
+    const active = boostStateMap([{ externalId: '2197711', orderBoostStatus: 'ACTIVE', orderBoostCheckedAt: checked }], new Date('2026-11-09T11:00:00+05:00'));
+    expect(latestAdvertisingRates([expense('2197711', '2026-11-03')], { now: at('2026-11-09'), boostState: active }).get('2197711')?.percent).toBe(3);
   });
 });

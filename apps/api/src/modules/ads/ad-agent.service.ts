@@ -55,6 +55,33 @@ export class AdAgentService {
     private readonly prisma: PrismaService,
   ) {}
 
+  /**
+   * Статус «Буста заказов» по товарам из кабинета → Product.orderBoostStatus. По нему оценки рекламы
+   * в прибыли и в Telegram перестают брать последнюю ставку, когда буст на паузе (владелец 09.11.2026).
+   * Ошибка кабинета статусы не трогает: через 6 часов они считаются устаревшими и оценки идут по-старому.
+   */
+  @Cron(process.env.BOOST_STATUS_CRON || '*/20 * * * *', { name: 'boost-status', timeZone: 'Asia/Tashkent' })
+  async refreshBoostStatus(): Promise<number> {
+    if (process.env.BOOST_STATUS_ENABLED === 'false') return 0;
+    try {
+      const body = (await this.cabinet.cabinet('POST', `${CABINET}/cpo/advertisements/search`, undefined, { page: 0, size: 100, activeOnly: false, dateTo: tashkentDay(new Date()) })).body;
+      const ads = body?.payload?.advertisements;
+      if (!Array.isArray(ads)) throw new Error('cpo/advertisements/search: неожиданная форма ответа');
+      const status = new Map<string, string>(ads.map((row: any) => [String(row.productId), String(row.status || 'UNKNOWN').toUpperCase()]));
+      const shop = await this.prisma.shop.findFirst({ where: { isActive: true } });
+      if (!shop) return 0;
+      const products = await this.prisma.product.findMany({ where: { shopId: shop.id }, select: { id: true, externalId: true } });
+      const now = new Date();
+      for (const product of products) {
+        await this.prisma.product.update({ where: { id: product.id }, data: { orderBoostStatus: status.get(product.externalId) ?? 'NONE', orderBoostCheckedAt: now } });
+      }
+      return products.length;
+    } catch (error: any) {
+      this.logger.warn(`Статус «Буста заказов» не обновлён: ${String(error?.message || error).slice(0, 200)}`);
+      return 0;
+    }
+  }
+
   @Cron(process.env.AD_AGENT_CRON || '0 10 * * *', { name: 'ad-agent', timeZone: 'Asia/Tashkent' })
   async scheduled() {
     if (process.env.AD_AGENT_ENABLED === 'false') return;

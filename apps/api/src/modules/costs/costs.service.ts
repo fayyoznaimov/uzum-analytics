@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { latestAdvertisingRates } from '../../common/advertising';
+import { loadBoostState } from '../../common/boost-state';
 import { PrismaService } from '../../common/prisma.service';
 import { selectCurrentSkuPayout, SkuPayoutObservation } from '../../common/sku-payout';
 
@@ -44,7 +45,7 @@ export class CostsService {
       },
       select: { id: true, productExternalId: true, serviceAt: true, createdAt: true, name: true, raw: true },
     });
-    const advertisingRates = latestAdvertisingRates(recentBoostExpenses);
+    const advertisingRates = latestAdvertisingRates(recentBoostExpenses, { boostState: await loadBoostState(this.prisma) });
     const supplyAllocation = new Map<string, { amount: number; units: number }>();
     for (const item of supplyItems) {
       if (!item.skuId) continue;

@@ -12,6 +12,7 @@ import {
 import { CostBreakdown, calculateOrderFinancials } from '../../common/finance';
 import { classifyStoredOrder } from '../../common/order-state';
 import { applyPayoutDeductions, basketEligibleDate, buildWithdrawalBasket } from '../../common/payout-basket';
+import { loadBoostState } from '../../common/boost-state';
 import { PeriodQuery, resolvePeriod, tashkentHour, tashkentKey } from '../../common/period';
 import { PrismaService } from '../../common/prisma.service';
 import { buildProfitDays } from '../../common/profit-days';
@@ -439,7 +440,9 @@ export class DashboardService {
 
     const taxPercent = Number(settings.taxPercent);
     const productAdvertisingTimeline = advertisingRateTimeline(recentProductAdvertisingExpenses);
-    const productAdvertisingRates = latestAdvertisingRates(recentProductAdvertisingExpenses, { now: advertisingRateNow });
+    // Буст заказов на паузе в кабинете — оценки по последней ставке нет, только реальные списания.
+    const boostState = await loadBoostState(this.prisma, shop.id);
+    const productAdvertisingRates = latestAdvertisingRates(recentProductAdvertisingExpenses, { now: advertisingRateNow, boostState });
     const fallbackCommissionPercent = Number(settings.marketplaceCommissionFallbackPercent);
     const payoutDelayDays = Number(settings.payoutDelayDays ?? 10);
     const payoutSchedule = String((settings as any).payoutSchedule || 'BIWEEKLY');
@@ -575,7 +578,7 @@ export class DashboardService {
           : 0),
         productExternalId: item.sku?.product.externalId || item.marketplaceProductId || null,
       })), productAdvertisingTimeline, row.order.orderedAt || row.order.issuedAt || row.order.dateIssued, {
-        maxRateAgeDays: ADVERTISING_RATE_MAX_AGE_DAYS,
+        maxRateAgeDays: ADVERTISING_RATE_MAX_AGE_DAYS, boostState,
       });
       provisionalCoveredRevenue += estimate.coveredRevenue;
       provisionalCandidateRevenue += estimate.totalRevenue;
@@ -857,7 +860,7 @@ export class DashboardService {
         amount: Number(item.amount),
         productExternalId: item.sku?.product.externalId || item.marketplaceProductId || null,
       })), productAdvertisingTimeline, order.orderedAt || order.dateIssued, {
-        maxRateAgeDays: ADVERTISING_RATE_MAX_AGE_DAYS,
+        maxRateAgeDays: ADVERTISING_RATE_MAX_AGE_DAYS, boostState,
       });
       total.amount += estimate.amount;
       total.coveredRevenue += estimate.coveredRevenue;
@@ -901,7 +904,7 @@ export class DashboardService {
         amount: Number(item.amount),
         productExternalId: item.sku?.product.externalId || item.marketplaceProductId || null,
       })), productAdvertisingTimeline, order.orderedAt || order.dateIssued, {
-        maxRateAgeDays: ADVERTISING_RATE_MAX_AGE_DAYS,
+        maxRateAgeDays: ADVERTISING_RATE_MAX_AGE_DAYS, boostState,
       });
       const key = order.marketplaceOrderId || order.externalId;
       const current = orderedOrderMap.get(key) || {
@@ -1012,7 +1015,7 @@ export class DashboardService {
           : 0),
         productExternalId: item.sku?.product.externalId || item.marketplaceProductId || null,
       })), productAdvertisingTimeline, order.orderedAt || order.issuedAt || order.dateIssued, {
-        maxRateAgeDays: ADVERTISING_RATE_MAX_AGE_DAYS,
+        maxRateAgeDays: ADVERTISING_RATE_MAX_AGE_DAYS, boostState,
       });
       return { date: order.issuedAt || order.dateIssued, amount: estimate.amount };
     });

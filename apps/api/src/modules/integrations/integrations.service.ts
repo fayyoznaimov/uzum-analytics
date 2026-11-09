@@ -3,6 +3,7 @@ import { BadRequestException, forwardRef, Inject, Injectable, Logger } from '@ne
 import { Cron } from '@nestjs/schedule';
 import { IntegrationStatus, IntegrationType } from '@prisma/client';
 import { advertisingEstimateAt, advertisingRateTimeline, ORDER_BOOST_CODE } from '../../common/advertising';
+import { loadBoostState } from '../../common/boost-state';
 import { CryptoService } from '../../common/crypto.service';
 import { DEFAULT_OPENCLAW_MODEL, OpenclawClient } from '../../common/openclaw.client';
 import { PrismaService } from '../../common/prisma.service';
@@ -670,10 +671,11 @@ export class IntegrationsService {
       select: { id: true, productExternalId: true, serviceAt: true, createdAt: true, name: true, raw: true },
     }) : [];
     const rateTimeline = advertisingRateTimeline(recentAdvertisingExpenses);
+    const boostState = await loadBoostState(this.prisma, order.shopId);
     const estimatedAdvertising = advertisingEstimateAt(order.items.map((item) => ({
       amount: Number(item.amount),
       productExternalId: item.sku?.product.externalId || null,
-    })), rateTimeline, order.orderedAt || order.createdAt);
+    })), rateTimeline, order.orderedAt || order.createdAt, { boostState });
     const advertising = order.adCostReported ? Number(order.adCost) : estimatedAdvertising.amount;
     const profit = payout - productCost - tax - advertising;
     const payoutKnown = Boolean(order.payoutReported);
