@@ -1,6 +1,6 @@
 "use client";
 import { type ChangeEvent, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowRight, CalendarClock, CalendarDays, CheckCircle2, Clock3, FileSpreadsheet, Landmark, MessageSquareText, RotateCcw, Upload, WalletCards } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, FileSpreadsheet, Info, MessageSquareText, Upload } from 'lucide-react';
 import AppShell from './AppShell';
 import { Status } from './UI';
 import { api, apiForm, money } from '@/lib/api';
@@ -41,53 +41,56 @@ type StatementPayload = {
   withdrawals?: unknown[];
 };
 
-function label(value?: string | null, withYear = false) {
+const DAY_MS = 86_400_000;
+const num = (value: unknown) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Math.round(Number(value) || 0));
+
+function dayLabel(value?: string | null, withYear = false) {
   if (!value) return '—';
-  return new Date(`${value}T12:00:00+05:00`).toLocaleDateString('ru-RU', {
-    weekday: 'short',
-    day: '2-digit',
-    month: 'short',
-    ...(withYear ? { year: 'numeric' as const } : {}),
-  });
+  return new Date(`${value}T12:00:00+05:00`).toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short', ...(withYear ? { year: 'numeric' as const } : {}) });
 }
 
 function shortDate(value?: string | null) {
   if (!value) return '—';
-  return new Date(`${value}T12:00:00+05:00`).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' });
+  return new Date(`${value}T12:00:00+05:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
 }
 
-function basketTone(status: string) {
-  if (status === 'HOLD') return 'blue';
-  if (status === 'DUE_TODAY') return 'green';
-  if (status === 'NEEDS_RECONCILE') return 'amber';
-  return 'violet';
+function shiftDay(value: string, days: number) {
+  return new Date(new Date(`${value}T12:00:00+05:00`).getTime() + days * DAY_MS).toISOString().slice(0, 10);
 }
 
-function basketStatus(row: any) {
-  if (row.status === 'HOLD') return row.daysUntilBasket === 1 ? 'Завтра в корзину' : row.daysUntilBasket > 1 ? `Через ${row.daysUntilBasket} дн.` : 'В удержании';
-  if (row.status === 'AVAILABLE') return 'В корзине';
-  if (row.status === 'DUE_TODAY') return 'Выплата сегодня';
-  if (row.status === 'NEEDS_RECONCILE') return 'Сверить';
-  return 'По графику';
+function relativeDay(value: string, today: string) {
+  const delta = Math.round((new Date(`${value}T12:00:00+05:00`).getTime() - new Date(`${today}T12:00:00+05:00`).getTime()) / DAY_MS);
+  if (delta === 0) return 'сегодня';
+  if (delta === 1) return 'завтра';
+  if (delta === -1) return 'вчера';
+  return delta > 0 ? `через ${delta} дн.` : `${-delta} дн. назад`;
 }
 
-function payoutStatus(row: any) {
-  if (row.status === 'DUE_TODAY') return 'Сегодня';
-  if (row.status === 'NEEDS_RECONCILE') return 'Сверить';
-  return 'Будет по графику';
+function scheduleLabel(schedule?: string) {
+  if (schedule === 'DAILY') return 'каждый рабочий день';
+  if (schedule === 'WEEKLY') return '7, 14, 21 и 28 числа';
+  if (schedule === 'MONTHLY') return '7 числа';
+  return '7 и 21 числа';
+}
+
+function basketState(row: any): { tone: string; text: string } {
+  if (row.status === 'HOLD') return { tone: 'amber', text: 'Удержание' };
+  if (row.status === 'NEEDS_RECONCILE') return { tone: 'red', text: 'Сверить' };
+  if (row.status === 'DUE_TODAY') return { tone: 'violet', text: 'Выплата сегодня' };
+  return { tone: 'green', text: 'В корзине' };
+}
+
+function payoutState(row: any): { tone: string; text: string } {
+  if (row.status === 'DUE_TODAY') return { tone: 'violet', text: 'Сегодня' };
+  if (row.status === 'NEEDS_RECONCILE') return { tone: 'amber', text: 'Сверить' };
+  return { tone: 'blue', text: 'По графику' };
 }
 
 function statementDate(value?: string | null, withTime = false) {
   if (!value) return '—';
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString('ru-RU', {
-    timeZone: 'Asia/Tashkent',
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    ...(withTime ? { hour: '2-digit', minute: '2-digit' } : {}),
-  });
+  return parsed.toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent', day: 'numeric', month: 'short', year: 'numeric', ...(withTime ? { hour: '2-digit', minute: '2-digit' } : {}) });
 }
 
 function firstNumber(...values: unknown[]) {
@@ -98,13 +101,8 @@ function firstNumber(...values: unknown[]) {
   return null;
 }
 
-function statementMoney(value: number | null) {
-  return value === null ? '—' : money(value);
-}
-
-function statementCount(value: number | null) {
-  return value === null ? '—' : new Intl.NumberFormat('ru-RU').format(value);
-}
+const statementMoney = (value: number | null) => value === null ? '—' : money(value);
+const statementCount = (value: number | null) => value === null ? '—' : new Intl.NumberFormat('ru-RU').format(value);
 
 function returnReason(value?: string | null) {
   if (!value) return 'Причина не передана';
@@ -122,13 +120,7 @@ function returnReason(value?: string | null) {
 }
 
 function returnStatus(value?: string | null) {
-  const statuses: Record<string, string> = {
-    CANCELED: 'Отменён',
-    RETURNED: 'Возврат',
-    PAID: 'Оплачен',
-    WAITING: 'В обработке',
-    'возврат': 'Возврат',
-  };
+  const statuses: Record<string, string> = { CANCELED: 'Отменён', RETURNED: 'Возврат', PAID: 'Оплачен', WAITING: 'В обработке', 'возврат': 'Возврат' };
   return value ? statuses[value] || value : 'Возврат';
 }
 
@@ -139,14 +131,12 @@ export default function WalletClient() {
   const [statementImporting, setStatementImporting] = useState(false);
   const [statementMessage, setStatementMessage] = useState('');
   const [statementError, setStatementError] = useState('');
+  const [showAllDays, setShowAllDays] = useState(false);
   useEffect(() => {
     setStatementLoading(true);
     api<StatementPayload>('/financial-statements/latest?returns=100')
-      .then((result) => {
-        setStatement(result);
-        setStatementError('');
-      })
-      .catch((error: Error) => setStatementError(error.message))
+      .then((result) => { setStatement(result); setStatementError(''); })
+      .catch((cause: Error) => setStatementError(cause.message))
       .finally(() => setStatementLoading(false));
   }, []);
 
@@ -164,8 +154,8 @@ export default function WalletClient() {
       setStatementMessage(result.duplicate ? 'Этот отчёт уже был загружен — показываем сохранённую сверку.' : 'Отчёт загружен: заказы, расходы, выплаты и возвраты сверены.');
       invalidateOverview();
       await reload();
-    } catch (error) {
-      setStatementError(error instanceof Error ? error.message : 'Не удалось загрузить отчёт');
+    } catch (cause) {
+      setStatementError(cause instanceof Error ? cause.message : 'Не удалось загрузить отчёт');
     } finally {
       setStatementImporting(false);
       event.target.value = '';
@@ -173,10 +163,18 @@ export default function WalletClient() {
   }
 
   const pf = data?.payoutForecast;
-  const basketRows = pf?.basketDailyRows || pf?.rows || [];
-  const payoutRows = pf?.payoutDailyRows || [];
-  const nextBasketRows = useMemo(() => basketRows.filter((r: any) => r.daysUntilBasket >= 0).slice(0, 12), [basketRows]);
-  const readyRows = useMemo(() => basketRows.filter((r: any) => r.daysUntilBasket <= 0).slice(-8).reverse(), [basketRows]);
+  const today: string = pf?.today || new Date().toISOString().slice(0, 10);
+  const holdDays = Number(pf?.holdDays || 10);
+  const basketRows: any[] = pf?.basketDailyRows || pf?.rows || [];
+  const payoutRows: any[] = pf?.payoutDailyRows || [];
+  const nextPayout = useMemo(() => payoutRows.find((row) => row.date >= today) || null, [payoutRows, today]);
+  const holdRows = useMemo(() => basketRows.filter((row) => row.status === 'HOLD'), [basketRows]);
+  const holdOrders = holdRows.reduce((sum, row) => sum + Number(row.orders || 0), 0);
+  const tomorrowRow = basketRows.find((row) => row.date === shiftDay(today, 1));
+  // Календарь корзины: по умолчанию неделя назад и всё будущее; прошлые дни — по кнопке.
+  const calendarRows = useMemo(() => showAllDays ? basketRows : basketRows.filter((row) => row.date >= shiftDay(today, -7)), [basketRows, showAllDays, today]);
+  const hiddenDays = basketRows.length - calendarRows.length;
+
   const statementSummary = statement?.latest?.summary || {};
   const reportedEndingBalance = firstNumber(statementSummary.reportedEndingBalance, statementSummary.overallBalance);
   const availableEarly = firstNumber(statementSummary.availableEarly, statementSummary.availableToWithdrawEarly);
@@ -192,147 +190,136 @@ export default function WalletClient() {
   const statementReturns = statement?.returns || [];
   const hasMismatch = (unmatchedRows || 0) > 0 || expenseDelta !== 0;
 
-  return <AppShell title="Кошелёк" subtitle="Главный экран денег: по дням, когда сумма попадает в корзину вывода, и отдельно когда Uzum отправит выплату по графику">
-    {loading ? <div className="loading">Загружаем кошелёк…</div> : error ? <div className="error-box settings-notice"><span>{error}</span><button className="ghost" onClick={() => void reload()}>Повторить</button></div> : !pf ? <div className="loading">Нет данных кошелька за период.</div> : <>
-      <section className="wallet-hero2">
-        <div className="wallet-hero2-main">
-          <span>МОЖНО ВЫВЕСТИ СЕЙЧАС</span>
+  return <AppShell title="Кошелёк" subtitle="Когда деньги за выданные заказы попадут в корзину вывода и сколько придёт в выплату Uzum">
+    {loading ? <div className="loading">Загружаем кошелёк…</div> : error ? <div className="error-box settings-notice"><span>{error}</span><button className="ghost" onClick={() => void reload()}>Повторить</button></div> : !pf ? <div className="loading">Нет данных кошелька за период.</div> : <div className="wl">
+      <section className="wl-hero">
+        <div className="wl-hero-main">
+          <span>Можно вывести сейчас</span>
           <b>{money(Number(pf.summary?.availableToWithdraw || 0))}</b>
-          <small>уже в корзине вывода Uzum{Number(pf.serviceFeePercent) > 0 ? ` · плата за вывод ${pf.serviceFeePercent}%` : ''}</small>
+          <small>уже в корзине вывода Uzum{Number(pf.serviceFeePercent) > 0 ? `, плата за вывод ${pf.serviceFeePercent}%` : ''}</small>
         </div>
-        <div className="wallet-hero2-cell"><span>В УДЕРЖАНИИ {pf.holdDays} ДН.</span><b>{money(Number(pf.summary?.inReturnHold || 0))}</b><small>ждут окончания холда</small></div>
-        <div className="wallet-hero2-cell"><span>БЛИЖАЙШИЕ 7 ДНЕЙ</span><b>{money(Number(pf.summary?.next7Days || 0))}</b><small>попадёт в корзину по графику</small></div>
-        <div className="wallet-hero2-steps"><i>1</i><em>Фактическая выдача покупателю</em><ArrowRight size={14}/><i>2</i><em>{pf.holdDays} календарных дней удержания</em><ArrowRight size={14}/><i>3</i><em>Корзина вывода — деньги доступны</em></div>
+        <div className="wl-hero-cell">
+          <span>Следующая выплата{nextPayout ? `, ${dayLabel(nextPayout.date)}` : ''}</span>
+          <b>{nextPayout ? money(Number(nextPayout.netAmount ?? nextPayout.bankAmount)) : '—'}</b>
+          <small>{nextPayout ? `заказы ${num(nextPayout.amount)} − расходы Uzum ${num(Number(nextPayout.expensesKnown || 0) + Number(nextPayout.expensesEstimate || 0))}${Number(nextPayout.expensesEstimate || 0) > 0 ? ' (часть — оценка)' : ''}` : 'по графику выплат пока нет сумм'}</small>
+        </div>
+        <div className="wl-hero-cell">
+          <span>В удержании {holdDays} дней</span>
+          <b>{money(Number(pf.summary?.inReturnHold || 0))}</b>
+          <small>{holdOrders ? `${num(holdOrders)} заказов ждут конца удержания` : 'нет заказов в удержании'}{tomorrowRow ? `; завтра в корзину ${num(tomorrowRow.amount)}` : ''}</small>
+        </div>
       </section>
 
-      <section className="panel wallet-section statement-panel">
-        <div className="panel-head statement-head">
-          <div className="statement-title">
-            <FileSpreadsheet />
-            <div>
-              <h2>Сверка с финансовым отчётом Uzum</h2>
-              <p>{statement?.latest ? `${statement.latest.fileName} • данные на ${statementDate(statement.latest.reportAsOf, true)} • загружен ${statementDate(statement.latest.importedAt, true)}` : 'Загрузите официальный .xlsx: он содержит точные выплаты, расходы, возвраты и комментарии покупателей.'}</p>
+      <ol className="wl-steps" aria-label="Путь денег">
+        <li><i>1</i><div><b>Выдача покупателю</b><span>дата фактической выдачи</span></div></li>
+        <li><i>2</i><div><b>{holdDays} дней удержания</b><span>календарных, резерв на возврат</span></div></li>
+        <li><i>3</i><div><b>Корзина вывода</b><span>на {holdDays + 1}-й день после выдачи</span></div></li>
+        <li><i>4</i><div><b>Выплата Uzum</b><span>{scheduleLabel(pf.schedule)}, минус расходы</span></div></li>
+      </ol>
+
+      <section className="wl-card">
+        <header className="wl-card-head">
+          <h2>Выплаты Uzum по графику</h2>
+          <p>{scheduleLabel(pf.schedule)}: из заказов вычитаются все расходы Uzum с прошлой выплаты</p>
+        </header>
+        {payoutRows.length ? <div className="wl-scroll"><table className="wl-table wl-payouts">
+          <thead><tr><th>Дата выплаты</th><th>Заказы из корзины</th><th className="num">На сумму</th><th className="num">Расходы Uzum</th><th className="num">Придёт</th><th className="end">Статус</th></tr></thead>
+          <tbody>{payoutRows.map((row) => {
+            const state = payoutState(row);
+            const expenses = Number(row.expensesKnown || 0) + Number(row.expensesEstimate || 0);
+            return <tr key={`payout-${row.date}`} className={row === nextPayout ? 'next' : ''}>
+              <td><b>{dayLabel(row.date)}</b><small>{relativeDay(row.date, today)}</small></td>
+              <td>{row.basketFrom ? `${shortDate(row.basketFrom)} — ${shortDate(row.basketTo)}` : '—'}<small>{num(row.orders)} заказов, {num(row.units)} шт.</small></td>
+              <td className="num" data-label="Заказы на сумму">{num(row.amount)}</td>
+              <td className="num" data-label="Расходы Uzum">{expenses > 0 ? `−${num(expenses)}` : '0'}{Number(row.expensesEstimate || 0) > 0 ? <small>оценка {num(row.expensesEstimate)}</small> : row.expensesFrom ? <small>с {shortDate(row.expensesFrom)}</small> : null}</td>
+              <td className="num wl-net" data-label="Придёт"><b>{num(row.netAmount ?? row.bankAmount)}</b></td>
+              <td className="end"><Status tone={state.tone}>{state.text}</Status></td>
+            </tr>;
+          })}</tbody>
+        </table></div> : <div className="wl-empty">Нет сумм для графика выплат.</div>}
+        <p className="wl-note"><Info size={15} /><span>Расходы — реклама, логистика, хранение и штрафы из журнала Uzum. Ещё не списанная часть до дня выплаты — оценка по среднему расходу за последнюю неделю; в день выплаты она заменится фактом.</span></p>
+      </section>
+
+      <section className="wl-card">
+        <header className="wl-card-head">
+          <h2>Календарь поступлений в корзину</h2>
+          <p>сумма появляется на {holdDays + 1}-й день после выдачи</p>
+          <div className="wl-legend"><span><i className="green" />в корзине</span><span><i className="amber" />удержание</span><span><i className="red" />сверить</span></div>
+        </header>
+        {calendarRows.length ? <div className="wl-scroll"><table className="wl-table wl-basket">
+          <thead><tr><th>Попадёт в корзину</th><th>Заказы</th><th className="num">Штук</th><th className="num">Сумма</th><th className="pay">Выплата</th><th className="end">Статус</th></tr></thead>
+          <tbody>{calendarRows.map((row) => {
+            const state = basketState(row);
+            return <tr key={`${row.date}-${row.scheduledPayoutDate}`} className={`${row.date === today ? 'today' : ''} ${state.tone === 'red' ? 'alert' : ''}`}>
+              <td><b>{row.date === today ? `сегодня, ${dayLabel(row.date)}` : dayLabel(row.date)}</b></td>
+              <td><span className="wl-muted">{num(row.orders)} заказов, выданы {shortDate(shiftDay(row.date, -(holdDays + 1)))}{row.returnedUnits ? `, возврат ${num(row.returnedUnits)} шт.` : ''}</span></td>
+              <td className="num wl-units">{num(row.units)}</td>
+              <td className="num" data-label="Сумма"><b>{num(row.amount)}</b></td>
+              <td className="pay" data-label="Выплата">{shortDate(row.scheduledPayoutDate)}</td>
+              <td className="end"><Status tone={state.tone}>{state.text}</Status></td>
+            </tr>;
+          })}</tbody>
+        </table></div> : <div className="wl-empty">Пока нет выданных заказов с датой выдачи.</div>}
+        {hiddenDays > 0 || showAllDays ? <button className="wl-more" onClick={() => setShowAllDays(!showAllDays)}>{showAllDays ? 'Скрыть прошлые дни' : `Показать прошлые дни (${hiddenDays})`}<ChevronDown size={15} className={showAllDays ? 'up' : ''} /></button> : null}
+        <p className="wl-note"><Info size={15} /><span>Суммы считаются только от фактической выдачи товара. Возврат после выдачи уменьшает поступление того же дня. Заказ без данных о выдаче в расчёт не попадает.</span></p>
+      </section>
+
+      <section className="wl-facts">
+        <div><span>Общий баланс</span><b>{money(pf.summary.overallBalance ?? pf.summary.availableToWithdraw)}</b><small>{pf.summary.overallBalanceSource === 'financial-statement' ? 'по финансовому отчёту Uzum' : 'полученные товары − расходы − выведено'}</small></div>
+        <div><span>Ещё не выдано покупателям</span><b>{money(Number(pf.summary.notIssuedAmount || 0))}</b><small>{num(pf.summary.notIssuedOrders)} заказов, в корзину пока не идут</small></div>
+        <div><span>Резерв возвратов</span><b>{money(Number(pf.summary.returnReserve || 0))}</b><small>уже вычтен из прогноза</small></div>
+        <div className={Number(pf.summary.needsReconcile || 0) > 0 ? 'warn' : ''}><span>Прошлые выплаты сверить</span><b>{money(Number(pf.summary.needsReconcile || 0))}</b><small>дата прошла — сверить с историей выплат</small></div>
+      </section>
+
+      <details className="wl-card wl-statement">
+        <summary className="wl-card-head">
+          <FileSpreadsheet size={20} className="wl-statement-icon" />
+          <div>
+            <h2>Сверка с финансовым отчётом Uzum</h2>
+            <p>{statementLoading ? 'Загружаем последнюю сверку…' : statement?.latest ? `${hasMismatch ? 'Есть расхождения' : 'Отчёт и база сверены'}: данные на ${statementDate(statement.latest.reportAsOf, true)}` : 'Отчёт ещё не загружен'}</p>
+          </div>
+          {statement?.latest ? <Status tone={hasMismatch ? 'amber' : 'green'}>{hasMismatch ? 'Проверить' : 'Сверено'}</Status> : null}
+          <ChevronDown size={18} className="wl-chevron" />
+        </summary>
+        <div className="wl-statement-body">
+          <div className="wl-statement-bar">
+            <span>{statement?.latest ? `${statement.latest.fileName}, загружен ${statementDate(statement.latest.importedAt, true)}` : 'Скачайте .xlsx в кабинете Uzum и загрузите сюда: в нём точные выплаты, расходы, возвраты и комментарии покупателей. Исходный файл не меняется.'}</span>
+            <label className={`primary statement-upload${statementImporting ? ' disabled' : ''}`}>
+              <Upload size={15} />
+              {statementImporting ? 'Сверяем…' : statement?.latest ? 'Загрузить новый отчёт' : 'Загрузить .xlsx'}
+              <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={uploadStatement} disabled={statementImporting} />
+            </label>
+          </div>
+          {statementMessage ? <div className="wl-message ok"><CheckCircle2 size={15} />{statementMessage}</div> : null}
+          {statementError ? <div className="wl-message error"><AlertTriangle size={15} />Ошибка отчёта: {statementError}</div> : null}
+          {statement?.latest ? <>
+            <div className="wl-statement-kpis">
+              <div><span>Общий баланс по отчёту</span><b>{statementMoney(reportedEndingBalance)}</b></div>
+              <div><span>Можно вывести раньше</span><b>{statementMoney(availableEarly)}</b></div>
+              <div><span>Расходы по отчёту</span><b>{statementMoney(netExpenses)}</b></div>
+              <div><span>Уже выведено</span><b>{statementMoney(totalWithdrawn)}</b></div>
+              <div><span>Строки отчёта / базы</span><b>{statementCount(reportRows)} / {statementCount(dbRows)}</b></div>
+              <div className={hasMismatch ? 'warn' : ''}><span>Сопоставлено / не найдено</span><b>{statementCount(matchedRows)} / {statementCount(unmatchedRows)}</b></div>
             </div>
-          </div>
-          <label className={`primary statement-upload${statementImporting ? ' disabled' : ''}`}>
-            <Upload size={15} />
-            {statementImporting ? 'Сверяем…' : statement?.latest ? 'Обновить отчёт' : 'Загрузить .xlsx'}
-            <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={uploadStatement} disabled={statementImporting} />
-          </label>
-        </div>
-
-        {statementLoading ? <div className="statement-empty">Загружаем последнюю сверку…</div> : statement?.latest ? <>
-          <div className="statement-kpis">
-            <div className="balance"><span>ОБЩИЙ БАЛАНС ПО ОТЧЁТУ</span><b>{statementMoney(reportedEndingBalance)}</b><small>официальный остаток Uzum на дату отчёта</small></div>
-            <div><span>МОЖНО ВЫВЕСТИ РАНЬШЕ</span><b>{statementMoney(availableEarly)}</b><small>без сумм, которые ещё в обработке</small></div>
-            <div><span>СТРОКИ ОТЧЁТА / БАЗЫ</span><b>{statementCount(reportRows)} / {statementCount(dbRows)}</b><small>позиции заказов в двух источниках</small></div>
-            <div className={hasMismatch ? 'warning' : 'ok'}><span>СОПОСТАВЛЕНО / НЕ НАЙДЕНО</span><b>{statementCount(matchedRows)} / {statementCount(unmatchedRows)}</b><small>{hasMismatch ? 'есть строки для ручной проверки' : 'заказы успешно сопоставлены'}</small></div>
-            <div><span>РАСХОДЫ ПО ОТЧЁТУ</span><b>{statementMoney(netExpenses)}</b><small>списания минус возвраты услуг</small></div>
-            <div><span>УЖЕ ВЫВЕДЕНО</span><b>{statementMoney(totalWithdrawn)}</b><small>фактические выводы в отчёте</small></div>
-          </div>
-
-          <div className={`statement-reconcile ${hasMismatch ? 'warning' : 'ok'}`}>
-            {hasMismatch ? <AlertTriangle size={17} /> : <CheckCircle2 size={17} />}
-            <div>
-              <b>{hasMismatch ? 'Есть расхождения между отчётом и базой' : 'Отчёт и база сверены'}</b>
-              <span>{hasMismatch ? `Не сопоставлено: ${statementCount(unmatchedRows)}. Разница расходов: ${statementMoney(expenseDelta)}.` : `Суммы расходов и все строки отчёта проверены. После снимка появилось новых заказов: ${statementCount(postReportOrders)} — это не ошибка сверки.`}</span>
+            <div className={`wl-message ${hasMismatch ? 'warn' : 'ok'}`}>
+              {hasMismatch ? <AlertTriangle size={15} /> : <CheckCircle2 size={15} />}
+              <span>{hasMismatch ? `Не сопоставлено строк: ${statementCount(unmatchedRows)}. Разница расходов: ${statementMoney(expenseDelta)}.` : `Все строки и суммы расходов совпали. Новых заказов после отчёта: ${statementCount(postReportOrders)} — это не ошибка сверки.`}</span>
             </div>
-          </div>
-
-          <div className="statement-returns-head">
-            <div>
-              <h3>Возвраты и отмены с причиной покупателя</h3>
-              <p>Причина и комментарий берутся из финансового отчёта, а не угадываются по статусу заказа.</p>
-            </div>
-            <Status tone="red">показано {statementReturns.length} из {statementCount(returnRowsTotal)}</Status>
-          </div>
-          {statementReturns.length ? <div className="statement-returns-table">
-            <div className="statement-return-row head"><span>Заказ / дата</span><span>Товар</span><span>Кол-во / статус</span><span>Причина</span><span>Комментарий покупателя</span><span>Суммы</span></div>
-            {statementReturns.map((row) => <div className="statement-return-row" key={row.id}>
-              <div><b>№ {row.orderId || row.externalId || '—'}</b><small>{statementDate(row.issuedAt || row.purchasedAt)}</small></div>
-              <div><b>{row.sku || row.productId || 'SKU не указан'}</b><small title={row.title || ''}>{row.title || 'Название не передано'}</small></div>
-              <div><b>{row.returnedQuantity ?? row.quantity ?? 0} шт.</b><Status tone="red">{returnStatus(row.state || row.statementStatus)}</Status></div>
-              <div className="statement-reason"><b>{returnReason(row.reasonCode || row.reason)}</b><small>{row.reasonCode || ''}</small></div>
-              <div className={`statement-comment${row.comment ? '' : ' missing'}`}><MessageSquareText size={15} /><span>{row.comment || 'Комментарий покупателя не передан'}</span></div>
-              <div><b>{statementMoney(firstNumber(row.statementPayout, row.payout))}</b><small>выведено: {statementMoney(firstNumber(row.withdrawnAmount))}</small></div>
-            </div>)}
-          </div> : <div className="statement-empty">В последнем отчёте нет возвратов.</div>}
-        </> : <div className="statement-empty">
-          <FileSpreadsheet size={28} />
-          <b>Финансовый отчёт ещё не загружен</b>
-          <span>Скачайте файл в кабинете Uzum и загрузите сюда. Исходный файл не изменяется.</span>
-        </div>}
-
-        {statementMessage ? <div className="statement-message ok"><CheckCircle2 size={15} />{statementMessage}</div> : null}
-        {statementError ? <div className="statement-message error"><AlertTriangle size={15} />Ошибка отчёта: {statementError}</div> : null}
-      </section>
-
-      <div className="wallet-kpi-grid">
-        <div className="wallet-kpi ready"><WalletCards/><span>ОБЩИЙ БАЛАНС</span><b>{money(pf.summary.overallBalance ?? pf.summary.availableToWithdraw)}</b><small>полученные товары − расходы − выведенные деньги</small></div>
-        <div className="wallet-kpi today"><CalendarClock/><span>ПОПАДЁТ В КОРЗИНУ СЕГОДНЯ</span><b>{money(pf.summary.basketToday || 0)}</b><small>по dateIssued + {pf.holdDays + 1} день</small></div>
-        <div className="wallet-kpi hold"><Clock3/><span>В УДЕРЖАНИИ</span><b>{money(pf.summary.inReturnHold)}</b><small>ещё не в корзине</small></div>
-        <div className="wallet-kpi future"><CalendarDays/><span>В КОРЗИНУ ЗА 7 ДНЕЙ</span><b>{money(pf.summary.basketNext7 || 0)}</b><small>по дням ниже</small></div>
-        <div className="wallet-kpi payout"><Landmark/><span>ВЫПЛАТА ЗА 7 ДНЕЙ</span><b>{money(pf.summary.next7Days)}</b><small>после платы {pf.serviceFeePercent}%</small></div>
-        <div className="wallet-kpi return"><RotateCcw/><span>РЕЗЕРВ ВОЗВРАТОВ</span><b>{money(pf.summary.returnReserve)}</b><small>уже уменьшил прогноз</small></div>
-      </div>
-
-      <section className="panel wallet-section basket-focus">
-        <div className="panel-head">
-          <div><h2>По дням: когда деньги попадут в корзину вывода</h2><p>Это главный календарь. Здесь не дата банковской выплаты, а дата появления суммы в кабинете «можно вывести».</p></div>
-          <Status tone="green">Корзина вывода</Status>
+            <h3 className="wl-sub">Возвраты и отмены с причиной покупателя <small>показано {statementReturns.length} из {statementCount(returnRowsTotal)}</small></h3>
+            {statementReturns.length ? <div className="wl-scroll wl-returns"><table className="wl-table">
+              <thead><tr><th>Заказ</th><th>Товар</th><th>Кол-во</th><th>Причина</th><th>Комментарий покупателя</th><th className="num">Сумма</th></tr></thead>
+              <tbody>{statementReturns.map((row) => <tr key={row.id}>
+                <td><b>№ {row.orderId || row.externalId || '—'}</b><small>{statementDate(row.issuedAt || row.purchasedAt)}</small></td>
+                <td className="wl-product"><b>{row.sku || row.productId || 'SKU не указан'}</b><small title={row.title || ''}>{row.title || 'Название не передано'}</small></td>
+                <td>{row.returnedQuantity ?? row.quantity ?? 0} шт.<small>{returnStatus(row.state || row.statementStatus)}</small></td>
+                <td>{returnReason(row.reasonCode || row.reason)}</td>
+                <td className={`wl-comment${row.comment ? '' : ' missing'}`}>{row.comment ? <><MessageSquareText size={14} />{row.comment}</> : 'не передан'}</td>
+                <td className="num">{statementMoney(firstNumber(row.statementPayout, row.payout))}<small>выведено {statementMoney(firstNumber(row.withdrawnAmount))}</small></td>
+              </tr>)}</tbody>
+            </table></div> : <div className="wl-empty">В последнем отчёте нет возвратов.</div>}
+          </> : null}
         </div>
-        {basketRows.length ? <div className="wallet-basket-list">
-          {basketRows.map((row: any) => <div key={`${row.date}-${row.scheduledPayoutDate}`} className={`wallet-basket-day ${row.status === 'HOLD' ? 'hold' : row.status === 'NEEDS_RECONCILE' ? 'past' : 'ready'}`}>
-            <div className="wallet-day-date"><b>{label(row.date, true)}</b><small>{row.daysUntilBasket > 0 ? `через ${row.daysUntilBasket} дн.` : row.daysUntilBasket === 0 ? 'сегодня' : `${Math.abs(row.daysUntilBasket)} дн. назад`}</small></div>
-            <div className="wallet-day-main"><span>В корзину</span><strong>{money(row.amount)}</strong><small>{row.orders} заказов • {row.units} шт.{row.returnedUnits ? ` • возврат ${row.returnedUnits} шт.` : ''}</small></div>
-            <div className="wallet-day-side"><span>График выплаты</span><b>{label(row.scheduledPayoutDate)}</b><small>к поступлению: {money(row.bankAmount)}</small></div>
-            <div className="wallet-day-side"><span>Резерв возврата</span><b>{money(row.returnReserve)}</b><small>уменьшен прогноз</small></div>
-            <Status tone={basketTone(row.status) as any}>{basketStatus(row)}</Status>
-          </div>)}
-        </div> : <div className="payout-empty">Пока нет выданных заказов с dateIssued.</div>}
-      </section>
-
-      <div className="wallet-two-col">
-        <section className="panel wallet-section">
-          <div className="panel-head"><div><h2>Ближайшие поступления в корзину</h2><p>Короткий список на ближайшие дни</p></div><Status tone="blue">next</Status></div>
-          <div className="wallet-mini-list">
-            {nextBasketRows.length ? nextBasketRows.map((row: any) => <div key={`next-${row.date}`}><span>{shortDate(row.date)}</span><b>{money(row.amount)}</b><small>{row.orders} заказов • {basketStatus(row)}</small></div>) : <div className="payout-empty">Нет будущих сумм в корзину.</div>}
-          </div>
-        </section>
-        <section className="panel wallet-section">
-          <div className="panel-head"><div><h2>Уже лежит в корзине</h2><p>Прошлые дни, которые можно сверять с кабинетом</p></div><Status tone="violet">ready</Status></div>
-          <div className="wallet-mini-list">
-            {readyRows.length ? readyRows.map((row: any) => <div key={`ready-${row.date}`}><span>{shortDate(row.date)}</span><b>{money(row.amount)}</b><small>{row.orders} заказов • выплата {shortDate(row.scheduledPayoutDate)}</small></div>) : <div className="payout-empty">Нет готовых сумм в корзине.</div>}
-          </div>
-        </section>
-      </div>
-
-      <section className="panel wallet-section">
-        <div className="panel-head"><div><h2>Отдельно: график выплат Uzum в банк</h2><p>Дата, когда Uzum формирует выплату по расписанию. Из суммы заказов Uzum вычитает все списания с прошлой выплаты: рекламу, логистику, хранение, штрафы. Будущие дни — оценка по среднему расходу за неделю.</p></div><Status tone="amber">{pf.schedule}</Status></div>
-        {payoutRows.length ? <div className="wallet-payout-table">
-          <div className="wallet-payout-head"><span>Дата выплаты</span><span>Какие дни корзины</span><span>Заказы / шт.</span><span>Заказы на сумму</span><span>Расходы Uzum</span><span>Придёт</span><span>Статус</span></div>
-          {payoutRows.map((row: any) => <div className="wallet-payout-row" key={`payout-${row.date}`}>
-            <b>{label(row.date, true)}</b>
-            <span>{shortDate(row.basketFrom)} — {shortDate(row.basketTo)}</span>
-            <span>{row.orders} / {row.units}</span>
-            <strong>{money(row.amount)}</strong>
-            <span>−{money(Number(row.expensesKnown || 0) + Number(row.expensesEstimate || 0))}{Number(row.expensesEstimate || 0) > 0 ? <small style={{ display: 'block', color: 'var(--muted)' }}>оценка {money(row.expensesEstimate)}</small> : null}{row.expensesFrom ? <small style={{ display: 'block', color: 'var(--muted)' }}>с {shortDate(row.expensesFrom)}</small> : null}</span>
-            <strong>{money(row.netAmount ?? row.bankAmount)}</strong>
-            <Status tone={row.status === 'DUE_TODAY' ? 'green' : row.status === 'NEEDS_RECONCILE' ? 'amber' : 'blue'}>{payoutStatus(row)}</Status>
-          </div>)}
-        </div> : <div className="payout-empty">Нет сумм для графика выплат.</div>}
-      </section>
-
-      <section className="panel wallet-section wallet-details">
-        <div className="panel-head"><div><h2>Остальные части кошелька</h2><p>Чтобы видеть не только корзину, но и все деньги вокруг неё</p></div><Status tone="gray">контроль</Status></div>
-        <div className="wallet-detail-grid">
-          <div><Clock3/><span>Ещё не выдано покупателям</span><b>{money(pf.summary.notIssuedAmount)}</b><small>{pf.summary.notIssuedOrders} заказов — пока не должны попадать в корзину</small></div>
-          <div><AlertTriangle/><span>Прошлые выплаты сверить</span><b>{money(pf.summary.needsReconcile)}</b><small>дата графика прошла, нужна сверка с Uzum/банком</small></div>
-          <div><CheckCircle2/><span>Выбранный период</span><b>{money(pf.selectedPeriod.amount)}</b><small>корзина: {shortDate(pf.selectedPeriod.basketFrom)} — {shortDate(pf.selectedPeriod.basketTo)}</small></div>
-          <div><Landmark/><span>Фактическое поступление</span><b>не подтверждаем автоматически</b><small>подтверждать по истории выплат или банковской выписке</small></div>
-        </div>
-        <div className="payout-disclaimer"><AlertTriangle size={15}/><span>{pf.note}</span></div>
-      </section>
-    </>}
+      </details>
+    </div>}
   </AppShell>;
 }
