@@ -30,8 +30,10 @@ async function main() {
   const prisma = new PrismaService();
   const quiet = flag('--quiet');
   const period = resolvePeriod({ from: arg('--from'), to: arg('--to'), days: arg('--from') ? undefined : 7 });
-  const shop = await prisma.shop.findFirst({ select: { id: true, name: true } });
-  if (!shop) throw new Error('В базе нет магазина');
+  // Тот же магазин, что берёт DashboardService.overview: в базе их несколько, первый попавшийся —
+  // не тот (10.11.2026 сверка без isActive показала «из базы 0» по всем строкам).
+  const shop = await prisma.shop.findFirst({ where: { isActive: true }, select: { id: true, name: true } });
+  if (!shop) throw new Error('В базе нет активного магазина');
   const overview: any = await new DashboardService(prisma as any).overview({ from: period.fromDate, to: period.toDate, compare: 'false' });
   const m = overview.metrics;
   const lines: string[] = [`Сверка Главной за ${period.fromDate} — ${period.toDate}`];
@@ -98,6 +100,9 @@ async function main() {
   const next = (overview.payoutForecast?.payoutDailyRows || []).find((r: any) => r.date >= overview.payoutForecast?.today);
   lines.push('', 'Сверить руками с кабинетом Uzum:');
   lines.push(`• Можно вывести: ${sum(s.availableToWithdraw)} (${s.overallBalanceSource === 'financial-statement' ? `по финотчёту Uzum от ${s.statementAsOf ? day(new Date(s.statementAsOf)) : '—'}` : 'расчёт по API'})`);
+  const statements = await prisma.financialStatementImport.findMany({ where: { shopId: shop.id }, orderBy: { importedAt: 'desc' }, take: 3, select: { fileName: true, reportAsOf: true, importedAt: true } });
+  lines.push(`   финотчёты (последние ${statements.length}): ${statements.map((x) => `«${x.fileName.slice(0, 40)}» данные по ${x.reportAsOf ? x.reportAsOf.toISOString().slice(0, 10) : '—'}, загружен ${x.importedAt.toISOString().slice(0, 10)}`).join('; ') || 'нет'}`);
+  lines.push(`   расчёт по API без финотчёта: остаток ${sum(s.calculatedOverallBalance)}`);
   lines.push(`• Следующая выплата ${next ? `${next.date}: ${sum(next.netAmount ?? next.bankAmount)}${Number(next.expensesEstimate || 0) > 0 ? ' (часть расходов — оценка)' : ''}` : '— нет'}`);
   lines.push(`• В удержании: ${sum(s.inReturnHold)}`);
   lines.push(`• Прибыль: ${m.profitKnown ? sum(m.sellerProfitAfterAdsAndProductCost) : `не рассчитана (нет себестоимости у ${m.realizedMissingCostItems} позиций, без выплаты ${m.realizedPayoutPendingOrders} заказов)`}`);

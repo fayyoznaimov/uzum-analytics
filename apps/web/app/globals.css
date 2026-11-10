@@ -113,7 +113,7 @@ html,body{font-family:'Golos Text',ui-sans-serif,system-ui,-apple-system,"Segoe 
 .ws-cell span{display:block;font-size:10.5px;font-weight:700;letter-spacing:.05em;color:var(--muted)}
 .ws-cell b{display:block;font-size:17.5px;font-weight:800;letter-spacing:-.01em}
 .ws-cell b.good{color:var(--green)}
-.ws-cell small{display:block;font-size:11px;color:#b47609;margin-top:1px}
+.ws-cell small{display:block;font-size:11px;color:#b47609;margin-top:1px}.ws-cell small.muted{color:var(--muted)}
 .wallet-strip>a{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;text-decoration:none}
 .panel.collapse>summary{cursor:pointer;list-style:none;display:flex;align-items:center}
 .panel.collapse>summary::-webkit-details-marker{display:none}

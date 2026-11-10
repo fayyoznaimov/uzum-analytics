@@ -196,7 +196,7 @@ export default function WalletClient() {
         <div className="wl-hero-main">
           <span>Можно вывести сейчас</span>
           <b>{money(Number(pf.summary?.availableToWithdraw || 0))}</b>
-          <small>уже в корзине вывода Uzum{Number(pf.serviceFeePercent) > 0 ? `, плата за вывод ${pf.serviceFeePercent}%` : ''}</small>
+          <small>{pf.summary?.overallBalanceSource === 'financial-statement' && pf.summary?.statementAsOf ? `по финотчёту Uzum от ${new Date(pf.summary.statementAsOf).toLocaleDateString('ru-RU', { timeZone: 'Asia/Tashkent', day: '2-digit', month: '2-digit', year: 'numeric' })}${Date.now() - new Date(pf.summary.statementAsOf).getTime() > 3 * 86_400_000 ? ' — устарел, загрузите свежий' : ''}` : 'расчёт по заказам, не сверен с кабинетом'}{Number(pf.serviceFeePercent) > 0 ? `, плата за вывод ${pf.serviceFeePercent}%` : ''}</small>
         </div>
         <div className="wl-hero-cell">
           <span>Следующая выплата{nextPayout ? `, ${dayLabel(nextPayout.date)}` : ''}</span>
