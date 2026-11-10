@@ -5,6 +5,13 @@
 name: Сверка Главной
 
 on:
+  # Правка скрипта сверки или этого файла запускает сверку сама — за последние 7 дней
+  # (09–10.11.2026 ручной запуск из GitHub у владельца не создавался).
+  push:
+    branches: [main]
+    paths:
+      - apps/api/scripts/verify-home.ts
+      - .github/workflows/verify-home.yml
   workflow_dispatch:
     inputs:
       from:
