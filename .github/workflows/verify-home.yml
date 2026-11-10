@@ -43,4 +43,7 @@ jobs:
           set -a && . ./.env && set +a
           period=()
           if [ -n "${FROM:-}" ]; then period=(--from "$FROM" --to "${TO:-$FROM}"); fi
-          npx tsx apps/api/scripts/verify-home.ts "${period[@]}" --telegram --quiet
+          # Из apps/api: tsx берёт tsconfig из текущей папки, а без experimentalDecorators
+          # не собирается DashboardService (декоратор на параметре конструктора).
+          cd apps/api
+          npx tsx scripts/verify-home.ts "${period[@]}" --telegram --quiet

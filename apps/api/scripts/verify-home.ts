@@ -2,7 +2,8 @@
  * Сверка цифр Главной (владелец 09.11.2026: «мы работаем с деньгами — дезинформация приведёт к
  * плачевным последствиям»). Только чтение: ничего не пишет ни в БД, ни в Uzum.
  *
- *   npx tsx apps/api/scripts/verify-home.ts [--from 2026-11-03 --to 2026-11-09] [--telegram] [--quiet]
+ *   cd apps/api && npx tsx scripts/verify-home.ts [--from 2026-11-03 --to 2026-11-09] [--telegram] [--quiet]
+ *   (именно из apps/api: из корня tsx не включает experimentalDecorators и DashboardService не собирается)
  *
  * Берёт цифры так же, как их получает экран (DashboardService.overview), и рядом пересчитывает
  * их прямо из таблиц Order / MarketplaceExpense / InventoryMetric простыми суммами. Расхождение —
@@ -112,18 +113,27 @@ async function main() {
   console.log(quiet ? [lines[0], lines[1], ...verdicts].join('\n') : lines.join('\n'));
 
   if (flag('--telegram')) {
-    const row = await prisma.integrationCredential.findUnique({ where: { type: IntegrationType.TELEGRAM } });
-    const token = row?.enabled ? new CryptoService().decrypt(row) : null;
-    const chatId = String((row?.metadata as any)?.chatId || '');
-    if (!token || !chatId) throw new Error('Telegram не настроен: нет токена бота или chatId в настройках');
-    const text = lines.join('\n');
-    const telegram = new TelegramClient();
-    if (text.length <= 4000) await telegram.sendMessage(token, chatId, text);
-    else await telegram.sendDocument(token, chatId, Buffer.from(text, 'utf8'), `sverka_glavnoy_${period.fromDate}_${period.toDate}.txt`, lines.slice(0, 2).join('\n'));
+    await sendTelegram(prisma, lines.join('\n'), `sverka_glavnoy_${period.fromDate}_${period.toDate}.txt`, lines.slice(0, 2).join('\n'));
     console.log('Отчёт отправлен в Telegram');
   }
   await prisma.$disconnect();
   if (bad) process.exitCode = 1;
 }
 
-main().catch((error) => { console.error(error?.message || error); process.exit(1); });
+async function sendTelegram(prisma: PrismaService, text: string, fileName: string, caption: string) {
+  const row = await prisma.integrationCredential.findUnique({ where: { type: IntegrationType.TELEGRAM } });
+  const token = row?.enabled ? new CryptoService().decrypt(row) : null;
+  const chatId = String((row?.metadata as any)?.chatId || '');
+  if (!token || !chatId) throw new Error('Telegram не настроен: нет токена бота или chatId в настройках');
+  const telegram = new TelegramClient();
+  if (text.length <= 4000) await telegram.sendMessage(token, chatId, text);
+  else await telegram.sendDocument(token, chatId, Buffer.from(text, 'utf8'), fileName, caption);
+}
+
+// Ошибку тоже отправляем в Telegram: лог Actions владелец не читает, и без этого сбой выглядит как тишина.
+main().catch(async (error) => {
+  const message = String(error?.message || error).slice(0, 1500);
+  console.error(message);
+  if (flag('--telegram')) await sendTelegram(new PrismaService(), `⚠️ Сверка Главной не выполнилась: ${message}`, 'sverka_oshibka.txt', '⚠️ Сверка Главной не выполнилась').catch(() => undefined);
+  process.exit(1);
+});
