@@ -120,6 +120,25 @@ async function main() {
   lines.push('', `Склад → Потери: не найдено ${ls.notFound} шт. ≈ ${sum(ls.notFoundCost)} по себестоимости; проверить ${ls.checkSkus} SKU; без истории поставок ${ls.noHistorySkus} SKU; накладных FBO ${losses.coverage.fboSupplies} с ${day(losses.coverage.firstSupplyAt ? new Date(losses.coverage.firstSupplyAt) : null)}, заказы с ${day(losses.coverage.firstOrderAt ? new Date(losses.coverage.firstOrderAt) : null)}; в накладных без SKU ${losses.coverage.unmatchedAccepted} шт., в заказах без SKU ${losses.coverage.unlinkedOrderUnits} шт.; склеено строк из 2+ SKU ${losses.rows.filter((row: any) => row.mergedSkus > 1).length}; принято ${ls.accepted}, продано ${ls.sold}, в заказах ${ls.inOrders}, на складе ${ls.stock}, брак ${ls.defective}, могут ехать обратно ${ls.maybeReturning}`);
   for (const r of [...losses.rows.filter((row: any) => row.status === 'check').slice(0, 3), ...losses.rows.filter((row: any) => row.status === 'no-history').slice(0, 3)]) lines.push(`• ${r.status === 'no-history' ? '[нет истории] ' : ''}${r.sellerSku}${r.mergedSkus > 1 ? ` (${r.mergedSkus} SKU)` : ''}: принято ${r.accepted}, продано ${r.sold}, в заказах ${r.inOrders}, на складе ${r.stock}, брак ${r.defective ?? '—'}, едут ${r.maybeReturning} → ${r.status === 'no-history' ? `на ${-r.gap} больше принятого` : `не найдено ${r.notFound}`}`);
 
+  // Из чего сложилось «принято» у SKU «проверить»: каждая FBO-накладная, план/принято и ненулевые quantity… из ответа Uzum.
+  // 11.11.2026 у всех трёх J471 «проверить» старый SKU в кабинете показал quantityCreated=10 — надо видеть, не посчитана ли
+  // принятой накладная, которую склад не принимал.
+  const checkKeys = new Set<string>(losses.rows.filter((row: any) => row.status === 'check').slice(0, 3).map((row: any) => lossSkuKey(row.sellerSku)));
+  const ourSkus = await prisma.sku.findMany({ where: { product: { shopId: shop.id } }, select: { id: true, externalId: true, sellerSku: true } });
+  const checkSkus = ourSkus.filter((s) => checkKeys.has(lossSkuKey(s.sellerSku || '')));
+  if (checkSkus.length) {
+    const supplyRows = await prisma.supplyItem.findMany({
+      where: { skuId: { in: checkSkus.map((s) => s.id) }, supply: { shopId: shop.id, type: 'FBO' } },
+      select: { externalSkuId: true, title: true, plannedQuantity: true, acceptedQuantity: true, raw: true, supply: { select: { externalId: true, status: true, plannedAt: true, createdAt: true } } },
+    });
+    supplyRows.sort((a, b) => String(a.title).localeCompare(String(b.title)) || (a.supply.plannedAt ?? a.supply.createdAt).getTime() - (b.supply.plannedAt ?? b.supply.createdAt).getTime());
+    lines.push('', 'Накладные FBO по SKU «проверить» (из чего сложилось «принято»):');
+    for (const it of supplyRows) {
+      const extra = Object.entries((it.raw || {}) as Record<string, unknown>).filter(([name, value]) => /^quantity/i.test(name) && Number(value)).map(([name, value]) => `${name}=${value}`).join(', ');
+      lines.push(`• ${it.title || '—'} (SKU ${it.externalSkuId}), накладная ${it.supply.externalId} от ${day(it.supply.plannedAt ?? it.supply.createdAt)} [${it.supply.status}]: план ${it.plannedQuantity}, принято ${it.acceptedQuantity}${extra ? ` — ${extra}` : ''}`);
+    }
+  }
+
   // 7. Десять выкупов периода — сверка с самим Uzum: финансы кабинета (finance/orders, токен UZUM_INTERNAL),
   // а не наша база. Владелец 11.11.2026: «делай всё сам» — ручная сверка 10 строк заменена этой.
   const step = Math.max(1, Math.floor(paidRows.length / 10));
@@ -177,9 +196,7 @@ async function main() {
 
     // Складские счётчики кабинета по SKU «проверить» в «Потерях»: что сам Uzum говорит об этих штуках.
     // SKU Uzum (externalId) всех наших SKU, склеенных в строки «проверить», — старые и новые.
-    const checkKeys = new Set<string>(losses.rows.filter((row: any) => row.status === 'check').slice(0, 3).map((row: any) => lossSkuKey(row.sellerSku)));
-    const ourSkus = await prisma.sku.findMany({ where: { product: { shopId: shop.id } }, select: { externalId: true, sellerSku: true } });
-    const external = new Map<string, string>(ourSkus.filter((s) => checkKeys.has(lossSkuKey(s.sellerSku || ''))).map((s) => [String(s.externalId), s.sellerSku || '']));
+    const external = new Map<string, string>(checkSkus.map((s) => [String(s.externalId), s.sellerSku || '']));
     if (external.size) {
       lines.push('', 'Кабинет Uzum по SKU «проверить» (getProducts, ненулевые поля quantity…):');
       const seen = new Set<string>();
