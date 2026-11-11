@@ -21,6 +21,10 @@ import { PrismaService } from '../src/common/prisma.service';
 import { TelegramClient } from '../src/common/telegram.client';
 import { DashboardService } from '../src/modules/dashboard/dashboard.service';
 import { WarehouseService } from '../src/modules/warehouse/warehouse.service';
+import { lossSkuKey } from '../src/common/inventory-losses';
+import { IntegrationsService } from '../src/modules/integrations/integrations.service';
+import { PricingService } from '../src/modules/pricing/pricing.service';
+import { PromoPricingService } from '../src/modules/pricing/promo-pricing.service';
 
 const arg = (name: string) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
 const flag = (name: string) => process.argv.includes(name);
@@ -102,7 +106,7 @@ async function main() {
   const s = overview.payoutForecast?.summary || {};
   const next = (overview.payoutForecast?.payoutDailyRows || []).find((r: any) => r.date >= overview.payoutForecast?.today);
   lines.push('', 'Сверить руками с кабинетом Uzum:');
-  lines.push(`• Можно вывести: ${sum(s.availableToWithdraw)} (${s.overallBalanceSource === 'financial-statement' ? `по финотчёту Uzum от ${s.statementAsOf ? day(new Date(s.statementAsOf)) : '—'}` : 'расчёт по API'})`);
+  lines.push(`• Можно вывести: ${sum(s.availableToWithdraw)} (${s.availableSource === 'financial-statement' ? `по финотчёту Uzum от ${s.statementAsOf ? day(new Date(s.statementAsOf)) : '—'}` : `расчёт: корзина с выплаты ${s.availableSince} ${sum(s.availableBasket)} − расходы Uzum ${sum(s.availableExpenses)}`}); прежний расчёт ${sum(s.legacyAvailableToWithdraw)}`);
   const statements = await prisma.financialStatementImport.findMany({ where: { shopId: shop.id }, orderBy: { importedAt: 'desc' }, take: 3, select: { fileName: true, reportAsOf: true, importedAt: true } });
   lines.push(`   финотчёты (последние ${statements.length}): ${statements.map((x) => `«${x.fileName.slice(0, 40)}» данные по ${x.reportAsOf ? x.reportAsOf.toISOString().slice(0, 10) : '—'}, загружен ${x.importedAt.toISOString().slice(0, 10)}`).join('; ') || 'нет'}`);
   lines.push(`   расчёт по API без финотчёта: остаток ${sum(s.calculatedOverallBalance)}`);
@@ -116,11 +120,67 @@ async function main() {
   lines.push('', `Склад → Потери: не найдено ${ls.notFound} шт. ≈ ${sum(ls.notFoundCost)} по себестоимости; проверить ${ls.checkSkus} SKU; без истории поставок ${ls.noHistorySkus} SKU; накладных FBO ${losses.coverage.fboSupplies} с ${day(losses.coverage.firstSupplyAt ? new Date(losses.coverage.firstSupplyAt) : null)}, заказы с ${day(losses.coverage.firstOrderAt ? new Date(losses.coverage.firstOrderAt) : null)}; в накладных без SKU ${losses.coverage.unmatchedAccepted} шт., в заказах без SKU ${losses.coverage.unlinkedOrderUnits} шт.; склеено строк из 2+ SKU ${losses.rows.filter((row: any) => row.mergedSkus > 1).length}; принято ${ls.accepted}, продано ${ls.sold}, в заказах ${ls.inOrders}, на складе ${ls.stock}, брак ${ls.defective}, могут ехать обратно ${ls.maybeReturning}`);
   for (const r of [...losses.rows.filter((row: any) => row.status === 'check').slice(0, 3), ...losses.rows.filter((row: any) => row.status === 'no-history').slice(0, 3)]) lines.push(`• ${r.status === 'no-history' ? '[нет истории] ' : ''}${r.sellerSku}${r.mergedSkus > 1 ? ` (${r.mergedSkus} SKU)` : ''}: принято ${r.accepted}, продано ${r.sold}, в заказах ${r.inOrders}, на складе ${r.stock}, брак ${r.defective ?? '—'}, едут ${r.maybeReturning} → ${r.status === 'no-history' ? `на ${-r.gap} больше принятого` : `не найдено ${r.notFound}`}`);
 
-  // 7. Десять выкупов периода для ручной сверки с кабинетом Uzum.
+  // 7. Десять выкупов периода — сверка с самим Uzum: финансы кабинета (finance/orders, токен UZUM_INTERNAL),
+  // а не наша база. Владелец 11.11.2026: «делай всё сам» — ручная сверка 10 строк заменена этой.
   const step = Math.max(1, Math.floor(paidRows.length / 10));
   const sample = paidRows.filter((_, i) => i % step === 0).slice(0, 10);
-  lines.push('', `Найти в кабинете Uzum (Финансы → Заказы) и сверить — ${sample.length} из ${paidRows.length} выкупов:`);
-  for (const o of sample) lines.push(`• №${o.marketplaceOrderId || o.externalId} • выдан ${day(o.issuedAt)} • ${units(o)} шт. • сумма ${sum(o.grossRevenue)} • выплата ${o.payoutReported ? sum(o.payout) : 'нет'}${o.returnedUnits ? ` • возврат ${o.returnedUnits} шт.` : ''}`);
+  lines.push('', `Сверка с кабинетом Uzum (Финансы → Заказы) — ${sample.length} из ${paidRows.length} выкупов:`);
+  try {
+    const cabinet = cabinetClient(prisma);
+    const shopExternalId = await cabinet.cabinetShopId();
+    const wanted = new Set(sample.map((o) => String(o.marketplaceOrderId || o.externalId)));
+    const found = new Map<string, any[]>();
+    for (let page = 0; page < 6 && found.size < wanted.size; page++) {
+      const { body } = await cabinet.cabinet('GET', 'https://api-seller.uzum.uz/api/v1/seller/finance/orders', { page, size: 500, shopIds: shopExternalId });
+      const items: any[] = Array.isArray(body?.items) ? body.items : Array.isArray(body?.payload?.items) ? body.payload.items : Array.isArray(body) ? body : [];
+      for (const item of items) {
+        const key = String(item?.orderId ?? '');
+        if (wanted.has(key)) found.set(key, [...(found.get(key) ?? []), item]);
+      }
+      if (items.length < 500) break;
+    }
+    let mismatched = 0;
+    for (const o of sample) {
+      const key = String(o.marketplaceOrderId || o.externalId);
+      const rows = found.get(key) ?? [];
+      const ours = `${units(o)} шт., ${sum(o.grossRevenue)}, к выводу ${o.payoutReported ? sum(o.payout) : 'нет'}`;
+      if (!rows.length) { mismatched++; lines.push(`⚠️ №${key} (выдан ${day(o.issuedAt)}): в финансах кабинета не найден; у нас ${ours}`); continue; }
+      const qty = rows.reduce((a, r) => a + Number(r.quantity || 0), 0);
+      const gross = rows.reduce((a, r) => a + Number(r.sellPrice || 0) * Number(r.quantity || 0), 0);
+      const forWithdraw = rows.reduce((a, r) => a + Number(r.forWithdraw || 0), 0);
+      const statuses = [...new Set(rows.map((r) => String(r.status || '')))].join('/');
+      const ok = qty === units(o) - (o.returnedUnits || 0) && Math.abs(gross - Number(o.grossRevenue) * (qty / Math.max(1, units(o)))) <= 1 && (!o.payoutReported || Math.abs(forWithdraw - Number(o.payout)) <= 1);
+      if (!ok) mismatched++;
+      lines.push(`${ok ? '✅' : '⚠️'} №${key} (выдан ${day(o.issuedAt)}): кабинет ${qty} шт., ${sum(gross)}, к выводу ${sum(forWithdraw)} ${statuses}${ok ? '' : `; у нас ${ours}`}`);
+    }
+    verdicts.push(`${mismatched ? '⚠️' : '✅'} Выкупы совпали с кабинетом Uzum: ${sample.length - mismatched} из ${sample.length}`);
+
+    // Складские счётчики кабинета по SKU «проверить» в «Потерях»: что сам Uzum говорит об этих штуках.
+    // SKU Uzum (externalId) всех наших SKU, склеенных в строки «проверить», — старые и новые.
+    const checkKeys = new Set<string>(losses.rows.filter((row: any) => row.status === 'check').slice(0, 3).map((row: any) => lossSkuKey(row.sellerSku)));
+    const ourSkus = await prisma.sku.findMany({ where: { product: { shopId: shop.id } }, select: { externalId: true, sellerSku: true } });
+    const external = new Map<string, string>(ourSkus.filter((s) => checkKeys.has(lossSkuKey(s.sellerSku || ''))).map((s) => [String(s.externalId), s.sellerSku || '']));
+    if (external.size) {
+      lines.push('', 'Кабинет Uzum по SKU «проверить» (getProducts, ненулевые поля quantity…):');
+      const seen = new Set<string>();
+      for (let page = 0; page < 10; page++) {
+        const { body } = await cabinet.cabinet('GET', `https://api-seller.uzum.uz/api/seller/shop/${shopExternalId}/product/getProducts`, { page, size: 100 });
+        const products: any[] = Array.isArray(body?.productList) ? body.productList : [];
+        for (const product of products) for (const sku of Array.isArray(product?.skuList) ? product.skuList : []) {
+          const id = String(sku?.skuId ?? '');
+          if (!external.has(id)) continue;
+          seen.add(id);
+          const counters = Object.entries(sku).filter(([name, value]) => /^quantity/i.test(name) && Number(value)).map(([name, value]) => `${name}=${value}`).join(', ');
+          lines.push(`• ${external.get(id)} (SKU ${id}): ${counters || 'все quantity… = 0'}`);
+        }
+        if (products.length < 100) break;
+      }
+      for (const [id, title] of external) if (!seen.has(id)) lines.push(`• ${title} (SKU ${id}): в списке товаров кабинета нет (архивный SKU)`);
+    }
+  } catch (error: any) {
+    lines.push(`Кабинет Uzum не прочитан: ${String(error?.message || error).slice(0, 200)} — сверьте эти выкупы вручную:`);
+    for (const o of sample) lines.push(`• №${o.marketplaceOrderId || o.externalId} • выдан ${day(o.issuedAt)} • ${units(o)} шт. • сумма ${sum(o.grossRevenue)} • выплата ${o.payoutReported ? sum(o.payout) : 'нет'}`);
+  }
 
   const bad = verdicts.filter((v) => v.startsWith('⚠️')).length;
   lines.splice(1, 0, bad ? `⚠️ Расхождений: ${bad}` : '✅ Все цифры Главной совпали с прямым пересчётом из базы', '');
@@ -132,6 +192,19 @@ async function main() {
   }
   await prisma.$disconnect();
   if (bad) process.exitCode = 1;
+}
+
+/** Клиент кабинета Uzum (токен UZUM_INTERNAL из БД), как в scripts/funnel-report.ts; уведомления сервисов выключены. */
+function cabinetClient(prisma: PrismaService) {
+  const crypto = new CryptoService();
+  const getPlain = async (type: IntegrationType) => {
+    const row = await prisma.integrationCredential.findUnique({ where: { type } });
+    if (!row || !row.enabled) return null;
+    const token = crypto.decrypt(row);
+    return token ? { token, metadata: (row.metadata || {}) as any, row } : null;
+  };
+  const integrations = { getPlain, notifyTelegram: async () => false } as unknown as IntegrationsService;
+  return new PromoPricingService(prisma, integrations, new PricingService(prisma, integrations));
 }
 
 async function sendTelegram(prisma: PrismaService, text: string, fileName: string, caption: string) {
