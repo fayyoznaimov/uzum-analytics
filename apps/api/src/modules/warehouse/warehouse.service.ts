@@ -3,7 +3,7 @@ import { latestAdvertisingRates } from '../../common/advertising';
 import { loadBoostState } from '../../common/boost-state';
 import { calculateInventoryAnalytics, median } from '../../common/inventory-analytics';
 import { parseInventoryWorkbook } from '../../common/inventory-report';
-import { lossReport, RETURN_TRANSIT_DAYS } from '../../common/inventory-losses';
+import { lossReport, mergeLossInputs, RETURN_TRANSIT_DAYS } from '../../common/inventory-losses';
 import { lostRevenueForSku, SkuSale, StockPoint } from '../../common/lost-revenue';
 import { classifyStoredOrder } from '../../common/order-state';
 import { PrismaService } from '../../common/prisma.service';
@@ -285,7 +285,7 @@ SKU: ${parsed.rows.length}
   async losses() {
     const shop = await this.activeShop();
     const returnFrom = new Date(Date.now() - RETURN_TRANSIT_DAYS * 86_400_000);
-    const [skus, supplyItems, orderItems, warehouseSnapshots, supplies, firstOrder] = await Promise.all([
+    const [skus, supplyItems, orderItems, warehouseSnapshots, supplies, firstOrder, unlinked] = await Promise.all([
       this.prisma.sku.findMany({
         where: { product: { shopId: shop.id } },
         select: { id: true, sellerSku: true, stock: true, product: { select: { title: true } }, costs: { orderBy: { validFrom: 'desc' }, take: 1, select: { amount: true, packagingCost: true, warehouseLogisticsCost: true, additionalCost: true } } },
@@ -298,6 +298,8 @@ SKU: ${parsed.rows.length}
       this.prisma.skuWarehouseSnapshot.findMany({ where: { sku: { product: { shopId: shop.id } } }, orderBy: { capturedAt: 'desc' }, select: { skuId: true, defectedTotal: true, capturedAt: true } }),
       this.prisma.supply.findMany({ where: { shopId: shop.id, type: 'FBO', units: { gt: 0 } }, select: { createdAt: true, plannedAt: true }, orderBy: { createdAt: 'asc' } }),
       this.prisma.order.findFirst({ where: { shopId: shop.id, orderedAt: { not: null } }, orderBy: { orderedAt: 'asc' }, select: { orderedAt: true } }),
+      // Позиции заказов без привязки к SKU в расчёт не попадают — показываем, сколько их.
+      this.prisma.orderItem.aggregate({ where: { skuId: null, order: { shopId: shop.id } }, _sum: { quantity: true } }),
     ]);
 
     const accepted = new Map<string, number>();
@@ -327,7 +329,8 @@ SKU: ${parsed.rows.length}
     const defective = new Map<string, number>();
     for (const row of warehouseSnapshots) if (!defective.has(row.skuId)) defective.set(row.skuId, row.defectedTotal);
 
-    const report = lossReport(skus.map((sku) => {
+    // Старый и новый SKU одного товара (J471 «лицевой» → «лицево») — одна строка, иначе потеря выдумывается.
+    const report = lossReport(mergeLossInputs(skus.map((sku) => {
       const cost = sku.costs[0];
       const flow = flows.get(sku.id) ?? { sold: 0, inOrders: 0, maybeReturning: 0 };
       return {
@@ -340,7 +343,7 @@ SKU: ${parsed.rows.length}
         defective: defective.has(sku.id) ? defective.get(sku.id)! : null,
         unitCost: cost ? Number(cost.amount) + Number(cost.packagingCost) + Number(cost.warehouseLogisticsCost) + Number(cost.additionalCost) : null,
       };
-    }));
+    })));
     const firstSupplyAt = supplies[0] ? (supplies[0].plannedAt ?? supplies[0].createdAt) : null;
     return {
       ...report,
@@ -351,6 +354,7 @@ SKU: ${parsed.rows.length}
         // Заказы старше первой накладной в базе — значит, часть поставок не синхронизирована.
         ordersBeforeSupplies: Boolean(firstSupplyAt && firstOrder?.orderedAt && firstOrder.orderedAt < firstSupplyAt),
         unmatchedAccepted,
+        unlinkedOrderUnits: Number(unlinked._sum.quantity ?? 0),
         defectSnapshotAt: warehouseSnapshots[0]?.capturedAt ?? null,
         returnTransitDays: RETURN_TRANSIT_DAYS,
       },

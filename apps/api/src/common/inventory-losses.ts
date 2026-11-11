@@ -65,6 +65,42 @@ export function lossRow(input: LossInput): LossRow {
   return { ...input, gap, notFound, notFoundCost: input.unitCost === null ? null : notFound * input.unitCost, status };
 }
 
+/**
+ * Один и тот же товар Uzum иногда ведёт под двумя SKU: J471 «КРЕМОВ-лицевой» заменили на «КРЕМОВ-лицево»,
+ * старые накладные и заказы остались на старом id. Без склейки сверка 10.11.2026 показала у новых SKU
+ * «не найдено», а у старых — «нет истории поставок». Нормализация та же, что при сверке финотчёта.
+ */
+export function lossSkuKey(sellerSku: string): string {
+  return String(sellerSku ?? '')
+    .normalize('NFKC')
+    .toLocaleLowerCase('ru-RU')
+    .replace(/лицевой/gu, 'лицево')
+    .replace(/банный/gu, 'банны')
+    .replace(/[×х]/gu, 'x')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+/** Склеивает SKU с одинаковым нормализованным артикулом; mergedSkus — сколько SKU Uzum вошло в строку. */
+export function mergeLossInputs(inputs: LossInput[]): Array<LossInput & { mergedSkus: number }> {
+  const groups = new Map<string, LossInput & { mergedSkus: number }>();
+  for (const input of inputs) {
+    const key = lossSkuKey(input.sellerSku) || input.skuId;
+    const current = groups.get(key);
+    if (!current) { groups.set(key, { ...input, mergedSkus: 1 }); continue; }
+    current.accepted += input.accepted;
+    current.sold += input.sold;
+    current.inOrders += input.inOrders;
+    current.maybeReturning += input.maybeReturning;
+    current.stock += input.stock;
+    current.defective = current.defective === null && input.defective === null ? null : (current.defective ?? 0) + (input.defective ?? 0);
+    current.unitCost = current.unitCost ?? input.unitCost;
+    current.mergedSkus += 1;
+  }
+  return [...groups.values()];
+}
+
 const STATUS_ORDER: Record<LossStatus, number> = { check: 0, small: 1, returning: 2, 'no-history': 3, ok: 4 };
 
 export function lossReport(inputs: LossInput[]) {
