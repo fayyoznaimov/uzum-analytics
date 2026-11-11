@@ -115,4 +115,11 @@ describe('promoApiErrorMessage', () => {
     expect(PROMO_TOKEN_EXPIRED_MESSAGE).toContain('Настройки → Отзывы Uzum');
     expect(promoApiErrorMessage('/x', 400, { errors: [{ code: 'sale-001', message: 'Цена выше допустимой' }] })).toBe('/x: HTTP 400 — Цена выше допустимой');
   });
+
+  it('страница Cloudflare «Just a moment…» вместо JSON — так и пишем, а не голое «HTTP 403» (11.11.2026)', () => {
+    const html = '<!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title>';
+    expect(promoApiErrorMessage('/x', 403, null, html)).toBe('Cloudflare не пускает сервер в кабинет Uzum (HTTP 403, проверка «Just a moment…») — токен в порядке, пройдёт само, когда проверку снимут; /x');
+    expect(promoApiErrorMessage('/x', 403, { message: html })).toContain('Cloudflare не пускает сервер');
+    expect(promoApiErrorMessage('/x', 403, { message: 'Access denied' })).toBe('/x: HTTP 403 — Access denied');
+  });
 });

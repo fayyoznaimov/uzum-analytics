@@ -81,7 +81,7 @@ export class PromoPricingService {
         backoffMs: (status, attempt) => (status === 401 ? 4_000 : 5_000 * (attempt + 1)),
         warn: (message) => this.logger.warn(message),
       },
-      buildError: async (status, parsed, _rawText, requestPath) => {
+      buildError: async (status, parsed, rawText, requestPath) => {
         if (status === 401) {
           await this.prisma.integrationCredential.update({
             where: { type: IntegrationType.UZUM_INTERNAL },
@@ -89,7 +89,7 @@ export class PromoPricingService {
           }).catch(() => undefined);
           return new BadRequestException(PROMO_TOKEN_EXPIRED_MESSAGE);
         }
-        const error: any = new Error(promoApiErrorMessage(requestPath, status, parsed));
+        const error: any = new Error(promoApiErrorMessage(requestPath, status, parsed, typeof rawText === 'string' ? rawText.slice(0, 2_000) : undefined));
         error.responseBody = parsed;
         return error;
       },

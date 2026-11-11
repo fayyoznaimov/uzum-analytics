@@ -191,9 +191,16 @@ export function planPromoPriceChange(input: PromoPriceChangeInput): PromoPriceCh
   };
 }
 
-/** Текст ошибки внутреннего API; 401 — отдельное понятное сообщение про протухший токен. */
-export function promoApiErrorMessage(path: string, status: number, body: any): string {
+/** Текст ошибки внутреннего API; 401 — отдельное понятное сообщение про протухший токен.
+ * rawText — тело ответа как есть: 11.11.2026 с ~11:20 Cloudflare отвечал серверу на весь api-seller.uzum.uz/api/seller/*
+ * страницей «Just a moment…» (HTTP 403, как 13.10 на oauth/token), а в Telegram уходило голое «HTTP 403» — похоже на
+ * отозванный доступ, хотя токен и права в порядке (OpenAPI /api/seller-openapi с того же сервера при этом работал). */
+export function promoApiErrorMessage(path: string, status: number, body: any, rawText?: string): string {
   if (status === 401) return PROMO_TOKEN_EXPIRED_MESSAGE;
+  const raw = `${typeof body === 'string' ? body : typeof body?.message === 'string' ? body.message : ''} ${rawText ?? ''}`;
+  if (/just a moment|cf-chl|challenge-platform|cf_chl/i.test(raw)) {
+    return `Cloudflare не пускает сервер в кабинет Uzum (HTTP ${status}, проверка «Just a moment…») — токен в порядке, пройдёт само, когда проверку снимут; ${path}`;
+  }
   const detail = body?.message || body?.error || body?.errors?.[0]?.message || body?.errors?.[0]?.detail || body?.errors?.[0]?.code;
   return `${path}: HTTP ${status}${detail ? ` — ${detail}` : ''}`;
 }
