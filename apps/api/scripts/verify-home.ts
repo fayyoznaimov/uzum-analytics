@@ -139,19 +139,39 @@ async function main() {
       }
       if (items.length < 500) break;
     }
+    // В заказе Uzum бывает несколько строк (разные SKU): у нас это отдельные Order с одним marketplaceOrderId,
+    // externalId — id строки финансов (тот же выбор поля, что в синхронизации). 11.11.2026 сверка сравнивала
+    // одну нашу строку с суммой всех строк заказа в кабинете и показала 3 ложных расхождения на заказах из 2 строк.
+    // Поэтому сначала строка со строкой; если id строки не нашёлся — весь заказ: все наши строки против всех строк кабинета.
+    const rowId = (item: any) => String(item?.orderItemId ?? item?.itemId ?? item?.id ?? item?.uid ?? item?.orderId ?? '');
+    type OurRow = { state: string | null; grossRevenue: unknown; payout: unknown; payoutReported: boolean; returnedUnits: number | null; items: Array<{ quantity: number }> };
+    const siblings = await prisma.order.findMany({
+      where: { shopId: shop.id, marketplaceOrderId: { in: [...wanted] } },
+      select: { marketplaceOrderId: true, state: true, grossRevenue: true, payout: true, payoutReported: true, returnedUnits: true, items: { select: { quantity: true } } },
+    });
+    // Выкупленное по нашим строкам: только PAID, частичный возврат уменьшает штуки и сумму, как на Главной.
+    const ourTotals = (rows: OurRow[]) => rows.filter((r) => String(r.state || '').toUpperCase() === 'PAID').reduce((a, r) => {
+      const u = Math.max(1, r.items.reduce((s, i) => s + i.quantity, 0));
+      const net = u - Math.min(u, Math.max(0, r.returnedUnits || 0));
+      return { qty: a.qty + net, gross: a.gross + Number(r.grossRevenue) * net / u, payout: a.payout + (r.payoutReported ? Number(r.payout) : 0), pending: a.pending || !r.payoutReported };
+    }, { qty: 0, gross: 0, payout: 0, pending: false });
     let mismatched = 0;
     for (const o of sample) {
       const key = String(o.marketplaceOrderId || o.externalId);
-      const rows = found.get(key) ?? [];
-      const ours = `${units(o)} шт., ${sum(o.grossRevenue)}, к выводу ${o.payoutReported ? sum(o.payout) : 'нет'}`;
-      if (!rows.length) { mismatched++; lines.push(`⚠️ №${key} (выдан ${day(o.issuedAt)}): в финансах кабинета не найден; у нас ${ours}`); continue; }
+      const orderRows = found.get(key) ?? [];
+      if (!orderRows.length) { mismatched++; lines.push(`⚠️ №${key} (выдан ${day(o.issuedAt)}): в финансах кабинета не найден; у нас ${units(o)} шт., ${sum(o.grossRevenue)}, к выводу ${o.payoutReported ? sum(o.payout) : 'нет'}`); continue; }
+      const ownRow = orderRows.filter((r) => rowId(r) === String(o.externalId));
+      const byRow = ownRow.length > 0;
+      const rows = byRow ? ownRow : orderRows;
+      const ours = ourTotals(byRow ? [o] : siblings.filter((x) => x.marketplaceOrderId === key));
       const qty = rows.reduce((a, r) => a + Number(r.quantity || 0), 0);
       const gross = rows.reduce((a, r) => a + Number(r.sellPrice || 0) * Number(r.quantity || 0), 0);
       const forWithdraw = rows.reduce((a, r) => a + Number(r.forWithdraw || 0), 0);
       const statuses = [...new Set(rows.map((r) => String(r.status || '')))].join('/');
-      const ok = qty === units(o) - (o.returnedUnits || 0) && Math.abs(gross - Number(o.grossRevenue) * (qty / Math.max(1, units(o)))) <= 1 && (!o.payoutReported || Math.abs(forWithdraw - Number(o.payout)) <= 1);
+      const ok = qty === ours.qty && Math.abs(gross - ours.gross) <= 1 && (ours.pending || Math.abs(forWithdraw - ours.payout) <= 1);
       if (!ok) mismatched++;
-      lines.push(`${ok ? '✅' : '⚠️'} №${key} (выдан ${day(o.issuedAt)}): кабинет ${qty} шт., ${sum(gross)}, к выводу ${sum(forWithdraw)} ${statuses}${ok ? '' : `; у нас ${ours}`}`);
+      const scope = orderRows.length > 1 ? ` [в заказе ${orderRows.length} строк, сверена ${byRow ? 'своя строка' : 'сумма заказа'}]` : '';
+      lines.push(`${ok ? '✅' : '⚠️'} №${key} (выдан ${day(o.issuedAt)}): кабинет ${qty} шт., ${sum(gross)}, к выводу ${sum(forWithdraw)} ${statuses}${scope}${ok ? '' : `; у нас ${ours.qty} шт., ${sum(ours.gross)}, к выводу ${ours.pending ? 'нет' : sum(ours.payout)}`}`);
     }
     verdicts.push(`${mismatched ? '⚠️' : '✅'} Выкупы совпали с кабинетом Uzum: ${sample.length - mismatched} из ${sample.length}`);
 
