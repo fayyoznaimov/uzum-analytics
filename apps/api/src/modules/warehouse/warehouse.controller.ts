@@ -16,6 +16,9 @@ export class WarehouseController {
   @Get('lost-revenue')
   lostRevenue(@Query('days') days?: string) { return this.service.lostRevenue(days); }
 
+  @Get('losses')
+  losses() { return this.service.losses(); }
+
   @Get('imports')
   imports() { return this.service.imports(); }
 

@@ -3,7 +3,9 @@ import { latestAdvertisingRates } from '../../common/advertising';
 import { loadBoostState } from '../../common/boost-state';
 import { calculateInventoryAnalytics, median } from '../../common/inventory-analytics';
 import { parseInventoryWorkbook } from '../../common/inventory-report';
+import { lossReport, RETURN_TRANSIT_DAYS } from '../../common/inventory-losses';
 import { lostRevenueForSku, SkuSale, StockPoint } from '../../common/lost-revenue';
+import { classifyStoredOrder } from '../../common/order-state';
 import { PrismaService } from '../../common/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
 
@@ -273,6 +275,85 @@ SKU: ${parsed.rows.length}
         recommendedSupplyRoi: total('targetStockInvestment', knownProfitRows) > 0 ? total('recommendedPotentialProfit', knownProfitRows) / total('targetStockInvestment', knownProfitRows) * 100 : 0,
       },
       rows,
+    };
+  }
+
+  /**
+   * Расчёт потерь FBO по SKU (логика и оговорки — common/inventory-losses.ts): принято по накладным
+   * против продано + в заказах + на складе + брак, отмены и возвраты за 30 дней — «возможно едут обратно».
+   */
+  async losses() {
+    const shop = await this.activeShop();
+    const returnFrom = new Date(Date.now() - RETURN_TRANSIT_DAYS * 86_400_000);
+    const [skus, supplyItems, orderItems, warehouseSnapshots, supplies, firstOrder] = await Promise.all([
+      this.prisma.sku.findMany({
+        where: { product: { shopId: shop.id } },
+        select: { id: true, sellerSku: true, stock: true, product: { select: { title: true } }, costs: { orderBy: { validFrom: 'desc' }, take: 1, select: { amount: true, packagingCost: true, warehouseLogisticsCost: true, additionalCost: true } } },
+      }),
+      this.prisma.supplyItem.findMany({ where: { supply: { shopId: shop.id, type: 'FBO' } }, select: { skuId: true, acceptedQuantity: true } }),
+      this.prisma.orderItem.findMany({
+        where: { skuId: { not: null }, order: { shopId: shop.id } },
+        select: { skuId: true, quantity: true, returns: true, order: { select: { state: true, status: true, orderedAt: true, issuedAt: true } } },
+      }),
+      this.prisma.skuWarehouseSnapshot.findMany({ where: { sku: { product: { shopId: shop.id } } }, orderBy: { capturedAt: 'desc' }, select: { skuId: true, defectedTotal: true, capturedAt: true } }),
+      this.prisma.supply.findMany({ where: { shopId: shop.id, type: 'FBO', units: { gt: 0 } }, select: { createdAt: true, plannedAt: true }, orderBy: { createdAt: 'asc' } }),
+      this.prisma.order.findFirst({ where: { shopId: shop.id, orderedAt: { not: null } }, orderBy: { orderedAt: 'asc' }, select: { orderedAt: true } }),
+    ]);
+
+    const accepted = new Map<string, number>();
+    let unmatchedAccepted = 0;
+    for (const item of supplyItems) {
+      if (!item.skuId) { unmatchedAccepted += item.acceptedQuantity; continue; }
+      accepted.set(item.skuId, (accepted.get(item.skuId) ?? 0) + item.acceptedQuantity);
+    }
+    const flows = new Map<string, { sold: number; inOrders: number; maybeReturning: number }>();
+    for (const item of orderItems) {
+      if (!item.skuId) continue;
+      const flow = flows.get(item.skuId) ?? { sold: 0, inOrders: 0, maybeReturning: 0 };
+      const state = classifyStoredOrder({ state: item.order.state, status: item.order.status });
+      const returned = Math.min(item.quantity, Math.max(0, item.returns));
+      const recent = Boolean(item.order.orderedAt && item.order.orderedAt >= returnFrom);
+      if (state === 'PAID') {
+        flow.sold += item.quantity - returned;
+        // Возврат после выдачи едет на склад не сразу.
+        if (returned && item.order.issuedAt && item.order.issuedAt >= returnFrom) flow.maybeReturning += returned;
+      } else if (state === 'WAITING' || state === 'OTHER') {
+        flow.inOrders += item.quantity;
+      } else if (recent) {
+        flow.maybeReturning += item.quantity;
+      }
+      flows.set(item.skuId, flow);
+    }
+    const defective = new Map<string, number>();
+    for (const row of warehouseSnapshots) if (!defective.has(row.skuId)) defective.set(row.skuId, row.defectedTotal);
+
+    const report = lossReport(skus.map((sku) => {
+      const cost = sku.costs[0];
+      const flow = flows.get(sku.id) ?? { sold: 0, inOrders: 0, maybeReturning: 0 };
+      return {
+        skuId: sku.id,
+        sellerSku: sku.sellerSku || '—',
+        title: sku.product.title,
+        accepted: accepted.get(sku.id) ?? 0,
+        ...flow,
+        stock: sku.stock,
+        defective: defective.has(sku.id) ? defective.get(sku.id)! : null,
+        unitCost: cost ? Number(cost.amount) + Number(cost.packagingCost) + Number(cost.warehouseLogisticsCost) + Number(cost.additionalCost) : null,
+      };
+    }));
+    const firstSupplyAt = supplies[0] ? (supplies[0].plannedAt ?? supplies[0].createdAt) : null;
+    return {
+      ...report,
+      coverage: {
+        fboSupplies: supplies.length,
+        firstSupplyAt,
+        firstOrderAt: firstOrder?.orderedAt ?? null,
+        // Заказы старше первой накладной в базе — значит, часть поставок не синхронизирована.
+        ordersBeforeSupplies: Boolean(firstSupplyAt && firstOrder?.orderedAt && firstOrder.orderedAt < firstSupplyAt),
+        unmatchedAccepted,
+        defectSnapshotAt: warehouseSnapshots[0]?.capturedAt ?? null,
+        returnTransitDays: RETURN_TRANSIT_DAYS,
+      },
     };
   }
 

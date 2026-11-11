@@ -20,6 +20,7 @@ import { resolvePeriod } from '../src/common/period';
 import { PrismaService } from '../src/common/prisma.service';
 import { TelegramClient } from '../src/common/telegram.client';
 import { DashboardService } from '../src/modules/dashboard/dashboard.service';
+import { WarehouseService } from '../src/modules/warehouse/warehouse.service';
 
 const arg = (name: string) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
 const flag = (name: string) => process.argv.includes(name);
@@ -107,7 +108,13 @@ async function main() {
   lines.push(`• В удержании: ${sum(s.inReturnHold)}`);
   lines.push(`• Прибыль: ${m.profitKnown ? sum(m.sellerProfitAfterAdsAndProductCost) : `не рассчитана (нет себестоимости у ${m.realizedMissingCostItems} позиций, без выплаты ${m.realizedPayoutPendingOrders} заказов)`}`);
 
-  // 6. Десять выкупов периода для ручной сверки с кабинетом Uzum.
+  // 6. Склад → Потери так, как его видит экран: итог и три SKU, которые надо проверить первыми.
+  const losses: any = await new WarehouseService(prisma as any, null as any).losses();
+  const ls = losses.summary;
+  lines.push('', `Склад → Потери: не найдено ${ls.notFound} шт. ≈ ${sum(ls.notFoundCost)} по себестоимости; проверить ${ls.checkSkus} SKU; без истории поставок ${ls.noHistorySkus} SKU; накладных FBO ${losses.coverage.fboSupplies} с ${day(losses.coverage.firstSupplyAt ? new Date(losses.coverage.firstSupplyAt) : null)}; принято ${ls.accepted}, продано ${ls.sold}, в заказах ${ls.inOrders}, на складе ${ls.stock}, брак ${ls.defective}, могут ехать обратно ${ls.maybeReturning}`);
+  for (const r of losses.rows.filter((row: any) => row.status === 'check').slice(0, 3)) lines.push(`• ${r.sellerSku}: принято ${r.accepted}, продано ${r.sold}, в заказах ${r.inOrders}, на складе ${r.stock}, брак ${r.defective ?? '—'}, едут ${r.maybeReturning} → не найдено ${r.notFound}`);
+
+  // 7. Десять выкупов периода для ручной сверки с кабинетом Uzum.
   const step = Math.max(1, Math.floor(paidRows.length / 10));
   const sample = paidRows.filter((_, i) => i % step === 0).slice(0, 10);
   lines.push('', `Найти в кабинете Uzum (Финансы → Заказы) и сверить — ${sample.length} из ${paidRows.length} выкупов:`);
