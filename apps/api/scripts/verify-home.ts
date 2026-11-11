@@ -37,7 +37,9 @@ async function main() {
   if (!shop) throw new Error('В базе нет активного магазина');
   const overview: any = await new DashboardService(prisma as any).overview({ from: period.fromDate, to: period.toDate, compare: 'false' });
   const m = overview.metrics;
-  const lines: string[] = [`Сверка Главной за ${period.fromDate} — ${period.toDate}`];
+  // Версию кода на сервере передаёт workflow: 10.11.2026 сверка после пуша отработала раньше деплоя,
+  // на прошлой версии скрипта, и по отчёту этого было не понять.
+  const lines: string[] = [`Сверка Главной за ${period.fromDate} — ${period.toDate}${process.env.SERVER_VERSION ? ` (код ${process.env.SERVER_VERSION.slice(0, 7)})` : ''}`];
   const verdicts: string[] = [];
   // Деньги сверяются с точностью до 1 сум (округления), штуки и заказы — точно.
   const check = (name: string, screenValue: unknown, direct: number, kind: 'money' | 'count' = 'money') => {

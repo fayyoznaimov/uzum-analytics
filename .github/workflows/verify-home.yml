@@ -40,6 +40,8 @@ jobs:
           set -euo pipefail
           cd ~/uzum
           echo "Версия на сервере: $(git log --oneline -1)"
+          export SERVER_VERSION="$(git rev-parse HEAD)"
+          if [ "$SERVER_VERSION" != "$GITHUB_SHA" ]; then echo "::warning::Сверка идёт на коде ${SERVER_VERSION:0:7}, а не на ${GITHUB_SHA:0:7}: деплой этого коммита ещё не прошёл"; fi
           set -a && . ./.env && set +a
           period=()
           if [ -n "${FROM:-}" ]; then period=(--from "$FROM" --to "${TO:-$FROM}"); fi
