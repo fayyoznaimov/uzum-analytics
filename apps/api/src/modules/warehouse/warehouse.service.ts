@@ -332,6 +332,7 @@ SKU: ${parsed.rows.length}
     // Старый и новый SKU одного товара (J471 «лицевой» → «лицево») — одна строка, иначе потеря выдумывается.
     const report = lossReport(mergeLossInputs(skus.map((sku) => {
       const cost = sku.costs[0];
+      const unitCost = cost ? Number(cost.amount) + Number(cost.packagingCost) + Number(cost.warehouseLogisticsCost) + Number(cost.additionalCost) : 0;
       const flow = flows.get(sku.id) ?? { sold: 0, inOrders: 0, maybeReturning: 0 };
       return {
         skuId: sku.id,
@@ -341,7 +342,8 @@ SKU: ${parsed.rows.length}
         ...flow,
         stock: sku.stock,
         defective: defective.has(sku.id) ? defective.get(sku.id)! : null,
-        unitCost: cost ? Number(cost.amount) + Number(cost.packagingCost) + Number(cost.warehouseLogisticsCost) + Number(cost.additionalCost) : null,
+        // 0 и меньше — себестоимость не задана (у старых SKU J471 стоит 0), а не «потеря ничего не стоит».
+        unitCost: unitCost > 0 ? unitCost : null,
       };
     })));
     const firstSupplyAt = supplies[0] ? (supplies[0].plannedAt ?? supplies[0].createdAt) : null;

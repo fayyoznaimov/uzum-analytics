@@ -70,6 +70,19 @@ describe('расчёт потерь по SKU', () => {
     expect(lossRow(merged[0])).toMatchObject({ gap: 15, notFound: 0, status: 'returning' });
   });
 
+  it('склеенная строка берёт артикул и себестоимость у живого SKU, в каком бы порядке ни пришли строки', () => {
+    // Сверка 11.11.2026: J471 СИРЕН — у старого SKU себестоимость 0, у нового 17 330; итог прыгал от порядка строк.
+    const fresh = sku({ skuId: 'new', sellerSku: 'FAYYOZ-J471-СИРЕН-лицево', accepted: 34, sold: 15, stock: 16, unitCost: 17_330 });
+    const old = sku({ skuId: 'old', sellerSku: 'FAYYOZ-J471-СИРЕН-лицевой', accepted: 20, sold: 1, stock: 0, unitCost: 0 });
+    for (const order of [[fresh, old], [old, fresh]]) {
+      const [merged] = mergeLossInputs(order);
+      expect(merged).toMatchObject({ skuId: 'new', sellerSku: 'FAYYOZ-J471-СИРЕН-лицево', accepted: 54, sold: 16, stock: 16, unitCost: 17_330, mergedSkus: 2 });
+    }
+    // Если себестоимость задана только у старого SKU — берётся она; нулевая не считается заданной.
+    expect(mergeLossInputs([{ ...fresh, unitCost: null }, { ...old, unitCost: 15_000 }])[0].unitCost).toBe(15_000);
+    expect(mergeLossInputs([{ ...fresh, unitCost: 0 }, old])[0].unitCost).toBeNull();
+  });
+
   it('итоги не смешивают SKU без истории поставок с остальными, «проверить» — первыми', () => {
     const report = lossReport([
       sku({ skuId: 'a', stock: 35 }),

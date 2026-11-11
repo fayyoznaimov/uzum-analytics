@@ -82,23 +82,34 @@ export function lossSkuKey(sellerSku: string): string {
     .trim();
 }
 
-/** Склеивает SKU с одинаковым нормализованным артикулом; mergedSkus — сколько SKU Uzum вошло в строку. */
+/**
+ * Склеивает SKU с одинаковым нормализованным артикулом; mergedSkus — сколько SKU Uzum вошло в строку.
+ * Артикул, название и себестоимость строки — от «живого» SKU (больше остаток, потом больше продаж), а не от того,
+ * кто первым пришёл из базы: 11.11.2026 порядок строк менялся между запусками, у J471 СИРЕН себестоимость бралась
+ * то у старого SKU (0), то у нового (17 330), и «не найдено по себестоимости» прыгало на 260 тыс. при тех же штуках.
+ * Себестоимость 0 и меньше — не задана, как в автоценах и рекламном боте.
+ */
 export function mergeLossInputs(inputs: LossInput[]): Array<LossInput & { mergedSkus: number }> {
-  const groups = new Map<string, LossInput & { mergedSkus: number }>();
+  const groups = new Map<string, LossInput[]>();
   for (const input of inputs) {
     const key = lossSkuKey(input.sellerSku) || input.skuId;
-    const current = groups.get(key);
-    if (!current) { groups.set(key, { ...input, mergedSkus: 1 }); continue; }
-    current.accepted += input.accepted;
-    current.sold += input.sold;
-    current.inOrders += input.inOrders;
-    current.maybeReturning += input.maybeReturning;
-    current.stock += input.stock;
-    current.defective = current.defective === null && input.defective === null ? null : (current.defective ?? 0) + (input.defective ?? 0);
-    current.unitCost = current.unitCost ?? input.unitCost;
-    current.mergedSkus += 1;
+    groups.set(key, [...(groups.get(key) ?? []), input]);
   }
-  return [...groups.values()];
+  return [...groups.values()].map((members) => {
+    const ordered = [...members].sort((a, b) => units(b.stock) - units(a.stock) || units(b.sold) - units(a.sold) || a.skuId.localeCompare(b.skuId));
+    const total = (key: 'accepted' | 'sold' | 'inOrders' | 'maybeReturning' | 'stock') => members.reduce((sum, member) => sum + member[key], 0);
+    return {
+      ...ordered[0],
+      accepted: total('accepted'),
+      sold: total('sold'),
+      inOrders: total('inOrders'),
+      maybeReturning: total('maybeReturning'),
+      stock: total('stock'),
+      defective: members.every((member) => member.defective === null) ? null : members.reduce((sum, member) => sum + (member.defective ?? 0), 0),
+      unitCost: ordered.find((member) => member.unitCost !== null && member.unitCost > 0)?.unitCost ?? null,
+      mergedSkus: members.length,
+    };
+  });
 }
 
 const STATUS_ORDER: Record<LossStatus, number> = { check: 0, small: 1, returning: 2, 'no-history': 3, ok: 4 };
