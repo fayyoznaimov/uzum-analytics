@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyPayoutDeductions, basketEligibleDate, buildWithdrawalBasket, calculateEffectivePayout, nextBusinessDay, normalizeHoldDays, normalizePayoutSchedule, previousPayoutDate, scheduledPayoutDate } from '../payout-basket';
+import { applyPayoutDeductions, availableBalance, lastPayoutDateOnOrBefore, basketEligibleDate, buildWithdrawalBasket, calculateEffectivePayout, nextBusinessDay, normalizeHoldDays, normalizePayoutSchedule, previousPayoutDate, scheduledPayoutDate } from '../payout-basket';
 
 const d = (iso: string) => new Date(`${iso}T12:00:00+05:00`);
 
@@ -193,5 +193,36 @@ describe('корзина: возвраты, статусы и границы с�
     expect(result.rows[0].date).toBe('2026-07-13'); // выдан 02.07 по Ташкенту
     expect(result.rows[0].status).toBe('HOLD');
     expect(result.summary.availableToWithdraw).toBe(0);
+  });
+});
+
+describe('«Можно вывести сейчас» без финотчёта', () => {
+  const at = (day: string) => new Date(`${day}T12:00:00+05:00`);
+  it('последняя выплата по графику 7/21: сегодня или раньше', () => {
+    expect(lastPayoutDateOnOrBefore('2026-11-11')).toBe('2026-11-07');
+    expect(lastPayoutDateOnOrBefore('2026-11-07')).toBe('2026-11-07');
+    expect(lastPayoutDateOnOrBefore('2026-11-06')).toBe('2026-10-21');
+    expect(lastPayoutDateOnOrBefore('2026-11-21')).toBe('2026-11-21');
+  });
+
+  it('корзина ещё не выплаченных заказов минус расходы с последней выплаты; выплаченное и удержание не считаются', () => {
+    const rows = [
+      { date: '2026-11-01', scheduledPayoutDate: '2026-11-07', amount: 5_000_000 }, // уже выплачено 07.11
+      { date: '2026-11-08', scheduledPayoutDate: '2026-11-21', amount: 3_000_000 }, // в корзине, ждёт 21.11
+      { date: '2026-11-11', scheduledPayoutDate: '2026-11-21', amount: 1_000_000 }, // вошло сегодня
+      { date: '2026-11-15', scheduledPayoutDate: '2026-11-21', amount: 2_000_000 }, // ещё в удержании
+    ];
+    const expenses = [
+      { serviceAt: at('2026-11-06'), amount: 400_000 }, // вычтено из выплаты 07.11
+      { serviceAt: at('2026-11-07'), amount: 150_000 },
+      { serviceAt: at('2026-11-10'), amount: 250_000 },
+      { serviceAt: at('2026-11-10'), amount: -50_000 }, // возврат списания
+    ];
+    expect(availableBalance(rows, expenses, { today: '2026-11-11' })).toEqual({ since: '2026-11-07', basket: 4_000_000, expenses: 350_000, amount: 3_650_000 });
+  });
+
+  it('расходы больше корзины — не минус, а ноль', () => {
+    const result = availableBalance([{ date: '2026-11-08', scheduledPayoutDate: '2026-11-21', amount: 100_000 }], [{ serviceAt: at('2026-11-09'), amount: 300_000 }], { today: '2026-11-11' });
+    expect(result.amount).toBe(0);
   });
 });

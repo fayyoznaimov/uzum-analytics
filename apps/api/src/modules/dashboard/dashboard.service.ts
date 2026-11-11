@@ -11,7 +11,7 @@ import {
 } from '../../common/advertising';
 import { CostBreakdown, calculateOrderFinancials } from '../../common/finance';
 import { classifyStoredOrder } from '../../common/order-state';
-import { applyPayoutDeductions, basketEligibleDate, buildWithdrawalBasket } from '../../common/payout-basket';
+import { applyPayoutDeductions, availableBalance, basketEligibleDate, buildWithdrawalBasket } from '../../common/payout-basket';
 import { loadBoostState } from '../../common/boost-state';
 import { PeriodQuery, resolvePeriod, tashkentHour, tashkentKey } from '../../common/period';
 import { PrismaService } from '../../common/prisma.service';
@@ -754,6 +754,15 @@ export class DashboardService {
     });
     const selectedDates = selectedPeriodBasketBase.basketDailyRows.map((row) => row.date);
     const selectedScheduledDates = selectedPeriodBasketBase.basketDailyRows.map((row) => row.scheduledPayoutDate);
+    // «Можно вывести»: финотчёт Uzum — только свежий (до 3 суток), иначе расчёт «корзина с последней
+    // выплаты − расходы Uzum с неё». 10.11.2026 на экране стояли 170 640 сум из отчёта на 01.08.
+    const statementAgeMs = latestFinancialStatement?.reportAsOf ? forecastNow.getTime() - latestFinancialStatement.reportAsOf.getTime() : Infinity;
+    const statementAvailableFresh = hasStatementAvailable && statementAgeMs <= 3 * 86_400_000;
+    const balance = availableBalance(
+      withdrawalBasketBase.rows,
+      payoutExpenseRows.map((row) => ({ serviceAt: row.serviceAt, amount: Number(row.amount) })),
+      { today: withdrawalBasketBase.today, schedule: payoutSchedule },
+    );
     const payoutForecast = {
       holdDays: payoutDelayDays,
       delayDays: payoutDelayDays,
@@ -765,9 +774,13 @@ export class DashboardService {
       tomorrow: withdrawalBasketBase.tomorrow,
       summary: {
         ...withdrawalBasketBase.summary,
-        availableToWithdraw: hasStatementAvailable
-          ? Math.max(0, importedAvailableEarly)
-          : remainingWithdrawalBasketBase.summary.availableToWithdraw,
+        availableToWithdraw: statementAvailableFresh ? Math.max(0, importedAvailableEarly) : balance.amount,
+        availableSource: statementAvailableFresh ? 'financial-statement' : 'calculated',
+        availableSince: balance.since,
+        availableBasket: balance.basket,
+        availableExpenses: balance.expenses,
+        // Прежний расчёт (вся корзина окна минус поштучные выводы) — только для сверки, на экран не идёт.
+        legacyAvailableToWithdraw: remainingWithdrawalBasketBase.summary.availableToWithdraw,
         overallBalance,
         overallBalanceSource: hasStatementBalance ? 'financial-statement' : 'api-calculation',
         statementAsOf: latestFinancialStatement?.reportAsOf?.toISOString() ?? null,

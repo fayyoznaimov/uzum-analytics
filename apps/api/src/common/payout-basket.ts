@@ -152,6 +152,35 @@ export function previousPayoutDate(payoutDate: string, scheduleInput: unknown = 
   return addCalendarDays(payoutDate, -14);
 }
 
+/** Последний день выплаты по графику не позже `today` (сам `today`, если сегодня день выплаты). */
+export function lastPayoutDateOnOrBefore(today: string, scheduleInput: unknown = 'BIWEEKLY'): string {
+  const schedule = normalizePayoutSchedule(scheduleInput);
+  if (schedule === 'DAILY') return today;
+  return previousPayoutDate(firstPayoutDayOnOrAfter(addCalendarDays(today, 1), schedule), schedule);
+}
+
+/**
+ * «Можно вывести сейчас» без финотчёта: заказы, уже вошедшие в корзину вывода и ещё не выплаченные
+ * по графику (день корзины ≤ сегодня < дня выплаты), минус все списания журнала расходов Uzum с
+ * последней выплаты — их Uzum вычитает из баланса сразу. Так баланс сошёлся с кабинетом 26.10.2026
+ * (до 16 тыс.). Раньше здесь брался последний загруженный финотчёт, даже трёхмесячный (10.11.2026:
+ * 170 640 сум по отчёту на 01.08), или сумма всей корзины за 2,5 месяца минус поштучные выводы (78,8 млн).
+ */
+export function availableBalance(
+  rows: Array<{ date: string; scheduledPayoutDate: string; amount: number }>,
+  expenses: PayoutExpenseInput[],
+  options: { today: string; schedule?: PayoutScheduleType | string },
+) {
+  const since = lastPayoutDateOnOrBefore(options.today, options.schedule ?? 'BIWEEKLY');
+  const basket = rows
+    .filter((row) => row.date <= options.today && row.scheduledPayoutDate > options.today)
+    .reduce((total, row) => total + finiteNumber(row.amount), 0);
+  const spent = expenses
+    .filter((expense) => tashkentKey(expense.serviceAt) >= since && tashkentKey(expense.serviceAt) <= options.today)
+    .reduce((total, expense) => total + finiteNumber(expense.amount), 0);
+  return { since, basket, expenses: spent, amount: Math.max(0, basket - spent) };
+}
+
 function finiteNumber(value: unknown, fallback = 0): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;

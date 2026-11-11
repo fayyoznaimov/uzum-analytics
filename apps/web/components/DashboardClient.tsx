@@ -47,9 +47,10 @@ export default function DashboardClient() {
  const orderedPayoutPending = Number(data?.metrics?.orderedPayoutPendingOrders || 0);
  // «Можно вывести» берётся из последнего загруженного финотчёта Uzum, если он есть, — дата отчёта обязательна:
  // 10.11.2026 сверка показала цифру из отчёта с данными по 01.08, без даты она выглядела как сегодняшняя.
- const statementAsOf = pf?.summary?.overallBalanceSource === 'financial-statement' && pf?.summary?.statementAsOf ? new Date(pf.summary.statementAsOf) : null;
- const balanceStale = statementAsOf ? Date.now() - statementAsOf.getTime() > 3 * 86_400_000 : false;
- const balanceSource = statementAsOf ? `по финотчёту Uzum от ${statementAsOf.toLocaleDateString('ru-RU', { timeZone: 'Asia/Tashkent', day: '2-digit', month: '2-digit', year: 'numeric' })}${balanceStale ? ' — устарел' : ''}` : 'расчёт по заказам, не сверен с кабинетом';
+ // С 11.11.2026 API берёт финотчёт только свежий (до 3 суток), иначе — расчёт «корзина с последней выплаты − расходы».
+ const statementAsOf = pf?.summary?.availableSource === 'financial-statement' && pf?.summary?.statementAsOf ? new Date(pf.summary.statementAsOf) : null;
+ const balanceStale = false;
+ const balanceSource = statementAsOf ? `по финотчёту Uzum от ${statementAsOf.toLocaleDateString('ru-RU', { timeZone: 'Asia/Tashkent', day: '2-digit', month: '2-digit' })}` : pf?.summary?.availableSince ? `расчёт: с выплаты ${new Date(`${pf.summary.availableSince}T12:00:00+05:00`).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} минус расходы Uzum` : 'расчёт по заказам, не сверен с кабинетом';
  const realizedInputsKnown = Number(data?.metrics?.realizedPayoutPendingOrders || 0) === 0 && Number(data?.metrics?.realizedMissingCostItems || 0) === 0;
  const realizedProfitKnown = data?.metrics?.profitKnown === true;
  return <AppShell title="Главная">
