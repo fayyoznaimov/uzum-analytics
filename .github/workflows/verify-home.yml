@@ -30,7 +30,7 @@ concurrency:
 jobs:
   verify-home:
     runs-on: [self-hosted, uzum-server]
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - name: Сверка Главной → Telegram
         env:
@@ -39,9 +39,17 @@ jobs:
         run: |
           set -euo pipefail
           cd ~/uzum
+          # 10–11.11.2026 сверка после пуша дважды отработала раньше деплоя, на старом скрипте.
+          # Ждём, пока коммит запуска окажется в рабочей копии: раннер один и занят этой задачей,
+          # поэтому код подтягивает запасной uzum-deploy.timer (раз в 5 минут).
+          for i in $(seq 1 45); do
+            git merge-base --is-ancestor "$GITHUB_SHA" HEAD 2>/dev/null && break
+            [ "$i" = 1 ] && echo "Жду деплой ${GITHUB_SHA:0:7}: на сервере $(git log --oneline -1)"
+            sleep 20
+          done
           echo "Версия на сервере: $(git log --oneline -1)"
           export SERVER_VERSION="$(git rev-parse HEAD)"
-          if [ "$SERVER_VERSION" != "$GITHUB_SHA" ]; then echo "::warning::Сверка идёт на коде ${SERVER_VERSION:0:7}, а не на ${GITHUB_SHA:0:7}: деплой этого коммита ещё не прошёл"; fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" HEAD 2>/dev/null; then echo "::warning::Сверка идёт на коде ${SERVER_VERSION:0:7}, а не на ${GITHUB_SHA:0:7}: деплой этого коммита не дождались"; fi
           set -a && . ./.env && set +a
           period=()
           if [ -n "${FROM:-}" ]; then period=(--from "$FROM" --to "${TO:-$FROM}"); fi
