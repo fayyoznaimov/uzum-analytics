@@ -13,6 +13,7 @@ import { CostBreakdown, calculateOrderFinancials } from '../../common/finance';
 import { classifyStoredOrder } from '../../common/order-state';
 import { applyPayoutDeductions, availableBalance, basketEligibleDate, buildWithdrawalBasket } from '../../common/payout-basket';
 import { loadBoostState } from '../../common/boost-state';
+import { cabinetBalanceUsable } from '../../common/cabinet-balance';
 import { PeriodQuery, resolvePeriod, tashkentHour, tashkentKey } from '../../common/period';
 import { PrismaService } from '../../common/prisma.service';
 import { buildProfitDays } from '../../common/profit-days';
@@ -763,6 +764,20 @@ export class DashboardService {
       payoutExpenseRows.map((row) => ({ serviceAt: row.serviceAt, amount: Number(row.amount) })),
       { today: withdrawalBasketBase.today, schedule: payoutSchedule },
     );
+    // Главный источник «Можно вывести» — сам кабинет Uzum (снимок CabinetBalanceService раз в 15 минут).
+    // 11.11.2026 корзина у нас и в кабинете совпала до сума, а вычеты — нет: расчёт дал 5 967 521 против 6 887 440.
+    const cabinetSnapshot = await this.prisma.cabinetBalanceSnapshot.findUnique({ where: { shopId: shop.id } }).catch(() => null);
+    const cabinetUsable = cabinetBalanceUsable(cabinetSnapshot, forecastNow, withdrawalBasketBase.today);
+    const cabinetAvailable = cabinetUsable && cabinetSnapshot ? Number(cabinetSnapshot.nextPayoutAmount) : null;
+    const cabinetTotal = cabinetUsable && cabinetSnapshot?.totalBalance !== null && cabinetSnapshot?.totalBalance !== undefined ? Number(cabinetSnapshot.totalBalance) : null;
+    // Ближайшая выплата: накопленное — по кабинету, а то, что попадёт в корзину до даты выплаты, — наш прогноз
+    // (строка графика минус наш же расчёт «можно вывести»: прошлые заказы и расходы в обоих одни и те же).
+    const nextPayoutRow = netPayoutDailyRows.find((row) => row.date >= withdrawalBasketBase.today) ?? null;
+    const nextPayoutRowNet = nextPayoutRow ? Number(nextPayoutRow.netAmount ?? nextPayoutRow.bankAmount) : null;
+    const nextPayoutToCome = nextPayoutRowNet === null ? null : Math.max(0, nextPayoutRowNet - balance.amount);
+    const nextPayoutForecast = cabinetAvailable !== null && nextPayoutRow && nextPayoutToCome !== null && cabinetSnapshot?.nextPayoutDate === nextPayoutRow.date
+      ? { date: nextPayoutRow.date, amount: cabinetAvailable + nextPayoutToCome, accumulated: cabinetAvailable, toCome: nextPayoutToCome, source: 'cabinet+forecast' }
+      : null;
     const payoutForecast = {
       holdDays: payoutDelayDays,
       delayDays: payoutDelayDays,
@@ -774,15 +789,22 @@ export class DashboardService {
       tomorrow: withdrawalBasketBase.tomorrow,
       summary: {
         ...withdrawalBasketBase.summary,
-        availableToWithdraw: statementAvailableFresh ? Math.max(0, importedAvailableEarly) : balance.amount,
-        availableSource: statementAvailableFresh ? 'financial-statement' : 'calculated',
+        availableToWithdraw: cabinetAvailable !== null ? cabinetAvailable : statementAvailableFresh ? Math.max(0, importedAvailableEarly) : balance.amount,
+        availableSource: cabinetAvailable !== null ? 'cabinet' : statementAvailableFresh ? 'financial-statement' : 'calculated',
         availableSince: balance.since,
         availableBasket: balance.basket,
         availableExpenses: balance.expenses,
+        // Наш расчёт — на экране только когда кабинет недоступен; здесь всегда, для сверки.
+        availableCalculated: balance.amount,
+        // Время последнего снимка кабинета — и свежего, и устаревшего («кабинет недоступен с …»).
+        cabinetBalanceAt: cabinetSnapshot?.fetchedAt?.toISOString() ?? null,
+        cabinetPeriodTo: cabinetUsable ? cabinetSnapshot?.periodTo ?? null : null,
+        cabinetNextPayoutDate: cabinetUsable ? cabinetSnapshot?.nextPayoutDate ?? null : null,
+        nextPayoutForecast,
         // Прежний расчёт (вся корзина окна минус поштучные выводы) — только для сверки, на экран не идёт.
         legacyAvailableToWithdraw: remainingWithdrawalBasketBase.summary.availableToWithdraw,
-        overallBalance,
-        overallBalanceSource: hasStatementBalance ? 'financial-statement' : 'api-calculation',
+        overallBalance: cabinetTotal ?? overallBalance,
+        overallBalanceSource: cabinetTotal !== null ? 'cabinet' : hasStatementBalance ? 'financial-statement' : 'api-calculation',
         statementAsOf: latestFinancialStatement?.reportAsOf?.toISOString() ?? null,
         calculatedOverallBalance,
         sellerProfitTotal,

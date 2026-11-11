@@ -20,6 +20,7 @@ import { resolvePeriod } from '../src/common/period';
 import { PrismaService } from '../src/common/prisma.service';
 import { TelegramClient } from '../src/common/telegram.client';
 import { DashboardService } from '../src/modules/dashboard/dashboard.service';
+import { CabinetBalanceService } from '../src/modules/dashboard/cabinet-balance.service';
 import { WarehouseService } from '../src/modules/warehouse/warehouse.service';
 import { lossSkuKey } from '../src/common/inventory-losses';
 import { IntegrationsService } from '../src/modules/integrations/integrations.service';
@@ -39,6 +40,10 @@ async function main() {
   // не тот (10.11.2026 сверка без isActive показала «из базы 0» по всем строкам).
   const shop = await prisma.shop.findFirst({ where: { isActive: true }, select: { id: true, name: true } });
   if (!shop) throw new Error('В базе нет активного магазина');
+  // Снимок «К выплате» из кабинета Uzum — до overview, чтобы «Можно вывести» экрана считался по свежему кабинету.
+  let cabinetBalance: Awaited<ReturnType<CabinetBalanceService['refresh']>> | null = null;
+  let cabinetBalanceError = '';
+  try { cabinetBalance = await new CabinetBalanceService(prisma as any, cabinetClient(prisma)).refresh(); } catch (error: any) { cabinetBalanceError = String(error?.message || error).slice(0, 200); }
   const overview: any = await new DashboardService(prisma as any).overview({ from: period.fromDate, to: period.toDate, compare: 'false' });
   const m = overview.metrics;
   // Версию кода на сервере передаёт workflow: 10.11.2026 сверка после пуша отработала раньше деплоя,
@@ -106,7 +111,11 @@ async function main() {
   const s = overview.payoutForecast?.summary || {};
   const next = (overview.payoutForecast?.payoutDailyRows || []).find((r: any) => r.date >= overview.payoutForecast?.today);
   lines.push('', 'Сверить руками с кабинетом Uzum:');
-  lines.push(`• Можно вывести: ${sum(s.availableToWithdraw)} (${s.availableSource === 'financial-statement' ? `по финотчёту Uzum от ${s.statementAsOf ? day(new Date(s.statementAsOf)) : '—'}` : `расчёт: корзина с выплаты ${s.availableSince} ${sum(s.availableBasket)} − расходы Uzum ${sum(s.availableExpenses)}`}); прежний расчёт ${sum(s.legacyAvailableToWithdraw)}`);
+  if (cabinetBalance) check('Можно вывести = «К выплате» кабинета Uzum', s.availableToWithdraw, cabinetBalance.nextPayoutAmount);
+  lines.push(`• Можно вывести: ${sum(s.availableToWithdraw)} (${s.availableSource === 'cabinet' ? 'по кабинету Uzum' : s.availableSource === 'financial-statement' ? `по финотчёту Uzum от ${s.statementAsOf ? day(new Date(s.statementAsOf)) : '—'}` : 'наш расчёт — кабинет не прочитан'})`);
+  lines.push(`   кабинет Uzum: ${cabinetBalance ? `к выплате ${cabinetBalance.nextPayoutDate ?? '—'} ${sum(cabinetBalance.nextPayoutAmount)}, накоплено по ${cabinetBalance.periodTo ?? '—'}, общий баланс ${cabinetBalance.totalBalance === null ? '—' : sum(cabinetBalance.totalBalance)}` : `не прочитан: ${cabinetBalanceError}`}`);
+  lines.push(`   наш расчёт: корзина с выплаты ${s.availableSince} ${sum(s.availableBasket)} − расходы Uzum ${sum(s.availableExpenses)} = ${sum(s.availableCalculated)}${cabinetBalance ? ` (разница с кабинетом ${sum(Number(s.availableCalculated) - cabinetBalance.nextPayoutAmount)})` : ''}; прежний расчёт ${sum(s.legacyAvailableToWithdraw)}`);
+  if (s.nextPayoutForecast) lines.push(`   выплата ${s.nextPayoutForecast.date} — прогноз ${sum(s.nextPayoutForecast.amount)}: накоплено по кабинету ${sum(s.nextPayoutForecast.accumulated)} + до выплаты ≈ ${sum(s.nextPayoutForecast.toCome)}`);
   const statements = await prisma.financialStatementImport.findMany({ where: { shopId: shop.id }, orderBy: { importedAt: 'desc' }, take: 3, select: { fileName: true, reportAsOf: true, importedAt: true } });
   lines.push(`   финотчёты (последние ${statements.length}): ${statements.map((x) => `«${x.fileName.slice(0, 40)}» данные по ${x.reportAsOf ? x.reportAsOf.toISOString().slice(0, 10) : '—'}, загружен ${x.importedAt.toISOString().slice(0, 10)}`).join('; ') || 'нет'}`);
   lines.push(`   расчёт по API без финотчёта: остаток ${sum(s.calculatedOverallBalance)}`);

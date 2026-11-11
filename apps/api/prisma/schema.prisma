@@ -84,6 +84,7 @@ model Shop {
   marketplaceExpenses MarketplaceExpense[]
   financialStatementImports FinancialStatementImport[]
   withdrawals         Withdrawal[]
+  cabinetBalance      CabinetBalanceSnapshot?
   reviews            Review[]
   competitorProducts CompetitorProduct[]
   marketingExperiments MarketingExperiment[]
@@ -561,6 +562,22 @@ model FinancialStatementImport {
 
   @@unique([shopId, sourceHash])
   @@index([shopId, importedAt])
+}
+
+// «К выплате» и «Общий баланс» из кабинета Uzum (finance/payout-schedule + finance/balance), последний снимок
+// на магазин; обновляется каждые 15 минут (CabinetBalanceService). Логика — common/cabinet-balance.ts.
+model CabinetBalanceSnapshot {
+  id               String   @id @default(cuid())
+  shopId           String   @unique
+  nextPayoutAmount Decimal  @db.Decimal(18, 2)
+  nextPayoutDate   String?
+  periodTo         String?
+  payoutModel      String?
+  schedule         String?
+  totalBalance     Decimal? @db.Decimal(18, 2)
+  fetchedAt        DateTime
+  updatedAt        DateTime @updatedAt
+  shop             Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
 }
 
 model Withdrawal {

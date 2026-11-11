@@ -49,6 +49,12 @@ function dayLabel(value?: string | null, withYear = false) {
   return new Date(`${value}T12:00:00+05:00`).toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short', ...(withYear ? { year: 'numeric' as const } : {}) });
 }
 
+/** Время снимка кабинета Uzum: «11.11, 18:45» по Ташкенту. */
+function timeLabel(iso?: string | null) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
 function shortDate(value?: string | null) {
   if (!value) return '—';
   return new Date(`${value}T12:00:00+05:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
@@ -196,13 +202,18 @@ export default function WalletClient() {
         <div className="wl-hero-main">
           <span>Можно вывести сейчас</span>
           <b>{money(Number(pf.summary?.availableToWithdraw || 0))}</b>
-          <small>{pf.summary?.availableSource === 'financial-statement' && pf.summary?.statementAsOf ? `по финотчёту Uzum от ${new Date(pf.summary.statementAsOf).toLocaleDateString('ru-RU', { timeZone: 'Asia/Tashkent', day: '2-digit', month: '2-digit' })}` : pf.summary?.availableSince ? `корзина с выплаты ${dayLabel(pf.summary.availableSince)} ${num(pf.summary.availableBasket)} − расходы Uzum ${num(pf.summary.availableExpenses)} (расчёт)` : 'расчёт по заказам, не сверен с кабинетом'}{Number(pf.serviceFeePercent) > 0 ? `, плата за вывод ${pf.serviceFeePercent}%` : ''}</small>
+          {/* 11.11.2026: «можно вывести» — по кабинету Uzum (снимок раз в 15 мин); наш расчёт разошёлся с кабинетом на 0,9 млн и показывается только без кабинета. */}
+          <small>{pf.summary?.availableSource === 'cabinet' ? `по кабинету Uzum на ${timeLabel(pf.summary.cabinetBalanceAt)}${pf.summary.cabinetPeriodTo ? `: всё накопленное по ${dayLabel(pf.summary.cabinetPeriodTo)}` : ''}; наш расчёт ${num(pf.summary.availableCalculated)}` : `${pf.summary?.availableSource === 'financial-statement' && pf.summary?.statementAsOf ? `по финотчёту Uzum от ${new Date(pf.summary.statementAsOf).toLocaleDateString('ru-RU', { timeZone: 'Asia/Tashkent', day: '2-digit', month: '2-digit' })}` : pf.summary?.availableSince ? `расчёт, может отличаться от кабинета: корзина с выплаты ${dayLabel(pf.summary.availableSince)} ${num(pf.summary.availableBasket)} − расходы Uzum ${num(pf.summary.availableExpenses)}` : 'расчёт по заказам, не сверен с кабинетом'}${pf.summary?.cabinetBalanceAt ? `; кабинет Uzum недоступен с ${timeLabel(pf.summary.cabinetBalanceAt)}` : ''}`}{Number(pf.serviceFeePercent) > 0 ? `, плата за вывод ${pf.serviceFeePercent}%` : ''}</small>
         </div>
-        <div className="wl-hero-cell">
-          <span>Следующая выплата{nextPayout ? `, ${dayLabel(nextPayout.date)}` : ''}</span>
+        {pf.summary?.nextPayoutForecast ? <div className="wl-hero-cell">
+          <span>Выплата {dayLabel(pf.summary.nextPayoutForecast.date)} — прогноз</span>
+          <b>{money(Number(pf.summary.nextPayoutForecast.amount))}</b>
+          <small>{`накоплено по кабинету ${num(pf.summary.nextPayoutForecast.accumulated)} + попадёт в корзину до выплаты ≈ ${num(pf.summary.nextPayoutForecast.toCome)} (наш прогноз за вычетом расходов)`}</small>
+        </div> : <div className="wl-hero-cell">
+          <span>Следующая выплата{nextPayout ? `, ${dayLabel(nextPayout.date)}` : ''} — расчёт</span>
           <b>{nextPayout ? money(Number(nextPayout.netAmount ?? nextPayout.bankAmount)) : '—'}</b>
           <small>{nextPayout ? `заказы ${num(nextPayout.amount)} − расходы Uzum ${num(Number(nextPayout.expensesKnown || 0) + Number(nextPayout.expensesEstimate || 0))}${Number(nextPayout.expensesEstimate || 0) > 0 ? ' (часть — оценка)' : ''}` : 'по графику выплат пока нет сумм'}</small>
-        </div>
+        </div>}
         <div className="wl-hero-cell">
           <span>В удержании {holdDays} дней</span>
           <b>{money(Number(pf.summary?.inReturnHold || 0))}</b>
@@ -265,7 +276,7 @@ export default function WalletClient() {
       </section>
 
       <section className="wl-facts">
-        <div><span>Общий баланс</span><b>{money(pf.summary.overallBalance ?? pf.summary.availableToWithdraw)}</b><small>{pf.summary.overallBalanceSource === 'financial-statement' ? `по финотчёту Uzum${pf.summary.statementAsOf ? ` от ${new Date(pf.summary.statementAsOf).toLocaleDateString('ru-RU', { timeZone: 'Asia/Tashkent', day: '2-digit', month: '2-digit', year: 'numeric' })}` : ''}${pf.summary.statementAsOf && Date.now() - new Date(pf.summary.statementAsOf).getTime() > 3 * 86_400_000 ? ' — устарел' : ''}` : 'полученные товары − расходы − выведено'}</small></div>
+        <div><span>Общий баланс</span><b>{money(pf.summary.overallBalance ?? pf.summary.availableToWithdraw)}</b><small>{pf.summary.overallBalanceSource === 'cabinet' ? `по кабинету Uzum на ${timeLabel(pf.summary.cabinetBalanceAt)}: с деньгами в удержании и в пути` : pf.summary.overallBalanceSource === 'financial-statement' ? `по финотчёту Uzum${pf.summary.statementAsOf ? ` от ${new Date(pf.summary.statementAsOf).toLocaleDateString('ru-RU', { timeZone: 'Asia/Tashkent', day: '2-digit', month: '2-digit', year: 'numeric' })}` : ''}${pf.summary.statementAsOf && Date.now() - new Date(pf.summary.statementAsOf).getTime() > 3 * 86_400_000 ? ' — устарел' : ''}` : 'полученные товары − расходы − выведено'}</small></div>
         <div><span>Ещё не выдано покупателям</span><b>{money(Number(pf.summary.notIssuedAmount || 0))}</b><small>{num(pf.summary.notIssuedOrders)} заказов, в корзину пока не идут</small></div>
         <div><span>Резерв возвратов</span><b>{money(Number(pf.summary.returnReserve || 0))}</b><small>уже вычтен из прогноза</small></div>
         {/* needsReconcile — сумма всех прошлых дат графика за окно кошелька (~2,5 месяца), а не недостача: без «warn». */}

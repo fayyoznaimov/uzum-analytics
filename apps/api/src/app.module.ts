@@ -23,6 +23,7 @@ import { GoalsController } from './modules/goals/goals.controller';
 import { GoalsService } from './modules/goals/goals.service';
 import { DashboardController } from './modules/dashboard/dashboard.controller';
 import { DashboardService } from './modules/dashboard/dashboard.service';
+import { CabinetBalanceService } from './modules/dashboard/cabinet-balance.service';
 import { ProductsController } from './modules/products/products.controller';
 import { ProductsService } from './modules/products/products.service';
 import { SyncController } from './modules/sync/sync.controller';
@@ -78,7 +79,7 @@ import { SupplierLedgerService } from './modules/supplier-ledger/supplier-ledger
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     CompetitorsService,
     PrismaService, CryptoService, TelegramClient, OpenclawClient, AuthService, AuthGuard, IntegrationsService, CabinetAuthService,
-    CostsService, GoalsService, DashboardService, ProductsService, SyncService, SuppliesService,
+    CostsService, GoalsService, DashboardService, CabinetBalanceService, ProductsService, SyncService, SuppliesService,
     WarehouseService, DigestService, ReturnsWatchService, ReviewsService, FinancialStatementsService, PricingService, PromoPricingService, AutoPricingService, AdAgentService, AdBotService, PriceExperimentService, AutoBidderService, AdLadderService, MiniAppService, SupplierLedgerService,
   ],
 })

@@ -30,7 +30,7 @@ concurrency:
 jobs:
   verify-home:
     runs-on: [self-hosted, uzum-server]
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - name: Сверка Главной → Telegram
         env:
@@ -47,6 +47,10 @@ jobs:
             [ "$i" = 1 ] && echo "Жду деплой ${GITHUB_SHA:0:7}: на сервере $(git log --oneline -1)"
             sleep 20
           done
+          # Код уже подтянут, но деплой ещё идёт (prisma generate, сборка, схема БД, перезапуск) — ждём, пока
+          # scripts/auto-deploy.sh отпустит свою блокировку: 11.11.2026 таблица снимка баланса кабинета
+          # появлялась в базе только на шаге «схема БД», позже git pull.
+          flock -w 1200 "$HOME/.local/state/uzum-deploy/lock" true || echo "::warning::Деплой не закончился за 20 минут — сверка идёт как есть"
           echo "Версия на сервере: $(git log --oneline -1)"
           export SERVER_VERSION="$(git rev-parse HEAD)"
           if ! git merge-base --is-ancestor "$GITHUB_SHA" HEAD 2>/dev/null; then echo "::warning::Сверка идёт на коде ${SERVER_VERSION:0:7}, а не на ${GITHUB_SHA:0:7}: деплой этого коммита не дождались"; fi

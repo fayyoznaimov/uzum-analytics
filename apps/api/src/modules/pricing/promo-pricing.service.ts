@@ -64,13 +64,13 @@ export class PromoPricingService {
     return { token: cfg.token.replace(/^Bearer\s+/i, '').trim(), shopExternalId, shopId: shop?.id ?? null };
   }
 
-  private request(method: 'GET' | 'POST' | 'PUT', path: string, token: string, params?: Record<string, string | number>, body?: unknown): Promise<any> {
+  private request(method: 'GET' | 'POST' | 'PUT', path: string, token: string, params?: Record<string, string | number>, body?: unknown, language = 'ru-RU'): Promise<any> {
     // Один повтор на 401 на запрос: разовый сбой проходит, а мёртвая сессия стоит 4 с, а не 24 с на каждый вызов.
     let unauthorizedRetries = 0;
     // Абсолютный URL в path — другие разделы API кабинета (api-seller.uzum.uz) с тем же токеном.
     return uzumRequest(path, {
       method, base: UZUM_PROMO_API_BASE, token, bearer: true, params, body,
-      headers: { 'Accept-Language': 'ru-RU' }, timeoutMs: 30_000,
+      headers: { 'Accept-Language': language }, timeoutMs: 30_000,
       // Как и в PricingService: после POST с 5xx решает человек — 5xx не повторяем.
       // 429 — лимит. 401 — Uzum изредка отвечает так на рабочий токен (26.10.2026: 3 из 13
       // запусков лестницы, следующий проходил с тем же токеном); запрос с 401 не исполнялся,
@@ -139,10 +139,14 @@ export class PromoPricingService {
     return (await this.session()).shopExternalId;
   }
 
-  /** Запрос к API кабинета (любой раздел) с токеном UZUM_INTERNAL — для агента по рекламе. */
-  async cabinet(method: 'GET' | 'POST' | 'PUT', url: string, params?: Record<string, string | number>, body?: unknown): Promise<{ shopExternalId: string; body: any }> {
+  /**
+   * Запрос к API кабинета (любой раздел) с токеном UZUM_INTERNAL — для агента по рекламе.
+   * language — заголовок Accept-Language: разделы финансов (api/v1/seller/finance/payout-schedule, withdrawals)
+   * ждут код языка «ru» и на «ru-RU» отвечают 400 (проверено 11.11.2026).
+   */
+  async cabinet(method: 'GET' | 'POST' | 'PUT', url: string, params?: Record<string, string | number>, body?: unknown, language?: string): Promise<{ shopExternalId: string; body: any }> {
     const { token, shopExternalId } = await this.session();
-    return { shopExternalId, body: await this.request(method, url, token, params, body) };
+    return { shopExternalId, body: await this.request(method, url, token, params, body, language) };
   }
 
   /**
