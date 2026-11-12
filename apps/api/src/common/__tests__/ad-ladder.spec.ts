@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeCapTests, activeFocus, AD_LADDER_FOCUS, colourStockBlock, focusDrr, colourTitle, formatCampaignSummary, formatLadderDetails, formatLadderReport, launchCampaigns, ladderCampaigns, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, narrowClass, planLadderBids, skuSizeKind, sumLadderStats } from '../ad-ladder';
+import { activeCapTests, activeFocus, AD_LADDER_FOCUS, colourStockBlock, focusDrr, focusFor, colourTitle, formatCampaignSummary, formatLadderDetails, formatLadderReport, launchCampaigns, ladderCampaigns, ladderDrrVerdict, ladderKey, ladderQueryClass, LadderKeyword, narrowClass, planLadderBids, skuSizeKind, sumLadderStats } from '../ad-ladder';
 import { BidLadderStep } from '../auto-bidder';
 
 /** Лестница кабинета: позиции 4…51 ↔ 100…20 % показов, цена топ-10 (позиция 9) = top10. */
@@ -240,7 +240,9 @@ describe('лестница ставок', () => {
     const focus = activeFocus('2026-11-10');
     expect(focus).toHaveLength(4);
     expect(activeFocus('2026-12-04')).toHaveLength(0);
-    expect(focusDrr('337334', 'полотенце для лица', focus)).toBe(15);
+    expect(focusDrr('337334', 'полотенце для лица', focus)).toBe(20); // Сердечки с 12.11.2026 — 20 %, топ-5, ставка до 45 000
+    expect(focusFor('337334', 'полотенце для лица', focus)).toEqual({ maxDrr: 20, position: 5, cap: 45_000 });
+    expect(focusFor('332097', 'большое полотенце', focus)).toEqual({ maxDrr: 15, position: null, cap: null });
     expect(focusDrr('332097', 'большое полотенце', focus)).toBe(15);
     expect(focusDrr('305122', 'полотенце для сауны', focus)).toBe(15);
     expect(focusDrr('305122', 'полотенце банное', focus)).toBeNull();
@@ -249,7 +251,17 @@ describe('лестница ставок', () => {
     // Сердечки, узкая фраза: свой потолок 12 %, ДРР 13,3 % — без акцента не в топе, с акцентом в топе.
     const hearts = { ...kw('pink', 'детское полотенце', 9_500, 12_000), campaignId: '337334', stats7: { impressions: 2_000, clicks: 40, sold: 3, revenue: 300_000, spend: 40_000, position: null } };
     expect(planLadderBids([hearts])[0]).toMatchObject({ role: 'other', blocked: 'ДРР 13.3 % > 12 %' });
-    expect(planLadderBids([hearts], undefined, undefined, undefined, undefined, [], undefined, focus)[0]).toMatchObject({ role: 'top', blocked: null, action: { newCpm: 12_500 } });
+    // С акцентом ДРР в пределах 20 %, и ставка — за 5-е место (13 200 + 3 % → 14 000), а не за 9-е (12 000).
+    const withFocus = planLadderBids([hearts], undefined, undefined, undefined, undefined, [], undefined, focus)[0];
+    expect(withFocus).toMatchObject({ role: 'top', blocked: null, action: { newCpm: 14_000 } });
+    expect(withFocus.action?.reason).toContain('лестница: топ-5');
+    // Узкая фраза Сердечек дороже их потолка 25 000: без акцента не в топе, с акцентом — до 45 000.
+    const blue = { ...kw('blue', 'детское полотенце', 9_500, 26_000), campaignId: '337334' };
+    expect(planLadderBids([blue])[0]).toMatchObject({ role: 'other', action: null });
+    expect(planLadderBids([blue], undefined, undefined, undefined, undefined, [], undefined, focus)[0]).toMatchObject({ role: 'top', action: { kind: 'RAISE', newCpm: 29_500 } });
+    // У остальных кампаний место прежнее — топ-10.
+    const sauna = { ...kw('a', 'большое полотенце', 9_500, 20_000), campaignId: '332097' };
+    expect(planLadderBids([sauna], undefined, undefined, undefined, undefined, [], undefined, focus)[0].action?.newCpm).toBe(21_000); // 20 000 + 3 % → 21 000
   });
 
   it('ставка не выше потолка 70 000 и не ниже минимума', () => {

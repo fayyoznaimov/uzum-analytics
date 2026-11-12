@@ -114,10 +114,14 @@ export function activeCapTests(today: string, table: LadderCapTest[] = AD_LADDER
  * почти кончились, остаток — Сердечки (237 шт) и 100×150 (183 шт; цены сауны и J403 снижены до 159 000, J471 — до 139 000).
  * До конца акции #444 (03.12) — Сердечки целиком, сауна целиком и фразы про 100×150 у J471 и J403.
  */
-export type LadderFocus = { campaignId: string; query?: RegExp; maxDrr: number; until: string; note: string };
+/** position — целевое место вместо топ-10 (ставка = цена этой ступени + запас); cap — потолок ставки фразы не ниже этого.
+ * 12.11.2026 владелец о Сердечках: «просмотров гораздо меньше — лучше на рекламе переплатить и чуть выше в топ вывести, оттуда
+ * будут продажи» (за 4 недели CTR Сердечек 15,8 % — лучший в магазине, а показов ≈ 9,5 тыс. в неделю против 127 тыс. у HAVANA;
+ * 31.10–02.11 при потолке 70 000 было ДРР 53 %, поэтому потолок ставки 45 000 и ДРР не выше 20 %). */
+export type LadderFocus = { campaignId: string; query?: RegExp; maxDrr: number; until: string; note: string; position?: number; cap?: number };
 export const BIG_SIZE_QUERY = /(саун|бан[яи]|бассейн|sauna|basseyn|banya|katta|100 ?[xх]? ?150|больш)/;
 export const AD_LADDER_FOCUS: LadderFocus[] = [
-  { campaignId: '337334', maxDrr: 15, until: '2026-12-03', note: 'Сердечки' },
+  { campaignId: '337334', maxDrr: 20, position: 5, cap: 45_000, until: '2026-12-03', note: 'Сердечки: топ-5, ставка до 45 000' },
   { campaignId: '332097', maxDrr: 15, until: '2026-12-03', note: 'сауна 100×150' },
   { campaignId: '305122', query: BIG_SIZE_QUERY, maxDrr: 15, until: '2026-12-03', note: 'J471 100×150' },
   { campaignId: '305324', query: BIG_SIZE_QUERY, maxDrr: 15, until: '2026-12-03', note: 'J403 100×150' },
@@ -127,11 +131,19 @@ export function activeFocus(today: string, table: LadderFocus[] = AD_LADDER_FOCU
   return table.filter((row) => today <= row.until);
 }
 
-/** Потолок ДРР акцента для фразы кампании; null — фраза не в акценте. */
-export function focusDrr(campaignId: string, query: string, focus: LadderFocus[]): number | null {
+/** Акцент для фразы кампании: потолок ДРР, целевое место и потолок ставки (наибольшие из подходящих); null — фраза не в акценте. */
+export function focusFor(campaignId: string, query: string, focus: LadderFocus[]): { maxDrr: number; position: number | null; cap: number | null } | null {
   const q = normalizeQuery(query);
   const hits = focus.filter((row) => row.campaignId === campaignId && (!row.query || row.query.test(q)));
-  return hits.length ? Math.max(...hits.map((row) => row.maxDrr)) : null;
+  if (!hits.length) return null;
+  const positions = hits.map((row) => row.position).filter((p): p is number => Number.isFinite(p));
+  const caps = hits.map((row) => row.cap).filter((c): c is number => Number.isFinite(c));
+  return { maxDrr: Math.max(...hits.map((row) => row.maxDrr)), position: positions.length ? Math.min(...positions) : null, cap: caps.length ? Math.max(...caps) : null };
+}
+
+/** Потолок ДРР акцента для фразы кампании; null — фраза не в акценте. */
+export function focusDrr(campaignId: string, query: string, focus: LadderFocus[]): number | null {
+  return focusFor(campaignId, query, focus)?.maxDrr ?? null;
 }
 
 export function launchCampaigns(today: string, table: Record<string, string> = AD_LADDER_LAUNCH_UNTIL): Set<string> {
@@ -306,17 +318,21 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
   for (const rows of byQuery.values()) {
     const base = narrowClass(rows[0].campaignId, rows[0].query, narrow) ?? ladderQueryClass(rows[0].query, cfg);
     const held = hold[rows[0].campaignId];
-    const cls = held ? { ...base, name: `${base.name}, держим в топ-10`, cap: cfg.maxBid, colors: held } : base;
+    const heldCls = held ? { ...base, name: `${base.name}, держим в топ-10`, cap: cfg.maxBid, colors: held } : base;
     const exempt = launch.has(rows[0].campaignId);
-    // Акцент (activeFocus) поднимает потолок ДРР фраз до своего, но не опускает, если у класса он и так выше.
-    const focused = focusDrr(rows[0].campaignId, rows[0].query, focus);
-    const classDrr = Math.max(cls.maxDrr ?? cfg.maxDrrPercent, focused ?? 0);
+    // Акцент (activeFocus) поднимает потолок ДРР и ставки фраз до своих, но не опускает, если у класса они и так выше;
+    // position — целевое место вместо топ-10.
+    const focused = focusFor(rows[0].campaignId, rows[0].query, focus);
+    const cls = focused?.cap && focused.cap > heldCls.cap ? { ...heldCls, cap: Math.min(cfg.maxBid, focused.cap) } : heldCls;
+    const place = focused?.position ?? cfg.topPosition;
+    const placeName = place === cfg.topPosition ? 'топ-10' : `топ-${place}`;
+    const classDrr = Math.max(cls.maxDrr ?? cfg.maxDrrPercent, focused?.maxDrr ?? 0);
     const judge = cls.noSaleSpend ? { ...cfg, noSaleSpend: cls.noSaleSpend } : cfg;
     const queryVerdict = exempt || rows.length < 2 ? none : ladderDrrVerdict(sumLadderStats(rows.map((row) => row.stats7)), classDrr, judge);
     const priced = rows
       .map((keyword) => {
         const steps = keyword.ladder ?? [];
-        const top10 = steps.length ? bidForPosition(steps, cfg.topPosition) : null;
+        const top10 = steps.length ? bidForPosition(steps, place) : null;
         const target = top10 ? Math.min(cfg.maxBid, Math.max(cfg.minBid, roundUp(top10.cpm * (1 + cfg.marginPercent / 100), cfg.rounding))) : null;
         const test = tests.find((row) => row.campaignId === keyword.campaignId && row.skuGroupId === keyword.skuGroupId && normalizeQuery(row.query) === normalizeQuery(keyword.query));
         const maxDrr = test?.maxDrr ?? classDrr;
@@ -349,7 +365,7 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
         const overpay = keyword.cpm > target + Math.max(cfg.overpayTolerance, (target * cfg.overpayPercent) / 100) || (full !== null && keyword.cpm > full.cpm);
         if (outOfTop || (overpay && !cooling)) {
           next = target;
-          reason = `лестница: топ-10 (${test ? `тест потолка ${fmt(test.cap)} до ${test.until}, стоп при ДРР > ${test.maxDrr} %` : cls.name}) стоит ${fmt(top10.cpm)}, позиция ${top10.position}; ${outOfTop ? 'ставка была ниже топ-10' : 'была переплата'}`;
+          reason = `лестница: ${placeName} (${test ? `тест потолка ${fmt(test.cap)} до ${test.until}, стоп при ДРР > ${test.maxDrr} %` : cls.name}) стоит ${fmt(top10.cpm)}, позиция ${top10.position}; ${outOfTop ? `ставка была ниже ${placeName}` : 'была переплата'}`;
         }
       } else if (noStock || verdict.severe) {
         // ДРР выше потолка вдвое или расход без продаж — слово не окупается: ставка на минимум (выключает только владелец).
@@ -365,8 +381,8 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
         if ((inTop || overFull) && belowTop >= cfg.minBid && !cooling) {
           next = Math.max(cfg.minBid, roundDown(belowTop, cfg.rounding));
           reason = verdict.blocked
-            ? `лестница: ${verdict.blocked} — не держим в топ-10 (${fmt(top10.cpm)})`
-            : `лестница: цвет не боевой для «${keyword.query}» — ниже топ-10 (${fmt(top10.cpm)})${overFull ? ', была ставка выше цены 100 %' : ''}`;
+            ? `лестница: ${verdict.blocked} — не держим в ${placeName} (${fmt(top10.cpm)})`
+            : `лестница: цвет не боевой для «${keyword.query}» — ниже ${placeName} (${fmt(top10.cpm)})${overFull ? ', была ставка выше цены 100 %' : ''}`;
         }
       }
       const action: AdBotAction | null = next !== null && next !== keyword.cpm ? { ...common, kind: next > keyword.cpm ? 'RAISE' : 'LOWER', newCpm: next, reason } : null;
