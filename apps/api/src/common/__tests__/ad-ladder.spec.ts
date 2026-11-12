@@ -166,7 +166,7 @@ describe('лестница ставок', () => {
     expect([...launchCampaigns('2026-10-20', { '337334': '2026-11-01' })]).toEqual(['337334']);
     expect([...launchCampaigns('2026-11-02', { '337334': '2026-11-01' })]).toEqual([]);
     // 04.11.2026 («лишь бы не просрать деньги»): льгота и тесты потолков Сердечек сняты — ДРР 53 % за 7 дней.
-    expect([...launchCampaigns('2026-11-10')]).toEqual([]);
+    expect([...launchCampaigns('2026-11-16')]).toEqual([]); // льгота 04.11 снята; 13–15.11 — тест Сердечек (см. ниже)
     expect(activeCapTests('2026-11-10').filter((row) => row.campaignId === '337334')).toEqual([]);
   });
 
@@ -237,17 +237,18 @@ describe('лестница ставок', () => {
   });
 
   it('акцент: Сердечки, сауна и 100×150 у J471/J403 — потолок ДРР 15 % до 03.12, остальное по-старому', () => {
-    const focus = activeFocus('2026-11-10');
+    const focus = activeFocus('2026-11-16'); // после теста Сердечек 13–15.11
     expect(focus).toHaveLength(4);
+    expect(activeFocus('2026-11-13')).toHaveLength(5);
     expect(activeFocus('2026-12-04')).toHaveLength(0);
     expect(focusDrr('337334', 'полотенце для лица', focus)).toBe(20); // Сердечки с 12.11.2026 — 20 %, топ-5, ставка до 45 000
-    expect(focusFor('337334', 'полотенце для лица', focus)).toEqual({ maxDrr: 20, position: 5, cap: 45_000 });
-    expect(focusFor('332097', 'большое полотенце', focus)).toEqual({ maxDrr: 15, position: null, cap: null });
+    expect(focusFor('337334', 'полотенце для лица', focus)).toEqual({ maxDrr: 20, position: 5, cap: 45_000, reach: null });
+    expect(focusFor('332097', 'большое полотенце', focus)).toEqual({ maxDrr: 15, position: null, cap: null, reach: null });
     expect(focusDrr('332097', 'большое полотенце', focus)).toBe(15);
     expect(focusDrr('305122', 'полотенце для сауны', focus)).toBe(15);
     expect(focusDrr('305122', 'полотенце банное', focus)).toBeNull();
     expect(focusDrr('286528', 'полотенце для сауны', focus)).toBeNull(); // у HAVANA нет 100×150
-    expect(AD_LADDER_FOCUS.every((row) => row.until === '2026-12-03')).toBe(true);
+    expect(AD_LADDER_FOCUS.filter((row) => row.until === '2026-12-03')).toHaveLength(4);
     // Сердечки, узкая фраза: свой потолок 12 %, ДРР 13,3 % — без акцента не в топе, с акцентом в топе.
     const hearts = { ...kw('pink', 'детское полотенце', 9_500, 12_000), campaignId: '337334', stats7: { impressions: 2_000, clicks: 40, sold: 3, revenue: 300_000, spend: 40_000, position: null } };
     expect(planLadderBids([hearts])[0]).toMatchObject({ role: 'other', blocked: 'ДРР 13.3 % > 12 %' });
@@ -262,6 +263,24 @@ describe('лестница ставок', () => {
     // У остальных кампаний место прежнее — топ-10.
     const sauna = { ...kw('a', 'большое полотенце', 9_500, 20_000), campaignId: '332097' };
     expect(planLadderBids([sauna], undefined, undefined, undefined, undefined, [], undefined, focus)[0].action?.newCpm).toBe(21_000); // 20 000 + 3 % → 21 000
+  });
+
+  it('тест Сердечек 13–15.11: широкие фразы за 80 % охвата до 70 000, узкие — топ-5, ДРР не стопит', () => {
+    const test = activeFocus('2026-11-13');
+    expect(focusFor('337334', 'полотенце для лица', test)).toEqual({ maxDrr: 20, position: 5, cap: 70_000, reach: 80 });
+    expect(focusFor('337334', 'детское полотенце', test)).toEqual({ maxDrr: 20, position: 5, cap: 45_000, reach: null }); // узкая фраза
+    // ступени: 100 % 34 500, 90 % 33 000, 80 % 31 500, 70 % 30 000 → за 80 % = 31 500 + 3 % → 32 500
+    const face = { ...kw('mint', 'полотенце для лица', 9_500, 30_000), campaignId: '337334' };
+    const d = planLadderBids([face], undefined, undefined, undefined, undefined, [], undefined, test)[0];
+    expect(d).toMatchObject({ role: 'top', action: { kind: 'RAISE', newCpm: 32_500 } });
+    expect(d.action?.reason).toContain('лестница: охват 80 %');
+    // 80 % стоит 52 500 — выше потолка класса «лицевые» 40 000, но в пределах теста 70 000
+    const pricey = { ...kw('mint', 'полотенце для лица', 9_500, 50_000), campaignId: '337334' };
+    expect(planLadderBids([pricey], undefined, undefined, undefined, undefined, [], undefined, test)[0]).toMatchObject({ role: 'top', action: { newCpm: 54_500 } });
+    expect(planLadderBids([pricey], undefined, undefined, undefined, undefined, [], undefined, activeFocus('2026-11-16'))[0]).toMatchObject({ role: 'other', action: null });
+    // на время теста ДРР Сердечек не проверяется
+    expect(launchCampaigns('2026-11-15').has('337334')).toBe(true);
+    expect(launchCampaigns('2026-11-16').has('337334')).toBe(false);
   });
 
   it('ставка не выше потолка 70 000 и не ниже минимума', () => {
