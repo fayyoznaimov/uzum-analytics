@@ -14,6 +14,7 @@ import {
   UZUM_PROMO_API_BASE,
 } from '../../common/promo-pricing';
 import { cabinetProductsPageSize, parseCabinetProducts, StockForecast } from '../../common/auto-pricing';
+import { cabinetAnswered, cabinetBlocked, cabinetPaused, isCloudflareChallenge } from '../../common/cabinet-breaker';
 import { PrismaService } from '../../common/prisma.service';
 import { uzumRequest } from '../../common/uzum-http';
 import { IntegrationsService } from '../integrations/integrations.service';
@@ -64,7 +65,25 @@ export class PromoPricingService {
     return { token: cfg.token.replace(/^Bearer\s+/i, '').trim(), shopExternalId, shopId: shop?.id ?? null };
   }
 
-  private request(method: 'GET' | 'POST' | 'PUT', path: string, token: string, params?: Record<string, string | number>, body?: unknown, language = 'ru-RU'): Promise<any> {
+  private async request(method: 'GET' | 'POST' | 'PUT', path: string, token: string, params?: Record<string, string | number>, body?: unknown, language = 'ru-RU'): Promise<any> {
+    // Пока Cloudflare не пускает сервер, запросы к этому хосту не отправляем (common/cabinet-breaker.ts).
+    const url = /^https:\/\//.test(path) ? path : UZUM_PROMO_API_BASE + path;
+    const paused = cabinetPaused(url);
+    if (paused) throw new Error(paused);
+    try {
+      const result = await this.send(method, path, token, params, body, language);
+      if (cabinetAnswered(url)) this.logger.log(`Кабинет Uzum (${new URL(url).host}) снова отвечает — пауза снята`);
+      return result;
+    } catch (error: any) {
+      if (error?.cloudflare) {
+        const until = cabinetBlocked(url);
+        this.logger.warn(`${new URL(url).host}: проверка Cloudflare — запросы к кабинету на паузе до ${new Date(until).toLocaleTimeString('ru-RU', { timeZone: 'Asia/Tashkent', hour: '2-digit', minute: '2-digit' })}`);
+      }
+      throw error;
+    }
+  }
+
+  private send(method: 'GET' | 'POST' | 'PUT', path: string, token: string, params?: Record<string, string | number>, body?: unknown, language = 'ru-RU'): Promise<any> {
     // Один повтор на 401 на запрос: разовый сбой проходит, а мёртвая сессия стоит 4 с, а не 24 с на каждый вызов.
     let unauthorizedRetries = 0;
     // Абсолютный URL в path — другие разделы API кабинета (api-seller.uzum.uz) с тем же токеном.
@@ -89,8 +108,10 @@ export class PromoPricingService {
           }).catch(() => undefined);
           return new BadRequestException(PROMO_TOKEN_EXPIRED_MESSAGE);
         }
-        const error: any = new Error(promoApiErrorMessage(requestPath, status, parsed, typeof rawText === 'string' ? rawText.slice(0, 2_000) : undefined));
+        const text = typeof rawText === 'string' ? rawText.slice(0, 2_000) : undefined;
+        const error: any = new Error(promoApiErrorMessage(requestPath, status, parsed, text));
         error.responseBody = parsed;
+        error.cloudflare = isCloudflareChallenge(`${typeof parsed === 'string' ? parsed : parsed?.message ?? ''} ${text ?? ''}`);
         return error;
       },
     });

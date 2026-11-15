@@ -8,6 +8,8 @@ import { PrismaService } from '../../common/prisma.service';
 import { emptyReviewReply, isEmptyReview, replyLanguage, replyRejectReason, ReviewReplyLanguage } from '../../common/review-reply';
 import { z } from 'zod';
 import { IntegrationsService } from '../integrations/integrations.service';
+import { cabinetAnswered, cabinetBlocked, cabinetPaused, isCloudflareChallenge } from '../../common/cabinet-breaker';
+import { promoApiErrorMessage } from '../../common/promo-pricing';
 
 type ReviewFilter = 'ALL' | 'NO_REPLY';
 
@@ -275,7 +277,10 @@ ${lang}
     const configured = await this.integrations.getPlain(IntegrationType.UZUM_INTERNAL);
     if (!configured?.token) throw new BadRequestException('Токен кабинета Uzum не настроен');
     const token = configured.token.replace(/^Bearer\s+/i, '').trim();
-    const response = await fetch('https://api-seller.uzum.uz/api/seller/product-reviews/reply/create', {
+    const replyUrl = 'https://api-seller.uzum.uz/api/seller/product-reviews/reply/create';
+    const paused = cabinetPaused(replyUrl);
+    if (paused) throw new BadGatewayException(paused);
+    const response = await fetch(replyUrl, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -284,8 +289,12 @@ ${lang}
       },
       body: JSON.stringify([{ reviewId: Number(review.externalId), content }]),
     });
-    const body: any = await response.json().catch(() => ({}));
+    const raw = await response.text().catch(() => '');
+    let body: any = {};
+    try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+    if (!response.ok && isCloudflareChallenge(raw)) { cabinetBlocked(replyUrl); throw new BadGatewayException(promoApiErrorMessage('/product-reviews/reply/create', response.status, body, raw)); }
     if (!response.ok) throw new BadGatewayException(`Uzum reply API: HTTP ${response.status}${body?.message ? ` — ${body.message}` : ''}`);
+    cabinetAnswered(replyUrl);
     await this.prisma.review.update({
       where: { id },
       data: {
@@ -462,6 +471,8 @@ ${lang}
   }
 
   private async requestPage(token: string, page: number, size: number, filter: ReviewFilter) {
+    const paused = cabinetPaused(this.reviewsUrl);
+    if (paused) throw new BadGatewayException(paused);
     const url = new URL(this.reviewsUrl);
     url.searchParams.set('page', String(page));
     url.searchParams.set('size', String(size));
@@ -480,7 +491,13 @@ ${lang}
         signal: controller.signal,
       });
       if (response.status === 401) throw new BadRequestException('Сессия кабинета Uzum истекла. Обновите Bearer token в Настройки → Отзывы Uzum');
-      if (!response.ok) throw new BadGatewayException(`Uzum internal reviews API: HTTP ${response.status}`);
+      if (!response.ok) {
+        const raw = await response.text().catch(() => '');
+        // Проверка Cloudflare: общая пауза кабинета (common/cabinet-breaker.ts), а не повтор через 10 минут.
+        if (isCloudflareChallenge(raw)) { cabinetBlocked(this.reviewsUrl); throw new BadGatewayException(promoApiErrorMessage('/product-reviews', response.status, null, raw)); }
+        throw new BadGatewayException(`Uzum internal reviews API: HTTP ${response.status}`);
+      }
+      cabinetAnswered(this.reviewsUrl);
       const body = await response.json().catch(() => null);
       if (!body || !Array.isArray(body.payload)) {
         throw new BadGatewayException('Uzum internal reviews API returned an invalid payload');

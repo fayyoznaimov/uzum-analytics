@@ -17,6 +17,7 @@
  *
  * Модуль чистый: разбор ответов и решение «можно / нельзя и почему». Сеть — в PromoPricingService.
  */
+import { isCloudflareChallenge } from './cabinet-breaker';
 import { checkPriceGuards, PriceViolation, PriceViolationCode } from './pricing';
 
 export const UZUM_PROMO_API_BASE = 'https://api.uzum.uz/api/seller';
@@ -198,7 +199,7 @@ export function planPromoPriceChange(input: PromoPriceChangeInput): PromoPriceCh
 export function promoApiErrorMessage(path: string, status: number, body: any, rawText?: string): string {
   if (status === 401) return PROMO_TOKEN_EXPIRED_MESSAGE;
   const raw = `${typeof body === 'string' ? body : typeof body?.message === 'string' ? body.message : ''} ${rawText ?? ''}`;
-  if (/just a moment|cf-chl|challenge-platform|cf_chl/i.test(raw)) {
+  if (isCloudflareChallenge(raw)) {
     return `Cloudflare не пускает сервер в кабинет Uzum (HTTP ${status}, проверка «Just a moment…») — токен в порядке, пройдёт само, когда проверку снимут; ${path}`;
   }
   const detail = body?.message || body?.error || body?.errors?.[0]?.message || body?.errors?.[0]?.detail || body?.errors?.[0]?.code;
