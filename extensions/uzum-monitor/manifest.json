@@ -1,19 +1,28 @@
 {
   "manifest_version": 3,
-  "name": "Uzum Analytics — монитор конкурентов",
-  "version": "1.0.0",
-  "description": "Снимает публичные данные карточек конкурентов uzum.uz и позиции товаров в поиске и отправляет их на сервер Uzum Analytics владельца.",
-  "permissions": ["alarms", "storage"],
+  "name": "Uzum Analytics — конкуренты и слоты поставок",
+  "version": "1.1.0",
+  "description": "Снимает публичные данные карточек конкурентов uzum.uz и позиции товаров в поиске, ловит и бронирует тайм-слоты FBO-поставок в кабинете Uzum и отправляет результаты на сервер Uzum Analytics владельца.",
+  "permissions": ["alarms", "storage", "scripting"],
   "host_permissions": [
     "https://uzum.uz/*",
     "https://api.uzum.uz/*",
+    "https://seller.uzum.uz/*",
+    "https://api-seller.uzum.uz/*",
     "http://172.0.30.4/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
+  "content_scripts": [
+    {
+      "matches": ["https://seller.uzum.uz/*"],
+      "js": ["cabinet-token.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Uzum Analytics — монитор конкурентов"
+    "default_title": "Uzum Analytics — конкуренты и слоты поставок"
   }
 }

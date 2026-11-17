@@ -125,3 +125,136 @@ export function fboBookRequest(slot: FreeSlot, invoiceIds: Array<string | number
 export function fboGroupKey(stock: FboStock, window: DesiredWindow, autoBook: boolean): string {
   return [stock.stockId, stock.poolSource, window.from ? tashkentDayKey(window.from) : '', window.to ? tashkentDayKey(window.to) : '', autoBook ? 'auto' : 'notify'].join('|');
 }
+
+/*
+ * Проверка слотов из Chrome владельца (17.11.2026: сервер снова за Cloudflare, а слот нужен «как только появится»):
+ * расширение extensions/uzum-monitor берёт у сервера задания (группы накладных), спрашивает слоты у кабинета своим
+ * токеном кабинета (он не покидает браузер), само бронирует по тому же правилу — самый ранний слот в окне и не ближе
+ * запаса — и присылает отчёт. Пока расширение отчитывается без ошибок, серверный бот кабинет не трогает.
+ */
+export type FboExtensionTask = {
+  key: string; shopId: string; invoiceIds: string[]; labels: string;
+  stockId: number; poolSource: string; windowFrom: string | null; windowTo: string | null; autoBook: boolean;
+  /** Самый ранний уже забронированный слот группы по данным сервера (мс) — расширение ищет только день раньше. */
+  reservedFrom: number | null;
+};
+
+export function fboExtensionTask(key: string, shopId: string, invoiceIds: string[], labels: string, stock: FboStock, window: DesiredWindow, autoBook: boolean, reservedFrom: Date | null = null): FboExtensionTask {
+  return {
+    key, shopId, invoiceIds, labels, stockId: stock.stockId, poolSource: stock.poolSource,
+    windowFrom: window.from ? tashkentDayKey(window.from) : null, windowTo: window.to ? tashkentDayKey(window.to) : null, autoBook,
+    reservedFrom: reservedFrom ? reservedFrom.getTime() : null,
+  };
+}
+
+/** Сколько отчёт расширения считается свежим: дольше — сервер снова проверяет слоты сам. */
+export const FBO_EXTENSION_FRESH_MS = 10 * 60_000;
+export function extensionCovers(lastOkAt: number | null, now: number): boolean {
+  return lastOkAt !== null && now - lastOkAt >= 0 && now - lastOkAt < FBO_EXTENSION_FRESH_MS;
+}
+
+export type FboExtensionResult = {
+  invoiceIds: string[]; checkedAt: Date; error: string | null; slotsCount: number | null;
+  matched: FreeSlot | null; booked: boolean; bookError: string | null; reserved: { from: Date; to: Date | null } | null;
+  /** Перенос на более ранний день: какой слот был до него. */
+  moved: boolean; previous: { from: Date; to: Date | null } | null;
+  /** Почему бот больше не трогает слот этих накладных (последняя смена, меньше 48 ч, статус) — наблюдение выключается. */
+  stop: string | null;
+  /** Брони накладных по кабинету на момент проверки. */
+  reservations: Array<{ invoiceId: string; from: Date; to: Date | null }>;
+};
+
+const text = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim().slice(0, 300) : null;
+
+/**
+ * Отчёт расширения → проверенные результаты. Чужие и битые строки отбрасываются (номер накладной — только цифры),
+ * «забронировано» без слота не принимается, время проверки вне последних суток заменяется на «сейчас».
+ */
+export function parseFboExtensionReport(body: unknown, now: Date = new Date()): FboExtensionResult[] {
+  const rows = (body as any)?.results;
+  if (!Array.isArray(rows)) return [];
+  const result: FboExtensionResult[] = [];
+  for (const row of rows.slice(0, 20)) {
+    const ids = Array.isArray(row?.invoiceIds) ? row.invoiceIds.map((id: unknown) => String(id ?? '').trim()) : [];
+    if (!ids.length || ids.length > 20 || ids.some((id: string) => !/^\d{1,15}$/.test(id))) continue;
+    const checked = epoch(row?.checkedAt);
+    const fresh = checked && checked.getTime() <= now.getTime() + 5 * 60_000 && checked.getTime() >= now.getTime() - 24 * 60 * 60_000;
+    const matchedFrom = epoch(row?.matched?.timeFrom);
+    const matched: FreeSlot | null = matchedFrom ? { id: String(matchedFrom.getTime()), from: matchedFrom, to: epoch(row?.matched?.timeTo), capacity: Number.NaN } : null;
+    const reservedFrom = epoch(row?.reserved?.timeFrom);
+    const slotsCount = Number(row?.slots);
+    result.push({
+      invoiceIds: [...new Set<string>(ids)],
+      checkedAt: fresh ? checked : now,
+      error: text(row?.error),
+      slotsCount: Number.isFinite(slotsCount) && slotsCount >= 0 ? slotsCount : null,
+      matched,
+      booked: Boolean(matched && row?.booked === true),
+      bookError: matched ? text(row?.bookError) : null,
+      reserved: reservedFrom ? { from: reservedFrom, to: epoch(row?.reserved?.timeTo) } : null,
+      moved: Boolean(matched && row?.booked === true && row?.moved === true),
+      previous: epoch(row?.previous?.timeFrom) ? { from: epoch(row?.previous?.timeFrom) as Date, to: epoch(row?.previous?.timeTo) } : null,
+      stop: text(row?.stop),
+      reservations: (Array.isArray(row?.reservations) ? row.reservations : [])
+        .map((item: any) => ({ invoiceId: String(item?.invoiceId ?? ''), from: epoch(item?.timeFrom), to: epoch(item?.timeTo) }))
+        .filter((item: any) => ids.includes(item.invoiceId) && item.from)
+        .slice(0, 20) as Array<{ invoiceId: string; from: Date; to: Date | null }>,
+    });
+  }
+  return result;
+}
+
+/*
+ * Перенос на более ранний слот (владелец 17.11.2026: слоты вышли, он взял 29.11 вручную — «если появятся раньше,
+ * нужно будет перенести»). Автобронь FBO после брони не выключается: каждый прогон смотрит, нет ли слота на день
+ * раньше текущего (и не ближе запаса в 2 дня), и переносит все накладные группы туда одним запросом time-slot/set.
+ * Ограничения кабинета: у накладной 3 смены слота (remainingAmountOfUpdates, первая бронь тоже считается), смена
+ * позже чем за 48 ч до слота — штраф INVOICE_LATE_TIME_SLOT_UPDATE (порог по умолчанию из бандла seller.uzum.uz).
+ * Поэтому бот никогда не тратит последнюю смену (она остаётся владельцу) и не трогает слот, до которого ≤ 48 ч.
+ */
+export const FBO_INVOICE_PATH = (shopId: string, invoiceId: string) => `https://api-seller.uzum.uz/api/seller/shop/${shopId}/invoice/${invoiceId}`;
+export const FBO_LATE_UPDATE_HOURS = 48;
+export const FBO_KEEP_UPDATES = 1;
+
+export type FboReservation = { from: Date; to: Date | null };
+export type FboInvoiceState = { invoiceId: string; status: string | null; reservation: FboReservation | null; remainingUpdates: number | null };
+
+/** Ответ кабинета GET …/invoice/{id} → статус, бронь и сколько смен слота осталось. */
+export function fboInvoiceState(invoiceId: string, body: unknown): FboInvoiceState {
+  const wrapped = (body as any)?.payload;
+  const invoice: any = wrapped && typeof wrapped === 'object' && !Array.isArray(wrapped) ? wrapped : body;
+  const status = invoice?.invoiceStatus?.value ?? (typeof invoice?.invoiceStatus === 'string' ? invoice.invoiceStatus : null) ?? (typeof invoice?.status === 'string' ? invoice.status : invoice?.status?.value) ?? null;
+  const remaining = invoice?.remainingAmountOfUpdates;
+  return {
+    invoiceId: String(invoiceId),
+    status: status ? String(status) : null,
+    reservation: fboReservation(invoice),
+    remainingUpdates: typeof remaining === 'number' && Number.isFinite(remaining) ? remaining : null,
+  };
+}
+
+export function fboEarliestReservation(list: Array<FboReservation | null>): FboReservation | null {
+  return list.filter((item): item is FboReservation => Boolean(item)).sort((a, b) => a.from.getTime() - b.from.getTime())[0] ?? null;
+}
+
+/** Переносим только на более ранний день (по Ташкенту): сдвиг на пару часов в тот же день не стоит смены слота. */
+export function fboEarlierDay(candidate: Date, current: Date): boolean {
+  return tashkentDayKey(candidate) < tashkentDayKey(current);
+}
+
+export type FboDecision = { action: 'book' | 'move' | 'wait' | 'stop'; reason: string | null; current: FboReservation | null };
+
+/** Что делать с группой накладных, если найден слот candidate (уже с учётом окна и запаса в 2 дня). */
+export function fboDecide(states: FboInvoiceState[], candidate: FreeSlot | null, now: Date): FboDecision {
+  const gone = states.find((state) => state.status && state.status !== 'CREATED');
+  if (gone) return { action: 'stop', reason: `Накладная ${gone.invoiceId} уже не в статусе «Создана»`, current: null };
+  const current = fboEarliestReservation(states.map((state) => state.reservation));
+  if (!current) return { action: candidate ? 'book' : 'wait', reason: null, current: null };
+  const slot = formatSlot({ id: '', from: current.from, to: current.to, capacity: 0 });
+  if (current.from.getTime() - now.getTime() <= FBO_LATE_UPDATE_HOURS * 60 * 60_000) return { action: 'stop', reason: `Слот ${slot}: до него меньше 48 ч, перенос был бы со штрафом — бот больше не переносит`, current };
+  const remaining = states.map((state) => state.remainingUpdates).filter((value): value is number => value !== null);
+  if (remaining.length && Math.min(...remaining) <= FBO_KEEP_UPDATES) return { action: 'stop', reason: `Слот ${slot}: осталась последняя смена слота — она за вами, бот больше не переносит`, current };
+  if (!candidate?.from || !fboEarlierDay(candidate.from, current.from)) return { action: 'wait', reason: null, current };
+  if (remaining.length < states.length) return { action: 'wait', reason: 'Кабинет не сообщил, сколько смен слота осталось — не переносим', current };
+  return { action: 'move', reason: null, current };
+}

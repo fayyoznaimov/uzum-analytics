@@ -115,6 +115,9 @@ export class CompetitorsService {
     return { token };
   }
 
+  /** Парный токен расширения (заголовок x-watch-token); заодно отмечает, когда расширение было на связи. */
+  async authorize(token: string | undefined) { return this.clientByToken(token); }
+
   private async clientByToken(token: string | undefined) {
     if (!token) throw new UnauthorizedException('Нет токена расширения');
     const client = await this.prisma.watchClient.findUnique({ where: { tokenHash: hashWatchToken(token) } });

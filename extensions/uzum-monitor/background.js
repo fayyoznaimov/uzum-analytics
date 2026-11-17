@@ -2,14 +2,22 @@
 // Раз в N минут (intervalMinutes из targets, по умолчанию 180) снимает публичные
 // данные карточек конкурентов uzum.uz и позиции своих товаров в поиске,
 // затем отправляет снапшот на локальный сервер аналитики.
+// Каждые 2 минуты проверяет и бронирует тайм-слоты FBO-поставок (задания даёт сервер) — см. раздел «тайм-слоты».
+
+importScripts('slot-logic.js');
 
 const DEFAULT_BASE = 'http://172.0.30.4:3200/api';
 const DEFAULT_INTERVAL_MINUTES = 180;
 const ALARM_NAME = 'uzum-monitor-run';
 const MAX_PRODUCTS_PER_RUN = 50;
 const SEARCH_TOP_LIMIT = 100;
+const SLOT_ALARM = 'uzum-slot-watch';
+const DEFAULT_SLOT_INTERVAL_MINUTES = 2;
+const SLOT_TASKS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const CABINET_API = 'https://api-seller.uzum.uz/api/seller';
 
 let runInProgress = false;
+let slotRunInProgress = false;
 
 // ---------- утилиты ----------
 
@@ -321,6 +329,233 @@ async function runCollection(trigger) {
   return lastRun;
 }
 
+// ---------- тайм-слоты поставок FBO ----------
+// Сервер даёт группы накладных (общий привоз), расширение спрашивает свободные слоты у кабинета входом владельца,
+// само бронирует самый ранний подходящий (правило — slot-logic.js, как на сервере) и присылает отчёт. С сервера
+// кабинет часто закрыт Cloudflare, из браузера владельца — нет. Вход в кабинет на сервер не отправляется.
+
+function errorText(e) {
+  return String(e && e.message ? e.message : e);
+}
+
+function cabinetErrorText(status, text) {
+  if (status === 401) return 'кабинет не принял вход (401) — откройте seller.uzum.uz в этом Chrome, расширение возьмёт свежий вход';
+  if (status === 403 && /cloudflare|just a moment|cf-chl/i.test(text || '')) return 'Cloudflare не пускает браузер в кабинет (403)';
+  let detail = '';
+  try {
+    const json = JSON.parse(text);
+    const first = json && Array.isArray(json.errors) ? json.errors[0] : null;
+    detail = (json && (json.message || json.error)) || (first && (first.message || first.code)) || '';
+  } catch (_) {
+    detail = '';
+  }
+  return `кабинет ответил HTTP ${status}${detail ? `: ${String(detail).slice(0, 200)}` : ''}`;
+}
+
+async function cabinetFetchDirect(method, path, body, token) {
+  const res = await fetch(CABINET_API + path, {
+    method,
+    credentials: 'include',
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return { status: res.status, text: await res.text() };
+}
+
+// Тот же запрос из открытой вкладки кабинета — так, как его делает сам кабинет (его входом и cookie).
+async function cabinetFetchInTab(method, path, body) {
+  const tabs = await chrome.tabs.query({ url: 'https://seller.uzum.uz/*' });
+  if (!tabs.length) return null;
+  const [injection] = await chrome.scripting.executeScript({
+    target: { tabId: tabs[0].id },
+    world: 'MAIN',
+    func: async (url, method, body) => {
+      let token = null;
+      try {
+        const state = JSON.parse(localStorage.getItem('state') || '{}');
+        token = state && state.user && state.user.tokens && state.user.tokens.access;
+      } catch (_) {
+        token = null;
+      }
+      if (!token) return null;
+      const res = await fetch(url, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      return { status: res.status, text: await res.text() };
+    },
+    args: [CABINET_API + path, method, body || null],
+  });
+  return injection && injection.result ? injection.result : null;
+}
+
+// readOnly — запрос ничего не меняет, его можно повторить через вкладку даже после сетевой ошибки. Бронь повторяется
+// только после 401/403 (такой запрос кабинет не выполнял): лишняя смена слота съедает одну из трёх попыток.
+async function cabinetFetch(method, path, body, readOnly) {
+  const { cabinetToken } = await getStorage(['cabinetToken']);
+  let answer = null;
+  let networkError = null;
+  if (cabinetToken) {
+    try {
+      answer = await cabinetFetchDirect(method, path, body, cabinetToken);
+    } catch (e) {
+      networkError = e;
+    }
+  }
+  const retry = answer ? answer.status === 401 || answer.status === 403 : !cabinetToken || readOnly;
+  if (retry) {
+    const viaTab = await cabinetFetchInTab(method, path, body).catch(() => null);
+    if (viaTab) answer = viaTab;
+  }
+  if (!answer) {
+    if (!cabinetToken) throw new Error('нет входа в кабинет — откройте seller.uzum.uz в этом Chrome, расширение запомнит вход');
+    throw new Error(`кабинет недоступен: ${errorText(networkError)}`);
+  }
+  if (answer.status < 200 || answer.status >= 300) throw new Error(cabinetErrorText(answer.status, answer.text));
+  try {
+    return answer.text ? JSON.parse(answer.text) : null;
+  } catch (_) {
+    throw new Error('кабинет ответил не JSON');
+  }
+}
+
+// Одна группа накладных: слоты → выбор → свежие данные накладных → бронь или перенос на день раньше → проверка.
+async function checkSlotGroup(group, tasks) {
+  const leadHours = tasks.leadHours;
+  const invoiceIds = (Array.isArray(group.invoiceIds) ? group.invoiceIds : []).map(String);
+  const shop = encodeURIComponent(String(group.shopId));
+  const base = { invoiceIds, checkedAt: Date.now() };
+  try {
+    const body = await cabinetFetch('POST', `/shop/${shop}/v2/invoice/time-slot/get`, {
+      invoiceIds: invoiceIds.map(Number),
+      poolSource: group.poolSource,
+      timeFrom: Date.now() + 60 * 60 * 1000,
+    }, true);
+    const slots = SlotLogic.parseSlots(body);
+    const pick = SlotLogic.pickSlot(slots, { leadHours, windowFrom: group.windowFrom, windowTo: group.windowTo }, Date.now());
+    if (!group.autoBook) return pick ? { ...base, slots: slots.length, matched: { timeFrom: pick.timeFrom, timeTo: pick.timeTo } } : { ...base, slots: slots.length };
+    // Слот уже есть (по данным сервера), а найденный не раньше днём — накладные лишний раз не спрашиваем.
+    if (!pick || (group.reservedFrom && !SlotLogic.earlierDay(pick.timeFrom, group.reservedFrom))) return { ...base, slots: slots.length };
+    const matched = { timeFrom: pick.timeFrom, timeTo: pick.timeTo };
+    // Перед бронью — свежие данные: слот мог выбрать владелец, а каждая смена слота съедает одну из трёх.
+    const states = [];
+    for (const id of invoiceIds) {
+      states.push(SlotLogic.invoiceState(id, await cabinetFetch('GET', `/shop/${shop}/invoice/${encodeURIComponent(id)}`, null, true)));
+    }
+    const reservations = states.filter((s) => s.reservation).map((s) => ({ invoiceId: s.invoiceId, timeFrom: s.reservation.timeFrom, timeTo: s.reservation.timeTo }));
+    const decision = SlotLogic.decide(states, pick, Date.now(), tasks);
+    if (decision.action === 'stop') return { ...base, slots: slots.length, reservations, stop: decision.reason };
+    if (decision.action === 'wait') return { ...base, slots: slots.length, reservations };
+    try {
+      await cabinetFetch('POST', `/shop/${shop}/v2/invoice/time-slot/set`, {
+        timeFrom: pick.timeFrom,
+        invoiceIds: invoiceIds.map(Number),
+        stockId: group.stockId,
+        poolSource: group.poolSource,
+      }, false);
+    } catch (e) {
+      return { ...base, slots: slots.length, reservations, matched, bookError: errorText(e) };
+    }
+    let booked = matched;
+    try {
+      const invoice = await cabinetFetch('GET', `/shop/${shop}/invoice/${encodeURIComponent(invoiceIds[0])}`, null, true);
+      booked = SlotLogic.reservationOf(invoice) || matched;
+    } catch (_) {
+      booked = matched;
+    }
+    const moved = decision.action === 'move';
+    console.info(`[uzum-monitor] ${moved ? 'перенесён' : 'забронирован'} слот ${SlotLogic.formatSlot(booked)} для накладных ${invoiceIds.join(', ')}`);
+    return { ...base, checkedAt: Date.now(), slots: slots.length, matched: booked, booked: true, moved, previous: moved ? decision.current : null };
+  } catch (e) {
+    return { ...base, error: errorText(e) };
+  }
+}
+
+// Неотправленные отчёты: брони и найденные слоты храним все (до 20), обычные проверки — только последнюю на группу.
+function compactReports(list) {
+  const important = [];
+  const latest = new Map();
+  for (const row of list) {
+    if (row.booked || row.reserved || row.matched || row.stop) important.push(row);
+    else latest.set(row.invoiceIds.join(','), row);
+  }
+  return [...important.slice(-20), ...latest.values()];
+}
+
+async function runSlotWatch(trigger) {
+  if (slotRunInProgress) return null;
+  slotRunInProgress = true;
+  const summary = { at: Date.now(), trigger, groups: 0, slots: 0, booked: [], errors: [], server: 'ok' };
+  try {
+    const data = await getStorage(['serverBase', 'watchToken', 'slotTasks', 'slotReports']);
+    if (!data.watchToken) {
+      summary.errors.push('расширение не подключено к серверу');
+      return summary;
+    }
+    const base = normalizeBase(data.serverBase);
+    const headers = { 'x-watch-token': data.watchToken };
+    let tasks = null;
+    try {
+      tasks = await apiFetch(base, '/competitor-watch/slot-tasks', { headers });
+      await setStorage({ slotTasks: { ...tasks, fetchedAt: Date.now() } });
+      await rescheduleSlotAlarm(tasks && tasks.intervalMinutes);
+    } catch (e) {
+      summary.server = `сервер недоступен: ${errorText(e)}`;
+      // Сервер не отвечает (другая сеть) — работаем по последнему заданию, отчёт отправим позже.
+      if (data.slotTasks && Date.now() - Number(data.slotTasks.fetchedAt || 0) < SLOT_TASKS_MAX_AGE_MS) tasks = data.slotTasks;
+    }
+    let reports = Array.isArray(data.slotReports) ? data.slotReports : [];
+    const groups = tasks && Array.isArray(tasks.groups) ? tasks.groups : [];
+    summary.groups = groups.length;
+    for (const group of groups) {
+      const result = await checkSlotGroup(group, tasks);
+      reports.push(result);
+      if (typeof result.slots === 'number') summary.slots += result.slots;
+      if (result.booked) summary.booked.push(`${group.labels || result.invoiceIds.join(', ')}: ${SlotLogic.formatSlot(result.matched)}${result.moved ? ' (перенос раньше)' : ''}`);
+      if (result.stop) summary.errors.push(result.stop);
+      if (result.error) summary.errors.push(result.error);
+      if (result.bookError) summary.errors.push(`бронь не прошла: ${result.bookError}`);
+    }
+    reports = compactReports(reports);
+    if (reports.length) {
+      try {
+        await apiFetch(base, '/competitor-watch/slot-report', {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ results: reports }),
+        });
+        reports = [];
+      } catch (e) {
+        if (summary.server === 'ok') summary.server = `отчёт не отправлен: ${errorText(e)}`;
+      }
+    }
+    await setStorage({ slotReports: reports });
+  } catch (e) {
+    summary.errors.push(errorText(e));
+  } finally {
+    slotRunInProgress = false;
+    await setStorage({ lastSlotRun: summary });
+  }
+  if (summary.errors.length) console.warn('[uzum-monitor] слоты:', summary.errors);
+  return summary;
+}
+
+async function rescheduleSlotAlarm(intervalMinutes) {
+  const minutes = Math.max(1, toNum(intervalMinutes) || DEFAULT_SLOT_INTERVAL_MINUTES);
+  const { slotAlarmInterval } = await getStorage(['slotAlarmInterval']);
+  const existing = await chrome.alarms.get(SLOT_ALARM);
+  if (!existing || slotAlarmInterval !== minutes) {
+    await chrome.alarms.create(SLOT_ALARM, { periodInMinutes: minutes, delayInMinutes: minutes });
+    await setStorage({ slotAlarmInterval: minutes });
+  }
+}
+
+async function ensureSlotAlarm() {
+  const { slotAlarmInterval } = await getStorage(['slotAlarmInterval']);
+  await rescheduleSlotAlarm(slotAlarmInterval || DEFAULT_SLOT_INTERVAL_MINUTES);
+}
+
 // ---------- расписание ----------
 
 async function rescheduleAlarm(intervalMinutes) {
@@ -340,21 +575,38 @@ async function ensureAlarm() {
 
 chrome.runtime.onInstalled.addListener(() => {
   ensureAlarm();
+  ensureSlotAlarm();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   ensureAlarm();
+  ensureSlotAlarm();
+  runSlotWatch('startup');
   runCollection('startup');
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) runCollection('alarm');
+  if (alarm.name === SLOT_ALARM) runSlotWatch('alarm');
 });
 
 // ---------- сообщения из popup ----------
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return false;
+
+  // Вход в кабинет от content script вкладки seller.uzum.uz (cabinet-token.js); хранится только здесь.
+  if (message.type === 'cabinetToken') {
+    if (sender.id !== chrome.runtime.id || !sender.url || !sender.url.startsWith('https://seller.uzum.uz/')) return false;
+    const token = typeof message.token === 'string' ? message.token.trim() : '';
+    if (!token || token.length > 4096) return false;
+    (async () => {
+      const { cabinetToken } = await getStorage(['cabinetToken']);
+      if (cabinetToken !== token) await setStorage({ cabinetToken: token, cabinetTokenAt: Date.now() });
+      await setStorage({ cabinetTokenSeenAt: Date.now() });
+    })();
+    return false;
+  }
 
   if (message.type === 'pair') {
     (async () => {
@@ -368,6 +620,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (!result || !result.token) throw new Error('сервер не вернул токен');
         await setStorage({ serverBase: base, watchToken: result.token });
         await ensureAlarm();
+        await ensureSlotAlarm();
+        runSlotWatch('pair');
         sendResponse({ ok: true });
       } catch (e) {
         sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
@@ -384,15 +638,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'slotNow') {
+    (async () => {
+      const lastSlotRun = await runSlotWatch('manual');
+      sendResponse({ ok: true, lastSlotRun });
+    })();
+    return true;
+  }
+
   if (message.type === 'status') {
     (async () => {
-      const data = await getStorage(['serverBase', 'watchToken', 'lastRun']);
+      const data = await getStorage(['serverBase', 'watchToken', 'lastRun', 'lastSlotRun', 'cabinetToken', 'cabinetTokenSeenAt']);
       sendResponse({
         ok: true,
         connected: Boolean(data.watchToken),
         serverBase: data.serverBase || DEFAULT_BASE,
         lastRun: data.lastRun || null,
         running: runInProgress,
+        lastSlotRun: data.lastSlotRun || null,
+        slotRunning: slotRunInProgress,
+        cabinetLogin: Boolean(data.cabinetToken),
+        cabinetLoginSeenAt: data.cabinetTokenSeenAt || null,
       });
     })();
     return true;

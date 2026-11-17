@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <title>Монитор конкурентов</title>
+  <title>Uzum Analytics</title>
   <style>
     :root { --bg: #F4F5F8; --accent: #6C47FF; --text: #1C1C28; --muted: #6E6E7A; }
     * { box-sizing: border-box; }
@@ -23,7 +23,7 @@
   </style>
 </head>
 <body>
-  <h1>Монитор конкурентов Uzum</h1>
+  <h1>Uzum Analytics: конкуренты и слоты</h1>
 
   <label for="serverBase">Адрес сервера</label>
   <input id="serverBase" type="text" placeholder="http://172.0.30.4:3200/api">
@@ -40,6 +40,13 @@
     <div class="line">Статус: <span id="connState" class="bad">не подключено</span></div>
     <div class="line muted" id="lastRun">Прогонов ещё не было</div>
   </div>
+
+  <div class="status">
+    <div class="line"><b>Слоты поставок</b> — проверка каждые 2 минуты</div>
+    <div class="line">Вход в кабинет: <span id="cabinetState" class="bad">нет</span></div>
+    <div class="line muted" id="lastSlotRun">Проверок ещё не было</div>
+  </div>
+  <button id="slotBtn" class="secondary">Проверить слоты сейчас</button>
 
   <script src="popup.js"></script>
 </body>

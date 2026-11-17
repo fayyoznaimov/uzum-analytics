@@ -1,4 +1,4 @@
-// Popup монитора конкурентов Uzum Analytics.
+// Popup расширения Uzum Analytics: монитор конкурентов и тайм-слоты поставок.
 
 const $ = (id) => document.getElementById(id);
 
@@ -33,6 +33,19 @@ function formatLastRun(lastRun, running) {
   return line;
 }
 
+function formatSlotRun(run, running) {
+  if (running) return 'Идёт проверка слотов…';
+  if (!run) return 'Проверок ещё не было';
+  const when = new Date(run.at);
+  const time = Number.isNaN(when.getTime()) ? '—' : when.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  if (!run.groups && !(run.errors || []).length) return `Проверено ${time}: накладных в ожидании слота нет`;
+  let line = `Проверено ${time}: групп накладных ${run.groups}, свободных слотов ${run.slots}`;
+  if (run.booked && run.booked.length) line += `. Забронировано: ${run.booked.join('; ')}`;
+  if (run.errors && run.errors.length) line += `. Ошибка: ${run.errors[0]}`;
+  if (run.server && run.server !== 'ok') line += `. ${run.server}`;
+  return line;
+}
+
 async function refreshStatus() {
   const status = await send({ type: 'status' });
   if (!status.ok) {
@@ -50,6 +63,11 @@ async function refreshStatus() {
   if (!$('serverBase').value) $('serverBase').value = status.serverBase || '';
   $('lastRun').textContent = formatLastRun(status.lastRun, status.running);
   $('runBtn').disabled = !status.connected || Boolean(status.running);
+  const cabinet = $('cabinetState');
+  cabinet.textContent = status.cabinetLogin ? 'есть' : 'нет — откройте seller.uzum.uz в этом Chrome';
+  cabinet.className = status.cabinetLogin ? 'ok' : 'bad';
+  $('lastSlotRun').textContent = formatSlotRun(status.lastSlotRun, status.slotRunning);
+  $('slotBtn').disabled = !status.connected || Boolean(status.slotRunning);
 }
 
 $('pairBtn').addEventListener('click', async () => {
@@ -80,6 +98,20 @@ $('runBtn').addEventListener('click', async () => {
     showMessage(errs ? `Готово, но есть ошибки (${errs}) — см. статус ниже` : 'Готово, данные отправлены', errs > 0);
   } else {
     showMessage(`Ошибка: ${result.error || 'неизвестная'}`, true);
+  }
+  await refreshStatus();
+});
+
+$('slotBtn').addEventListener('click', async () => {
+  $('slotBtn').disabled = true;
+  showMessage('Проверяем слоты…', false);
+  const result = await send({ type: 'slotNow' });
+  const run = result && result.lastSlotRun;
+  if (result.ok && run) {
+    const errs = (run.errors || []).length;
+    showMessage(errs ? 'Проверка с ошибкой — см. ниже' : run.booked && run.booked.length ? 'Слот забронирован' : 'Проверено, отчёт отправлен на сервер', errs > 0);
+  } else {
+    showMessage(`Ошибка: ${(result && result.error) || 'проверка уже идёт'}`, true);
   }
   await refreshStatus();
 });
