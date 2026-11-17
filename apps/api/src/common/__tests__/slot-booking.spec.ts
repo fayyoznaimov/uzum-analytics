@@ -50,7 +50,7 @@ describe('слоты FBO через кабинет', () => {
   });
   it('запросы поиска и брони — как у кабинета', () => {
     const stock = { stockId: 34, poolSource: 'FULLFILMENT' };
-    expect(fboSlotsRequest(['4240863', '4240865'], stock, new Date(1794898411643))).toEqual({ invoiceIds: [4240863, 4240865], poolSource: 'FULLFILMENT', timeFrom: 1794898411643 });
+    expect(fboSlotsRequest(['4240863', '4240865'], stock, new Date(1794894811643))).toEqual({ invoiceIds: [4240863, 4240865], poolSource: 'FULLFILMENT', timeFrom: 1794898411643 });
     const [slot] = parseFboSlots({ payload: { timeSlots: [{ timeFrom: 1795233600000, timeTo: 1795240800000 }] } });
     expect(fboBookRequest(slot, ['4240868'], stock)).toEqual({ timeFrom: 1795233600000, invoiceIds: [4240868], stockId: 34, poolSource: 'FULLFILMENT' });
   });

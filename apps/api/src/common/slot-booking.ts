@@ -79,8 +79,12 @@ export function fboReservation(raw: unknown): { from: Date; to: Date | null } | 
   return from ? { from, to: epoch(reservation?.timeTo) } : null;
 }
 
+/**
+ * timeFrom — на час вперёд, как у кабинета: время «сейчас» Uzum отклоняет («400 Validation failed», 17.11.2026 —
+ * к проверке оно уже в прошлом), а слотов раньше чем через час всё равно не бывает.
+ */
 export function fboSlotsRequest(invoiceIds: Array<string | number>, stock: FboStock, now: Date = new Date()) {
-  return { invoiceIds: invoiceIds.map(Number), poolSource: stock.poolSource, timeFrom: now.getTime() };
+  return { invoiceIds: invoiceIds.map(Number), poolSource: stock.poolSource, timeFrom: now.getTime() + 60 * 60_000 };
 }
 
 /**
