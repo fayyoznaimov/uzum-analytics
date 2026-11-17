@@ -1,9 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma.service';
-import { DEFAULT_SUPPLIER_RATE, parseSupplierWorkbook, paymentUsd, receiptUsd, roundUsd, summarizeSupplierLedger, SupplierEntryLike, SupplierEntryType } from '../../common/supplier-ledger';
+import { DEFAULT_SUPPLIER_RATE, nextSupplierCode, parseSupplierWorkbook, paymentUsd, receiptUsd, roundUsd, sameSupplierTitle, summarizeSupplierLedger, SupplierEntryLike, SupplierEntryType } from '../../common/supplier-ledger';
 
 export type SupplierEntryInput = { day: string; type: SupplierEntryType; code?: number; quantity?: number; amountUzs?: number; rate?: number; amountUsd?: number; comment?: string };
-export type SupplierItemInput = { code: number; title: string; priceUzs: number; priceUsd?: number | null };
+export type SupplierItemInput = { code?: number; title: string; priceUzs?: number; priceUsd?: number | null };
 
 const n = (value: unknown) => (value === null || value === undefined ? null : Number(value));
 
@@ -43,8 +43,16 @@ export class SupplierLedgerService {
 
   async saveItem(input: SupplierItemInput) {
     const shop = await this.activeShop();
-    const data = { title: input.title.trim(), priceUzs: input.priceUzs, priceUsd: input.priceUsd ?? null };
-    await this.prisma.supplierItem.upsert({ where: { shopId_code: { shopId: shop.id, code: input.code } }, create: { shopId: shop.id, code: input.code, ...data }, update: data });
+    const title = input.title.trim();
+    if (!title) throw new BadRequestException('Укажите название товара');
+    // Владелец 17.11.2026: «не могу занести товар плед 200х220 6$» — у новых товаров ещё нет кода компании.
+    let code = input.code;
+    if (!code) {
+      const items = await this.prisma.supplierItem.findMany({ where: { shopId: shop.id }, select: { code: true, title: true } });
+      code = items.find((item: any) => sameSupplierTitle(item.title, title))?.code ?? nextSupplierCode(items.map((item: any) => item.code));
+    }
+    const data = { title, priceUsd: input.priceUsd ?? null, ...(input.priceUzs !== undefined ? { priceUzs: input.priceUzs } : {}) };
+    await this.prisma.supplierItem.upsert({ where: { shopId_code: { shopId: shop.id, code } }, create: { shopId: shop.id, code, priceUzs: 0, ...data }, update: data });
     return this.overview();
   }
 

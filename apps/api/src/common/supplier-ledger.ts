@@ -10,6 +10,21 @@ export const SUPPLIER_ENTRY_TYPES: SupplierEntryType[] = ['RECEIPT', 'PAYMENT', 
 /** Курс, по которому таблица переводила все оплаты в $ (=SUM(E)/12100). */
 export const DEFAULT_SUPPLIER_RATE = 12_100;
 
+/**
+ * Свой код для товара, которого ещё нет в номенклатуре компании (пледы 17.11.2026). Коды компании — 1…29 и растут,
+ * поэтому свои начинаются с 1000: загрузка Excel обновляет товары по коду и иначе переписала бы чужой товар.
+ */
+export const MANUAL_SUPPLIER_CODE_FROM = 1000;
+export function nextSupplierCode(codes: number[]): number {
+  const own = codes.filter((code) => code >= MANUAL_SUPPLIER_CODE_FROM);
+  return own.length ? Math.max(...own) + 1 : MANUAL_SUPPLIER_CODE_FROM;
+}
+/** Тот же товар, если названия совпадают без учёта регистра, пробелов и вида «×»/«x»: «Плед 200х220» = «плед 200×220». */
+export function sameSupplierTitle(a: string, b: string): boolean {
+  const norm = (value: string) => value.toLowerCase().replace(/[×хx*]/g, 'x').replace(/\s+/g, '');
+  return norm(a) === norm(b);
+}
+
 export type SupplierItemLike = { id: string; code: number; title: string; priceUzs: number; priceUsd: number | null };
 
 export type SupplierEntryLike = {

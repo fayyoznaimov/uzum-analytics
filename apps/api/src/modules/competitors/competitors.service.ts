@@ -108,7 +108,7 @@ export class CompetitorsService {
 
   async pair(code: string) {
     const row = await this.prisma.watchPairingCode.findUnique({ where: { codeHash: hashWatchToken(String(code || '').trim()) } });
-    if (!row || row.usedAt || row.expiresAt < new Date()) throw new UnauthorizedException('Код не подходит или истёк — создайте новый на экране «Конкуренты»');
+    if (!row || row.usedAt || row.expiresAt < new Date()) throw new UnauthorizedException('Код не подходит или истёк — возьмите новый: Склад и поставки → Поставки → «Код для расширения»');
     await this.prisma.watchPairingCode.update({ where: { id: row.id }, data: { usedAt: new Date() } });
     const token = randomBytes(32).toString('hex');
     await this.prisma.watchClient.create({ data: { tokenHash: hashWatchToken(token) } });

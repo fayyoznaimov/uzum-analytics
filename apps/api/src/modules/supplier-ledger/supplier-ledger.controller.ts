@@ -18,9 +18,10 @@ class SupplierEntryDto {
 }
 class SupplierEntriesDto { @IsArray() @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => SupplierEntryDto) entries!: SupplierEntryDto[]; }
 class SupplierItemDto {
-  @IsInt() @Min(1) code!: number;
+  /** Код компании; пусто — товар с тем же названием или новый свой код (supplier-ledger.ts: nextSupplierCode). */
+  @IsOptional() @IsInt() @Min(1) code?: number;
   @IsString() @MaxLength(200) title!: string;
-  @IsNumber() @Min(0) priceUzs!: number;
+  @IsOptional() @IsNumber() @Min(0) priceUzs?: number;
   @IsOptional() @IsNumber() @Min(0) priceUsd?: number | null;
 }
 

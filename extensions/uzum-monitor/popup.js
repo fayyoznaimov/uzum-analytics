@@ -73,7 +73,7 @@ async function refreshStatus() {
 $('pairBtn').addEventListener('click', async () => {
   const code = $('pairCode').value.trim();
   if (!/^\d{6}$/.test(code)) {
-    showMessage('Введите 6-значный код с экрана «Конкуренты»', true);
+    showMessage('Введите 6-значный код: Склад и поставки → Поставки → «Код для расширения»', true);
     return;
   }
   $('pairBtn').disabled = true;

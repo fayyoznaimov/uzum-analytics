@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import { parseSupplierSheets, parseSupplierWorkbook, paymentUsd, receiptUsd, summarizeSupplierLedger, supplierDay, SupplierEntryLike } from '../supplier-ledger';
+import { nextSupplierCode, parseSupplierSheets, parseSupplierWorkbook, paymentUsd, receiptUsd, sameSupplierTitle, summarizeSupplierLedger, supplierDay, SupplierEntryLike } from '../supplier-ledger';
 
 const nomenclature = {
   name: 'Номенклатура',
@@ -113,5 +113,18 @@ describe('summarizeSupplierLedger', () => {
       { day: '2026-10-15', receivedUnits: 0, receivedUsd: 0, receivedUzs: 0, paidUzs: 1_210_000, paidUsd: 100, adjustmentsUsd: 0, writtenOffUnits: 0, balanceUsd: 148.1, entries: 1 },
       { day: '2026-10-01', receivedUnits: 110, receivedUsd: 248.1, receivedUzs: 3_050_000, paidUzs: 0, paidUsd: 0, adjustmentsUsd: 0, writtenOffUnits: 0, balanceUsd: 248.1, entries: 2 },
     ]);
+  });
+});
+
+describe('товар без кода компании', () => {
+  it('свои коды с 1000, чтобы загрузка Excel не переписала товар компании', () => {
+    expect(nextSupplierCode([1, 2, 28, 29])).toBe(1000);
+    expect(nextSupplierCode([1, 29, 1000])).toBe(1001);
+    expect(nextSupplierCode([])).toBe(1000);
+  });
+  it('тот же товар по названию — без учёта регистра, пробелов и вида «х»', () => {
+    expect(sameSupplierTitle('Плед 200х220', 'плед 200×220')).toBe(true);
+    expect(sameSupplierTitle('плед 200 x 220', 'Плед 200х220')).toBe(true);
+    expect(sameSupplierTitle('плед 180х200', 'плед 200х220')).toBe(false);
   });
 });
