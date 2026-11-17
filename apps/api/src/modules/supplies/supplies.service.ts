@@ -5,7 +5,9 @@ import { PrismaService } from '../../common/prisma.service';
 import { uzumRequest } from '../../common/uzum-http';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { buildFboSupplySummary } from '../../common/fbo-supply-summary';
-import { DesiredWindow, FreeSlot, formatSlot, formatWindow, pickSlot } from '../../common/slot-booking';
+import { DesiredWindow, FBO_SLOTS_GET_PATH, FBO_SLOTS_SET_PATH, FboStock, FreeSlot, fboBookRequest, fboGroupKey, fboReservation, fboSlotsRequest, fboStockOf, formatSlot, formatWindow, parseFboSlots, pickSlot } from '../../common/slot-booking';
+import { emptyStreak, failureText, markNotified, recordFailure, recordSuccess, recoveryText } from '../../common/failure-alert';
+import { PromoPricingService } from '../pricing/promo-pricing.service';
 
 type QueryValue = string | number | boolean | Array<string | number> | undefined | null;
 
@@ -14,9 +16,13 @@ export class SuppliesService {
   private readonly base = 'https://api-seller.uzum.uz/api/seller-openapi';
   private readonly logger = new Logger(SuppliesService.name);
 
+  /** Сбои проверки FBO-слотов подряд (кабинет за Cloudflare, токен): в Telegram — только затяжные. */
+  private fboStreak = emptyStreak();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly integrations: IntegrationsService,
+    private readonly promo: PromoPricingService,
   ) {}
 
   private text(value: any, fallback = '') { return value === null || value === undefined ? fallback : String(value); }
@@ -68,8 +74,8 @@ export class SuppliesService {
 
   private pickSlot(item: any) {
     const reservation = item?.timeSlotReservation ?? item?.timeSlot ?? item?.slot ?? item?.reservation ?? {};
-    const from = this.date(reservation?.from ?? reservation?.start ?? reservation?.startAt ?? reservation?.dateFrom ?? item?.slotFrom);
-    const to = this.date(reservation?.to ?? reservation?.end ?? reservation?.endAt ?? reservation?.dateTo ?? item?.slotTo);
+    const from = this.date(reservation?.timeFrom ?? reservation?.from ?? reservation?.start ?? reservation?.startAt ?? reservation?.dateFrom ?? item?.slotFrom);
+    const to = this.date(reservation?.timeTo ?? reservation?.to ?? reservation?.end ?? reservation?.endAt ?? reservation?.dateTo ?? item?.slotTo);
     return { from, to };
   }
 
@@ -492,9 +498,7 @@ export class SuppliesService {
   async findSlots(id: string, dropOffPointId?: string) {
     const supply = await this.prisma.supply.findUnique({ where: { id }, include: { shop: true, slotWatch: true } });
     if (!supply) throw new BadRequestException('Поставка не найдена');
-    if (supply.type !== SupplyType.FBS) {
-      throw new BadRequestException('Официальный OpenAPI поиска тайм-слотов доступен для FBS. Для FBO сейчас отслеживаются статус и уже назначенный слот.');
-    }
+    if (supply.type === SupplyType.FBO) return this.findFboSlots(supply);
     const cfg = await this.integrations.getPlain(IntegrationType.UZUM);
     if (!cfg?.token) throw new BadRequestException('Uzum API token не настроен');
     const details = await this.request(`/v1/fbs/invoice/${supply.externalId}`, cfg.token);
@@ -553,7 +557,6 @@ export class SuppliesService {
   async setWatch(id: string, input: { enabled: boolean; dropOffPointId?: string; desiredFrom?: string | null; desiredTo?: string | null; autoBook?: boolean }) {
     const supply = await this.prisma.supply.findUnique({ where: { id } });
     if (!supply) throw new BadRequestException('Поставка не найдена');
-    if (supply.type !== SupplyType.FBS) throw new BadRequestException('Автопоиск слота через официальный API доступен только для FBS');
     const day = (value?: string | null, end = false) => {
       if (!value) return null;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new BadRequestException('Дата задаётся как ГГГГ-ММ-ДД');
@@ -566,8 +569,9 @@ export class SuppliesService {
     return this.prisma.supplySlotWatch.upsert({ where: { supplyId: id }, update: data, create: { supplyId: id, ...data } });
   }
 
-  @Cron(process.env.SLOT_WATCH_CRON || '*/5 * * * *')
+  @Cron(process.env.SLOT_WATCH_CRON || '*/2 * * * *')
   async watchSlots() {
+    await this.watchFboSlots().catch((error) => this.logger.warn(`Автобронь FBO: ${error?.message || error}`));
     const watches = await this.prisma.supplySlotWatch.findMany({
       where: { enabled: true, supply: { type: SupplyType.FBS } },
       include: { supply: true },
@@ -608,6 +612,123 @@ export class SuppliesService {
         }
       } catch (error: any) {
         await this.prisma.supplySlotWatch.update({ where: { id: watch.id }, data: { lastCheckedAt: new Date(), lastError: error.message } });
+      }
+    }
+  }
+
+  /** Автобронь FBO включена по умолчанию: эндпоинт подтверждён в кабинете 17.11.2026; SUPPLY_FBO_AUTO_BOOK=false — только уведомления. */
+  fboAutoBookEnabled() { return process.env.SUPPLY_FBO_AUTO_BOOK !== 'false'; }
+
+  private invoiceLabel(supply: { externalId: string; raw: unknown }) {
+    return `№${this.text((supply.raw as any)?.invoiceNumber, supply.externalId)}`;
+  }
+
+  /** Свободные слоты склада под одну или несколько FBO-накладных (общий привоз) — API кабинета, common/slot-booking.ts. */
+  private async fboSlots(shopExternalId: string, invoiceIds: string[], stock: FboStock): Promise<FreeSlot[]> {
+    const { body } = await this.promo.cabinet('POST', FBO_SLOTS_GET_PATH(shopExternalId), undefined, fboSlotsRequest(invoiceIds, stock));
+    return parseFboSlots(body);
+  }
+
+  private async findFboSlots(supply: { id: string; externalId: string; raw: unknown; shop: { externalId: string }; slotWatch: { desiredFrom: Date | null; desiredTo: Date | null } | null }) {
+    const stock = fboStockOf(supply.raw);
+    if (!stock) throw new BadRequestException('В данных накладной нет склада — обновите поставки и повторите');
+    const slots = await this.fboSlots(supply.shop.externalId, [supply.externalId], stock);
+    const window: DesiredWindow = { from: supply.slotWatch?.desiredFrom ?? null, to: supply.slotWatch?.desiredTo ?? null };
+    const matched = pickSlot(slots, window);
+    if (supply.slotWatch) await this.prisma.supplySlotWatch.update({ where: { supplyId: supply.id }, data: { lastCheckedAt: new Date(), lastFoundAt: matched ? new Date() : undefined, lastError: null } });
+    return { supply: { id: supply.id, externalId: supply.externalId }, orderIds: [] as string[], dropOffPointId: null, window, matched, slots, raw: null };
+  }
+
+  /**
+   * Автобронь слота FBO (владелец 17.11.2026: «бот, который будет чекать постоянно и выбирать таймслот, когда будет
+   * доступен»). Накладные одного склада с одинаковым окном и режимом ищут и бронируют один общий слот. Накладная, у
+   * которой слот уже есть (выбран в кабинете) или которая ушла из «Создана», снимается с наблюдения.
+   */
+  private async watchFboSlots() {
+    const watches = await this.prisma.supplySlotWatch.findMany({
+      where: { enabled: true, supply: { type: SupplyType.FBO } },
+      include: { supply: { include: { shop: true } } },
+      take: 50,
+    });
+    if (!watches.length) return;
+    type Group = { shopExternalId: string; stock: FboStock; window: DesiredWindow; autoBook: boolean; items: typeof watches };
+    const groups = new Map<string, Group>();
+    for (const watch of watches) {
+      const supply = watch.supply;
+      const reserved = fboReservation(supply.raw);
+      if (reserved || supply.status !== 'CREATED') {
+        await this.prisma.supplySlotWatch.update({
+          where: { id: watch.id },
+          data: { enabled: false, lastCheckedAt: new Date(), lastError: reserved ? null : `Накладная в статусе «${supply.statusLabel || supply.status}» — слот больше не нужен` },
+        });
+        continue;
+      }
+      const stock = fboStockOf(supply.raw);
+      if (!stock) {
+        await this.prisma.supplySlotWatch.update({ where: { id: watch.id }, data: { lastCheckedAt: new Date(), lastError: 'В данных накладной нет склада' } });
+        continue;
+      }
+      const window: DesiredWindow = { from: watch.desiredFrom, to: watch.desiredTo };
+      const key = `${supply.shop.externalId}|${fboGroupKey(stock, window, watch.autoBook)}`;
+      const group = groups.get(key) ?? { shopExternalId: supply.shop.externalId, stock, window, autoBook: watch.autoBook, items: [] };
+      group.items.push(watch);
+      groups.set(key, group);
+    }
+    for (const group of groups.values()) {
+      const ids = group.items.map((watch) => watch.supply.externalId);
+      const watchIds = group.items.map((watch) => watch.id);
+      const labels = group.items.map((watch) => this.invoiceLabel(watch.supply)).join(', ');
+      const many = group.items.length > 1;
+      let slots: FreeSlot[];
+      try {
+        slots = await this.fboSlots(group.shopExternalId, ids, group.stock);
+      } catch (error: any) {
+        const message = String(error?.message || error).slice(0, 300);
+        await this.prisma.supplySlotWatch.updateMany({ where: { id: { in: watchIds } }, data: { lastCheckedAt: new Date(), lastError: message } });
+        const now = Date.now();
+        const failure = recordFailure(this.fboStreak, now, { notifyAfter: 15, repeatMs: 6 * 60 * 60_000 });
+        this.fboStreak = failure.streak;
+        if (failure.notify && await this.integrations.notifyTelegram(failureText(`Автобронь слота (${labels})`, message, failure.streak, now), 'notifySlotFound').catch(() => false)) {
+          this.fboStreak = markNotified(this.fboStreak, now);
+        }
+        continue;
+      }
+      const success = recordSuccess(this.fboStreak, Date.now());
+      this.fboStreak = success.streak;
+      if (success.recovered) await this.integrations.notifyTelegram(recoveryText('Автобронь слота', success.failedForMs), 'notifySlotFound').catch(() => undefined);
+      const matched = pickSlot(slots, group.window);
+      if (!matched) {
+        await this.prisma.supplySlotWatch.updateMany({ where: { id: { in: watchIds } }, data: { lastCheckedAt: new Date(), lastError: null } });
+        continue;
+      }
+      const head = `${many ? 'накладных' : 'накладной'} ${labels}`;
+      if (!(group.autoBook && this.fboAutoBookEnabled())) {
+        const dedupeKey = `slot-found:fbo:${ids.join(',')}:${matched.id}`;
+        if (!await this.prisma.notificationLog.findUnique({ where: { dedupeKey } })) {
+          const sent = await this.integrations.notifyTelegram(`🟢 Появился тайм-слот для ${head}\n${formatSlot(matched)} (желаемая дата: ${formatWindow(group.window)})\nЗабронируйте в кабинете: Поставки → «Выбрать» у накладной.`, 'notifySlotFound').catch(() => false);
+          if (sent) await this.prisma.notificationLog.create({ data: { type: 'SLOT_FOUND', dedupeKey, payload: { supplyIds: group.items.map((w) => w.supplyId), slot: formatSlot(matched) } } });
+        }
+        await this.prisma.supplySlotWatch.updateMany({ where: { id: { in: watchIds } }, data: { enabled: false, lastCheckedAt: new Date(), lastFoundAt: new Date(), lastError: null } });
+        continue;
+      }
+      try {
+        const { body } = await this.promo.cabinet('POST', FBO_SLOTS_SET_PATH(group.shopExternalId), undefined, fboBookRequest(matched, ids, group.stock));
+        const now = new Date();
+        await this.prisma.supplySlotWatch.updateMany({
+          where: { id: { in: watchIds } },
+          data: { enabled: false, lastCheckedAt: now, lastFoundAt: now, lastError: null, bookError: null, bookedAt: now, bookedSlotFrom: matched.from, bookedSlotTo: matched.to },
+        });
+        await this.prisma.supply.updateMany({ where: { id: { in: group.items.map((w) => w.supplyId) } }, data: { slotFrom: matched.from, slotTo: matched.to } });
+        await this.prisma.notificationLog.create({ data: { type: 'SLOT_BOOKED', dedupeKey: `slot-booked:fbo:${ids.join(',')}:${matched.id}`, payload: { supplyIds: group.items.map((w) => w.supplyId), slot: formatSlot(matched), response: body ?? null } as Prisma.InputJsonValue } }).catch(() => undefined);
+        await this.integrations.notifyTelegram(`✅ Забронирован тайм-слот для ${head}\n${formatSlot(matched)} (желаемая дата: ${formatWindow(group.window)})`, 'notifySlotFound').catch(() => false);
+      } catch (error: any) {
+        const message = String(error?.message || error).slice(0, 300);
+        await this.prisma.supplySlotWatch.updateMany({ where: { id: { in: watchIds } }, data: { lastCheckedAt: new Date(), bookError: message } });
+        const dedupeKey = `slot-book-failed:fbo:${ids.join(',')}:${message.slice(0, 60)}`;
+        if (!await this.prisma.notificationLog.findUnique({ where: { dedupeKey } })) {
+          const sent = await this.integrations.notifyTelegram(`⚠️ Слот ${formatSlot(matched)} для ${head} найден, но бронь не прошла: ${message}\nЗабронируйте в кабинете — бот попробует снова через 2 минуты.`, 'notifySlotFound').catch(() => false);
+          if (sent) await this.prisma.notificationLog.create({ data: { type: 'SLOT_BOOK_FAILED', dedupeKey, payload: { supplyIds: group.items.map((w) => w.supplyId) } } });
+        }
       }
     }
   }

@@ -20,7 +20,7 @@ function createService(existing: any) {
     supplyStatusHistory: { create: vi.fn().mockResolvedValue({ id: 'h1' }) },
   };
   const integrations: any = { notifyTelegram: vi.fn().mockResolvedValue(true) };
-  return { service: new SuppliesService(prisma, integrations), prisma, integrations };
+  return { service: new SuppliesService(prisma, integrations, {} as any), prisma, integrations };
 }
 
 describe('supply status notifications', () => {
@@ -49,7 +49,7 @@ describe('supply status notifications', () => {
 
 describe('safe supply synchronization', () => {
   it('rejects an unrecognized invoices payload instead of treating it as an empty success', async () => {
-    const service = new SuppliesService({} as any, {} as any);
+    const service = new SuppliesService({} as any, {} as any, {} as any);
     vi.spyOn(service as any, 'request').mockResolvedValue({ unexpected: true });
 
     await expect((service as any).syncFbo('shop', '92776', 'token'))
@@ -57,7 +57,7 @@ describe('safe supply synchronization', () => {
   });
 
   it('uses the required FBS statuses, the documented page size, and no unsupported shopId', async () => {
-    const service = new SuppliesService({} as any, {} as any);
+    const service = new SuppliesService({} as any, {} as any, {} as any);
     const request = vi.spyOn(service as any, 'request').mockResolvedValue({ payload: [] });
 
     await expect((service as any).syncFbs('shop', '92776', 'token')).resolves.toBe(0);
@@ -81,7 +81,7 @@ describe('safe supply synchronization', () => {
       getPlain: vi.fn().mockResolvedValue({ token: 'token' }),
       notifyTelegram: vi.fn().mockResolvedValue(false),
     };
-    const service = new SuppliesService(prisma, integrations);
+    const service = new SuppliesService(prisma, integrations, {} as any);
     vi.spyOn(service as any, 'syncFbo').mockRejectedValue(new Error('invalid FBO response'));
     vi.spyOn(service as any, 'syncFbs').mockResolvedValue(0);
     const autoFill = vi.spyOn(service as any, 'autoFillLogisticsCosts').mockResolvedValue(0);
@@ -107,7 +107,7 @@ describe('safe supply synchronization', () => {
       getPlain: vi.fn().mockResolvedValue({ token: 'token' }),
       notifyTelegram: vi.fn().mockResolvedValue(true),
     };
-    const service = new SuppliesService(prisma, integrations);
+    const service = new SuppliesService(prisma, integrations, {} as any);
     vi.spyOn(service as any, 'syncFbo').mockResolvedValue(0);
     vi.spyOn(service as any, 'syncFbs').mockRejectedValue(new Error('/v1/fbs/invoice: HTTP 403 — fbs-2-seller-access-denied'));
 
@@ -127,7 +127,7 @@ describe('safe supply synchronization', () => {
       $transaction: transaction,
     };
     const integrations: any = { getPlain: vi.fn().mockResolvedValue({ token: 'token' }) };
-    const service = new SuppliesService(prisma, integrations);
+    const service = new SuppliesService(prisma, integrations, {} as any);
     vi.spyOn(service as any, 'request').mockResolvedValue({ products: [] });
 
     await expect((service as any).syncFboItems('s1')).rejects.toThrow('existing items were preserved');
@@ -149,7 +149,7 @@ describe('safe supply synchronization', () => {
         ]),
       },
     };
-    const service = new SuppliesService(prisma, {} as any);
+    const service = new SuppliesService(prisma, {} as any, {} as any);
     vi.spyOn(service as any, 'syncFboItems').mockResolvedValue(undefined);
     const applyAllocated = vi.spyOn(service as any, 'applyAllocatedLogisticsCosts').mockResolvedValue(undefined);
 
@@ -171,7 +171,7 @@ describe('safe supply synchronization', () => {
       },
       marketplaceExpense: { findMany: vi.fn().mockResolvedValue([]) },
     };
-    const service = new SuppliesService(prisma, {} as any);
+    const service = new SuppliesService(prisma, {} as any, {} as any);
     const syncItems = vi.spyOn(service as any, 'syncFboItems').mockResolvedValue(undefined);
 
     await expect((service as any).autoFillLogisticsCosts('shop')).resolves.toBe(0);
