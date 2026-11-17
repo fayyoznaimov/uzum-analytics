@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FreeSlot, fboBookRequest, fboGroupKey, fboReservation, fboSlotsRequest, fboStockOf, formatSlot, formatWindow, parseFboSlots, pickSlot, slotInWindow } from '../slot-booking';
+import { FreeSlot, fboBookRequest, fboEarliestStart, fboGroupKey, fboLeadHours, fboReservation, fboSlotsRequest, fboStockOf, formatSlot, formatWindow, parseFboSlots, pickSlot, slotInWindow } from '../slot-booking';
 
 const now = new Date('2026-10-06T12:00:00+05:00');
 const slot = (from: string, patch: Partial<FreeSlot> = {}): FreeSlot => ({ id: from, from: new Date(from), to: new Date(new Date(from).getTime() + 3_600_000), capacity: 5, ...patch });
@@ -69,5 +69,16 @@ describe('слоты FBO через кабинет', () => {
     expect(fboGroupKey(stock, w, true)).toBe(fboGroupKey(stock, { from: new Date('2026-11-28T00:00:00+05:00'), to: new Date('2026-12-05T23:59:59+05:00') }, true));
     expect(fboGroupKey(stock, w, true)).not.toBe(fboGroupKey(stock, w, false));
     expect(fboGroupKey(stock, w, true)).not.toBe(fboGroupKey(stock, { from: null, to: null }, true));
+  });
+  it('запас «как минимум за 2 дня»: слоты ближе 48 часов не берём', () => {
+    expect(fboLeadHours(undefined)).toBe(48);
+    expect(fboLeadHours('')).toBe(48);
+    expect(fboLeadHours('24')).toBe(24);
+    expect(fboLeadHours('abc')).toBe(48);
+    const at = (iso: string) => ({ timeFrom: Date.parse(iso), timeTo: Date.parse(iso) + 7_200_000 });
+    const slots = parseFboSlots({ payload: { timeSlots: [at('2026-11-18T10:00:00+05:00'), at('2026-11-19T11:00:00+05:00'), at('2026-11-19T13:00:00+05:00')] } });
+    const booking = new Date('2026-11-17T12:00:00+05:00');
+    expect(pickSlot(slots, { from: null, to: null }, fboEarliestStart(booking, 48))?.from?.toISOString()).toBe(new Date('2026-11-19T13:00:00+05:00').toISOString());
+    expect(pickSlot(slots, { from: null, to: null }, fboEarliestStart(booking, 0))?.from?.toISOString()).toBe(new Date('2026-11-18T10:00:00+05:00').toISOString());
   });
 });

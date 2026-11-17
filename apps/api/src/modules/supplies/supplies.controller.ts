@@ -25,5 +25,5 @@ export class SuppliesController {
   @Get(':id/history') history(@Param('id') id: string) { return this.service.history(id); }
   @Post(':id/find-slots') findSlots(@Param('id') id: string, @Body() dto: FindSlotsDto) { return this.service.findSlots(id, dto.dropOffPointId); }
   @Post(':id/watch') watch(@Param('id') id: string, @Body() dto: WatchDto) { return this.service.setWatch(id, dto); }
-  @Get('auto-book') autoBook() { return { apply: this.service.autoBookEnabled(), configured: Boolean(process.env.SUPPLY_BOOK_SLOT_REQUEST), fbo: this.service.fboAutoBookEnabled() }; }
+  @Get('auto-book') autoBook() { return { apply: this.service.autoBookEnabled(), configured: Boolean(process.env.SUPPLY_BOOK_SLOT_REQUEST), fbo: this.service.fboAutoBookEnabled(), fboLeadHours: this.service.fboLeadHours() }; }
 }

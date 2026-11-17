@@ -99,6 +99,20 @@ export function parseFboSlots(body: unknown): FreeSlot[] {
     .filter((slot) => slot.from);
 }
 
+/**
+ * Запас до привоза: слот берём не раньше чем через столько часов от момента брони — владельцу нужно время собрать и
+ * отвезти товар (17.11.2026: «как минимум за 2 дня»). SUPPLY_FBO_MIN_LEAD_HOURS, по умолчанию 48.
+ */
+export const FBO_DEFAULT_LEAD_HOURS = 48;
+export function fboLeadHours(value: string | undefined): number {
+  const hours = value === undefined || value.trim() === '' ? Number.NaN : Number(value);
+  return Number.isFinite(hours) && hours >= 0 ? hours : FBO_DEFAULT_LEAD_HOURS;
+}
+/** Самое раннее допустимое начало слота — передаётся в pickSlot вместо «сейчас». */
+export function fboEarliestStart(now: Date, leadHours: number): Date {
+  return new Date(now.getTime() + leadHours * 60 * 60_000);
+}
+
 export function fboBookRequest(slot: FreeSlot, invoiceIds: Array<string | number>, stock: FboStock) {
   if (!slot.from) throw new Error('У слота нет времени начала');
   return { timeFrom: slot.from.getTime(), invoiceIds: invoiceIds.map(Number), stockId: stock.stockId, poolSource: stock.poolSource };

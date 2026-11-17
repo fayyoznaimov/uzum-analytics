@@ -5,7 +5,7 @@ import { PrismaService } from '../../common/prisma.service';
 import { uzumRequest } from '../../common/uzum-http';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { buildFboSupplySummary } from '../../common/fbo-supply-summary';
-import { DesiredWindow, FBO_SLOTS_GET_PATH, FBO_SLOTS_SET_PATH, FboStock, FreeSlot, fboBookRequest, fboGroupKey, fboReservation, fboSlotsRequest, fboStockOf, formatSlot, formatWindow, parseFboSlots, pickSlot } from '../../common/slot-booking';
+import { DesiredWindow, FBO_SLOTS_GET_PATH, FBO_SLOTS_SET_PATH, FboStock, FreeSlot, fboBookRequest, fboEarliestStart, fboGroupKey, fboLeadHours, fboReservation, fboSlotsRequest, fboStockOf, formatSlot, formatWindow, parseFboSlots, pickSlot } from '../../common/slot-booking';
 import { emptyStreak, failureText, markNotified, recordFailure, recordSuccess, recoveryText } from '../../common/failure-alert';
 import { PromoPricingService } from '../pricing/promo-pricing.service';
 
@@ -619,6 +619,9 @@ export class SuppliesService {
   /** Автобронь FBO включена по умолчанию: эндпоинт подтверждён в кабинете 17.11.2026; SUPPLY_FBO_AUTO_BOOK=false — только уведомления. */
   fboAutoBookEnabled() { return process.env.SUPPLY_FBO_AUTO_BOOK !== 'false'; }
 
+  /** Слот не ближе чем через столько часов (владелец 17.11.2026: «как минимум за 2 дня»). */
+  fboLeadHours() { return fboLeadHours(process.env.SUPPLY_FBO_MIN_LEAD_HOURS); }
+
   private invoiceLabel(supply: { externalId: string; raw: unknown }) {
     return `№${this.text((supply.raw as any)?.invoiceNumber, supply.externalId)}`;
   }
@@ -634,7 +637,7 @@ export class SuppliesService {
     if (!stock) throw new BadRequestException('В данных накладной нет склада — обновите поставки и повторите');
     const slots = await this.fboSlots(supply.shop.externalId, [supply.externalId], stock);
     const window: DesiredWindow = { from: supply.slotWatch?.desiredFrom ?? null, to: supply.slotWatch?.desiredTo ?? null };
-    const matched = pickSlot(slots, window);
+    const matched = pickSlot(slots, window, fboEarliestStart(new Date(), this.fboLeadHours()));
     if (supply.slotWatch) await this.prisma.supplySlotWatch.update({ where: { supplyId: supply.id }, data: { lastCheckedAt: new Date(), lastFoundAt: matched ? new Date() : undefined, lastError: null } });
     return { supply: { id: supply.id, externalId: supply.externalId }, orderIds: [] as string[], dropOffPointId: null, window, matched, slots, raw: null };
   }
@@ -696,7 +699,8 @@ export class SuppliesService {
       const success = recordSuccess(this.fboStreak, Date.now());
       this.fboStreak = success.streak;
       if (success.recovered) await this.integrations.notifyTelegram(recoveryText('Автобронь слота', success.failedForMs), 'notifySlotFound').catch(() => undefined);
-      const matched = pickSlot(slots, group.window);
+      // Слоты ближе запаса (2 дня) не берём: товар не успеть собрать и привезти.
+      const matched = pickSlot(slots, group.window, fboEarliestStart(new Date(), this.fboLeadHours()));
       if (!matched) {
         await this.prisma.supplySlotWatch.updateMany({ where: { id: { in: watchIds } }, data: { lastCheckedAt: new Date(), lastError: null } });
         continue;
