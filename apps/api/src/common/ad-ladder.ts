@@ -26,8 +26,10 @@ import { BidLadderStep, bidForPosition, bidForReach, policyKey, positionForBid }
 
 /** Кампании полотенец (HAVANA, j471, J403, «Банное 100×150» 332097 — сауна 2263224, с 17.10.2026) — по умолчанию; AD_LADDER_CAMPAIGNS переопределяет
  * списком id через запятую. Неактивная (на паузе) кампания пропускается с пометкой в отчёте. */
-export const AD_LADDER_DEFAULT_CAMPAIGNS = ['286528', '305122', '305324', '332097', '337334', '305326'];
+export const AD_LADDER_DEFAULT_CAMPAIGNS = ['286528', '305122', '305324', '332097', '337334', '305326', '350238'];
 // 305326 «YD» — плед 2880108, с 04.11.2026 (узкие ключи пледа, AD_LADDER_NARROW).
+// 350238 «Плед 3624242 новинка» — плюшевый плед 200×220 / 180×200, с 23.11.2026 (владелец: «рекламировать только 2 цвета —
+// зелёный и розовый с сердечками, Буст заказов не нужен»): в кампании только т.-зелёный 200×220 (6738706) и розовый 180×200 (6738710).
 
 /**
  * Запуск новинки: до указанного дня (включительно, Ташкент) проверка ДРР кампании не действует — у товара без
@@ -39,6 +41,9 @@ export const AD_LADDER_LAUNCH_UNTIL: Record<string, string> = {
   // 2–3 дня, рискуем 200–300 тысяч — ладно». На время теста стоп по ДРР у Сердечек снят, иначе он обрубил бы широкие фразы в первый
   // же день (порог данных — 30 000 расхода). Недельный бюджет кампании 300 000 ограничивает расход сверху.
   '337334': '2026-11-15',
+  // Новый плед 3624242 (23.11.2026): 0 отзывов, первые продажи дорогие — неделю без стопа по ДРР; расход сверху ограничен
+  // недельным бюджетом кампании 300 000.
+  '350238': '2026-11-30',
 };
 // 02.11.2026 льгота Сердечек продлевалась до 16.11 («нужно 250 продаж»). 04.11.2026 снята вместе с тестами потолков 70 000
 // (владелец: «лишь бы не просрать деньги»): за 7 дней 41 836 рекламы при ДРР 53 %, «sochiq yuz va hammom» и
@@ -125,7 +130,9 @@ export function activeCapTests(today: string, table: LadderCapTest[] = AD_LADDER
  * 31.10–02.11 при потолке 70 000 было ДРР 53 %, поэтому потолок ставки 45 000 и ДРР не выше 20 %). */
 /** reach — ставка за ступень с этим охватом, %, вместо места (кабинет: 100 % ≈ 4-е место, 80 % ≈ 7-е, 70 % ≈ 9-е); broadOnly — только
  * фразы, которых нет в узких ключах карточки (AD_LADDER_NARROW). */
-export type LadderFocus = { campaignId: string; query?: RegExp; maxDrr: number; until: string; note: string; position?: number; cap?: number; reach?: number; broadOnly?: boolean };
+/** colors — сколько цветов держать на фразе (не меньше, чем у класса): у нового пледа два цвета разных размеров, это два
+ * разных покупателя, а не спор своих объявлений за одно место. */
+export type LadderFocus = { campaignId: string; query?: RegExp; maxDrr: number; until: string; note: string; position?: number; cap?: number; reach?: number; broadOnly?: boolean; colors?: number };
 export const BIG_SIZE_QUERY = /(саун|бан[яи]|бассейн|sauna|basseyn|banya|katta|100 ?[xх]? ?150|больш)/;
 export const AD_LADDER_FOCUS: LadderFocus[] = [
   { campaignId: '337334', maxDrr: 20, position: 5, cap: 45_000, until: '2026-12-03', note: 'Сердечки: топ-5, ставка до 45 000' },
@@ -134,6 +141,9 @@ export const AD_LADDER_FOCUS: LadderFocus[] = [
   { campaignId: '332097', maxDrr: 15, until: '2026-12-03', note: 'сауна 100×150' },
   { campaignId: '305122', query: BIG_SIZE_QUERY, maxDrr: 15, until: '2026-12-03', note: 'J471 100×150' },
   { campaignId: '305324', query: BIG_SIZE_QUERY, maxDrr: 15, until: '2026-12-03', note: 'J403 100×150' },
+  // Новый плед 3624242, запуск 23.11.2026 («новый товар нужно запустить в топ»): топ-10 «плед» по лестнице кабинета ≈ 54 000,
+  // «покрывало» ≈ 60 000 — классовый потолок «остальных» 20 000 и один цвет не пустили бы его никуда. Оба цвета в топ-10 до 60 000.
+  { campaignId: '350238', maxDrr: 20, cap: 60_000, colors: 2, until: '2026-12-21', note: 'Новый плед: зелёный и розовый в топ-10, ставка до 60 000' },
 ];
 
 export function activeFocus(today: string, table: LadderFocus[] = AD_LADDER_FOCUS): LadderFocus[] {
@@ -141,14 +151,14 @@ export function activeFocus(today: string, table: LadderFocus[] = AD_LADDER_FOCU
 }
 
 /** Акцент для фразы кампании: потолок ДРР, целевое место или охват и потолок ставки (наибольшие из подходящих); null — фраза не в акценте. */
-export function focusFor(campaignId: string, query: string, focus: LadderFocus[], narrow: Record<string, LadderNarrow> = AD_LADDER_NARROW): { maxDrr: number; position: number | null; cap: number | null; reach: number | null } | null {
+export function focusFor(campaignId: string, query: string, focus: LadderFocus[], narrow: Record<string, LadderNarrow> = AD_LADDER_NARROW): { maxDrr: number; position: number | null; cap: number | null; reach: number | null; colors: number | null } | null {
   const q = normalizeQuery(query);
   const isNarrow = narrowClass(campaignId, query, narrow) !== null;
   const hits = focus.filter((row) => row.campaignId === campaignId && (!row.query || row.query.test(q)) && !(row.broadOnly && isNarrow));
   if (!hits.length) return null;
   const pick = (values: Array<number | undefined>) => values.filter((v): v is number => Number.isFinite(v));
-  const positions = pick(hits.map((row) => row.position)), caps = pick(hits.map((row) => row.cap)), reaches = pick(hits.map((row) => row.reach));
-  return { maxDrr: Math.max(...hits.map((row) => row.maxDrr)), position: positions.length ? Math.min(...positions) : null, cap: caps.length ? Math.max(...caps) : null, reach: reaches.length ? Math.max(...reaches) : null };
+  const positions = pick(hits.map((row) => row.position)), caps = pick(hits.map((row) => row.cap)), reaches = pick(hits.map((row) => row.reach)), colors = pick(hits.map((row) => row.colors));
+  return { maxDrr: Math.max(...hits.map((row) => row.maxDrr)), position: positions.length ? Math.min(...positions) : null, cap: caps.length ? Math.max(...caps) : null, reach: reaches.length ? Math.max(...reaches) : null, colors: colors.length ? Math.max(...colors) : null };
 }
 
 /** Потолок ДРР акцента для фразы кампании; null — фраза не в акценте. */
@@ -333,7 +343,8 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
     // Акцент (activeFocus) поднимает потолок ДРР и ставки фраз до своих, но не опускает, если у класса они и так выше;
     // position — целевое место вместо топ-10.
     const focused = focusFor(rows[0].campaignId, rows[0].query, focus, narrow);
-    const cls = focused?.cap && focused.cap > heldCls.cap ? { ...heldCls, cap: Math.min(cfg.maxBid, focused.cap) } : heldCls;
+    const capped = focused?.cap && focused.cap > heldCls.cap ? { ...heldCls, cap: Math.min(cfg.maxBid, focused.cap) } : heldCls;
+    const cls = focused?.colors && focused.colors > capped.colors ? { ...capped, colors: focused.colors } : capped;
     const place = focused?.position ?? cfg.topPosition;
     const placeName = focused?.reach ? `охват ${focused.reach} %` : place === cfg.topPosition ? 'топ-10' : `топ-${place}`;
     const classDrr = Math.max(cls.maxDrr ?? cfg.maxDrrPercent, focused?.maxDrr ?? 0);
@@ -404,7 +415,7 @@ export function planLadderBids(keywords: LadderKeyword[], cfg: AdLadderConfig = 
 }
 
 /** Короткие имена кампаний для отчёта: в кабинете HAVANA называется «Обучение буст топ микс», сауна — «Банное 100×150: …». */
-export const LADDER_CAMPAIGN_LABELS: Record<string, string> = { '286528': 'HAVANA', '305122': 'J471', '305324': 'J403', '332097': 'Сауна 100×150', '337334': 'Сердечки', '305326': 'Плед' };
+export const LADDER_CAMPAIGN_LABELS: Record<string, string> = { '286528': 'HAVANA', '305122': 'J471', '305324': 'J403', '332097': 'Сауна 100×150', '337334': 'Сердечки', '305326': 'Плед', '350238': 'Плед новый' };
 export const campaignLabel = (id: string, name?: string | null) => LADDER_CAMPAIGN_LABELS[id] ?? name ?? id;
 
 /** Цвет по SKU кабинета: «БЕЛЫЙ-Банный» → «белый», «НГОЛУБ-сауна» → «нголуб»; у сауны SKU без размера — «БЕЛЫЙ» → «белый». */
