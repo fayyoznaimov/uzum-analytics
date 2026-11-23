@@ -266,19 +266,20 @@ describe('лестница ставок', () => {
     expect(planLadderBids([sauna], undefined, undefined, undefined, undefined, [], undefined, focus)[0].action?.newCpm).toBe(21_000); // 20 000 + 3 % → 21 000
   });
 
-  it('новый плед 3624242: оба цвета в топ-10 до 60 000, неделю без стопа по ДРР', () => {
+  it('новый плед 3624242: оба цвета в топ-10 до 70 000, неделю без стопа по ДРР', () => {
     expect(ladderCampaigns()).toContain('350238');
     expect(launchCampaigns('2026-11-30').has('350238')).toBe(true);
     expect(launchCampaigns('2026-12-01').has('350238')).toBe(false);
     const focus = activeFocus('2026-11-23');
-    expect(focusFor('350238', 'плед', focus)).toEqual({ maxDrr: 20, position: null, cap: 60_000, reach: null, colors: 2 });
+    expect(focusFor('350238', 'плед', focus)).toEqual({ maxDrr: 20, position: null, cap: 70_000, reach: null, colors: 2 });
     const plaid = (g: string, cpm: number, top10: number) => ({ ...kw(g, 'плед', cpm, top10), campaignId: '350238' });
     // «плед» — класс «остальные» (20 000, один цвет): без акцента оба ниже топа, с акцентом оба в топ-10 (54 000 + 3 % → 56 000).
     expect(planLadderBids([plaid('green', 45_000, 54_000), plaid('pink', 45_000, 54_000)]).map((row) => row.role)).toEqual(['other', 'other']);
     const plan = planLadderBids([plaid('green', 45_000, 54_000), plaid('pink', 45_000, 54_000)], undefined, undefined, launchCampaigns('2026-11-23'), undefined, [], undefined, focus);
     expect(plan.map((row) => [row.role, row.action?.newCpm ?? null])).toEqual([['top', 56_000], ['top', 56_000]]);
-    // Дороже 60 000 — в топ не идёт.
-    expect(planLadderBids([plaid('green', 45_000, 61_000)], undefined, undefined, undefined, undefined, [], undefined, focus)[0]).toMatchObject({ role: 'other', action: null });
+    // «плед покрывало» 23.11: топ-10 60 700 — с потолком 70 000 идёт в топ (60 700 + 3 % → 63 000); дороже 70 000 — нет.
+    expect(planLadderBids([plaid('green', 20_000, 60_700)], undefined, undefined, undefined, undefined, [], undefined, focus)[0]).toMatchObject({ role: 'top', action: { newCpm: 63_000 } });
+    expect(planLadderBids([plaid('green', 45_000, 71_000)], undefined, undefined, undefined, undefined, [], undefined, focus)[0]).toMatchObject({ role: 'other', action: null });
   });
 
   it('тест Сердечек 13–15.11: широкие фразы за 80 % охвата до 70 000, узкие — топ-5, ДРР не стопит', () => {
