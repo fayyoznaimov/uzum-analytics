@@ -177,6 +177,7 @@ describe('лестница ставок', () => {
     expect(narrowClass('337334', 'ona bola sochiqlar')).toMatchObject({ cap: 60_000, maxDrr: 12 });
     expect(narrowClass('337334', "qo'l sochiq")).toBeNull(); // 24.11.2026: остановлена — показы без корзин
     expect(ladderCampaigns()).toContain('305326'); // плед в лестнице
+    expect(narrowClass('305326', 'плед маленький')).toMatchObject({ cap: 30_000, maxDrr: 9 }); // 24.11.2026: из запросов покупателей YD
     const sauna = (g: string, query: string, cpm: number, top10: number | null) => ({ ...kw(g, query, cpm, top10), campaignId: '332097' });
     // Топ-10 «полотенце 100х150» 17 893 (лестница 04.11): один цвет поднимаем, второй не трогаем (в классе «наборы, сауна» было бы два).
     const plan = planLadderBids([sauna('a', 'полотенце 100х150', 9_500, 17_893), sauna('b', 'полотенце 100х150', 9_500, 19_000)]);
