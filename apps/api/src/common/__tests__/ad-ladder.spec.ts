@@ -174,7 +174,8 @@ describe('лестница ставок', () => {
     expect(narrowClass('332097', 'Полотенце  100х150')).toMatchObject({ name: 'узкие ключи товара', cap: 45_000, colors: 1, maxDrr: 9, noSaleSpend: 25_000 });
     expect(narrowClass('286528', 'sochiq')).toBeNull();
     expect(narrowClass('286528', 'полотенце 100х150')).toBeNull(); // узкие ключи — свои у каждой кампании
-    expect(narrowClass('337334', "qo'l sochiq")).toMatchObject({ cap: 25_000, maxDrr: 12 });
+    expect(narrowClass('337334', 'ona bola sochiqlar')).toMatchObject({ cap: 60_000, maxDrr: 12 });
+    expect(narrowClass('337334', "qo'l sochiq")).toBeNull(); // 24.11.2026: остановлена — показы без корзин
     expect(ladderCampaigns()).toContain('305326'); // плед в лестнице
     const sauna = (g: string, query: string, cpm: number, top10: number | null) => ({ ...kw(g, query, cpm, top10), campaignId: '332097' });
     // Топ-10 «полотенце 100х150» 17 893 (лестница 04.11): один цвет поднимаем, второй не трогаем (в классе «наборы, сауна» было бы два).
@@ -242,8 +243,8 @@ describe('лестница ставок', () => {
     expect(activeFocus('2026-11-13')).toHaveLength(6);
     expect(activeFocus('2026-12-04')).toHaveLength(1); // новый плед — до 21.12
     expect(activeFocus('2026-12-22')).toHaveLength(0);
-    expect(focusDrr('337334', 'полотенце для лица', focus)).toBe(20); // Сердечки с 12.11.2026 — 20 %, топ-5, ставка до 45 000
-    expect(focusFor('337334', 'полотенце для лица', focus)).toEqual({ maxDrr: 20, position: 5, cap: 45_000, reach: null, colors: null });
+    expect(focusDrr('337334', 'полотенце для лица', focus)).toBe(20); // Сердечки с 12.11.2026 — 20 %, ставка до 45 000; с 24.11 топ-10 вместо топ-5
+    expect(focusFor('337334', 'полотенце для лица', focus)).toEqual({ maxDrr: 20, position: null, cap: 45_000, reach: null, colors: null });
     expect(focusFor('332097', 'большое полотенце', focus)).toEqual({ maxDrr: 15, position: null, cap: null, reach: null, colors: null });
     expect(focusDrr('332097', 'большое полотенце', focus)).toBe(15);
     expect(focusDrr('305122', 'полотенце для сауны', focus)).toBe(15);
@@ -253,14 +254,19 @@ describe('лестница ставок', () => {
     // Сердечки, узкая фраза: свой потолок 12 %, ДРР 13,3 % — без акцента не в топе, с акцентом в топе.
     const hearts = { ...kw('pink', 'детское полотенце', 9_500, 12_000), campaignId: '337334', stats7: { impressions: 2_000, clicks: 40, sold: 3, revenue: 300_000, spend: 40_000, position: null } };
     expect(planLadderBids([hearts])[0]).toMatchObject({ role: 'other', blocked: 'ДРР 13.3 % > 12 %' });
-    // С акцентом ДРР в пределах 20 %, и ставка — за 5-е место (13 200 + 3 % → 14 000), а не за 9-е (12 000).
+    // С акцентом ДРР в пределах 20 %, ставка — за топ-10 (12 000 + 3 % → 12 500).
     const withFocus = planLadderBids([hearts], undefined, undefined, undefined, undefined, [], undefined, focus)[0];
-    expect(withFocus).toMatchObject({ role: 'top', blocked: null, action: { newCpm: 14_000 } });
-    expect(withFocus.action?.reason).toContain('лестница: топ-5');
-    // Узкая фраза Сердечек дороже их потолка 25 000: без акцента не в топе, с акцентом — до 45 000.
-    const blue = { ...kw('blue', 'детское полотенце', 9_500, 26_000), campaignId: '337334' };
-    expect(planLadderBids([blue])[0]).toMatchObject({ role: 'other', action: null });
-    expect(planLadderBids([blue], undefined, undefined, undefined, undefined, [], undefined, focus)[0]).toMatchObject({ role: 'top', action: { kind: 'RAISE', newCpm: 29_500 } });
+    expect(withFocus).toMatchObject({ role: 'top', blocked: null, action: { newCpm: 12_500 } });
+    expect(withFocus.action?.reason).toContain('лестница: топ-10');
+    // Узкие фразы Сердечек (24.11.2026): потолок 60 000 — «sochiqlar yuz uchun» с топ-10 57 600 в топе, дороже 60 000 — нет.
+    const rare = (top10: number) => ({ ...kw('blue', 'sochiqlar yuz uchun', 20_000, top10), campaignId: '337334' });
+    expect(planLadderBids([rare(57_600)], undefined, undefined, undefined, undefined, [], undefined, focus)[0]).toMatchObject({ role: 'top', action: { kind: 'RAISE', newCpm: 59_500 } });
+    expect(planLadderBids([rare(61_000)], undefined, undefined, undefined, undefined, [], undefined, focus)[0]).toMatchObject({ role: 'other' });
+    // Широкая фраза Сердечек («остальные», 20 000): с акцентом топ-10 до 45 000 — «sochiq yuz va hammom» 44 600 в топе.
+    const broad = (top10: number) => ({ ...kw('blue', 'sochiq yuz va hammom', 37_500, top10), campaignId: '337334' });
+    expect(planLadderBids([broad(44_600)])[0]).toMatchObject({ role: 'other' });
+    expect(planLadderBids([broad(44_600)], undefined, undefined, undefined, undefined, [], undefined, focus)[0]).toMatchObject({ role: 'top', action: { kind: 'RAISE', newCpm: 46_000 } });
+    expect(planLadderBids([broad(46_000)], undefined, undefined, undefined, undefined, [], undefined, focus)[0]).toMatchObject({ role: 'other' });
     // У остальных кампаний место прежнее — топ-10.
     const sauna = { ...kw('a', 'большое полотенце', 9_500, 20_000), campaignId: '332097' };
     expect(planLadderBids([sauna], undefined, undefined, undefined, undefined, [], undefined, focus)[0].action?.newCpm).toBe(21_000); // 20 000 + 3 % → 21 000
@@ -282,10 +288,10 @@ describe('лестница ставок', () => {
     expect(planLadderBids([plaid('green', 45_000, 71_000)], undefined, undefined, undefined, undefined, [], undefined, focus)[0]).toMatchObject({ role: 'other', action: null });
   });
 
-  it('тест Сердечек 13–15.11: широкие фразы за 80 % охвата до 70 000, узкие — топ-5, ДРР не стопит', () => {
+  it('тест Сердечек 13–15.11: широкие фразы за 80 % охвата до 70 000, узкие — по акценту, ДРР не стопит', () => {
     const test = activeFocus('2026-11-13');
-    expect(focusFor('337334', 'полотенце для лица', test)).toEqual({ maxDrr: 20, position: 5, cap: 70_000, reach: 80, colors: null });
-    expect(focusFor('337334', 'детское полотенце', test)).toEqual({ maxDrr: 20, position: 5, cap: 45_000, reach: null, colors: null }); // узкая фраза
+    expect(focusFor('337334', 'полотенце для лица', test)).toEqual({ maxDrr: 20, position: null, cap: 70_000, reach: 80, colors: null });
+    expect(focusFor('337334', 'детское полотенце', test)).toEqual({ maxDrr: 20, position: null, cap: 45_000, reach: null, colors: null }); // узкая фраза
     // ступени: 100 % 34 500, 90 % 33 000, 80 % 31 500, 70 % 30 000 → за 80 % = 31 500 + 3 % → 32 500
     const face = { ...kw('mint', 'полотенце для лица', 9_500, 30_000), campaignId: '337334' };
     const d = planLadderBids([face], undefined, undefined, undefined, undefined, [], undefined, test)[0];
